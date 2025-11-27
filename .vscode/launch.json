@@ -10,6 +10,32 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal"
+        },
+        {
+            "name": "Debug Health Mortality Fetch",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/code/data/cli.py",
+            "args": [
+                "health",
+                "fetch",
+                "--subtype",
+                "mortality"
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Debug Health Birth Fetch",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/code/data/cli.py",
+            "args": [
+                "health",
+                "fetch",
+                "--subtype",
+                "birth"
+            ],
+            "console": "integratedTerminal"
         }
     ]
 }

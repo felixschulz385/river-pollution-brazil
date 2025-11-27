@@ -1,45 +1,81 @@
 import time
 import io
+import os
 import pickle
 import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
 
 class health:
     """
     A class to preprocess health data.
     """
     
-    def __init__(self):
-        pass
+    def __init__(self, headless=False, download_dir=None):
+        """
+        Initialize the health data scraper.
+        
+        Parameters:
+        headless (bool): Whether to run Chrome in headless mode (default: False)
+        download_dir (str): Directory for downloads (default: current directory)
+        """
+        self.headless = headless
+        self.download_dir = download_dir or os.getcwd()
     
-    def fetch(self):
+    def _get_chrome_driver(self):
+        """
+        Create and configure a Chrome WebDriver for local Mac use.
+        
+        Returns:
+        webdriver.Chrome: Configured Chrome WebDriver instance
+        """
+        options = Options()
+        options.add_argument('--ignore-ssl-errors=yes')
+        options.add_argument('--ignore-certificate-errors')
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-gpu")
+        
+        if self.headless:
+            options.add_argument('--headless')
+        
+        # Configure download preferences
+        prefs = {
+            "profile.default_content_settings.popups": 0,
+            "download.default_directory": self.download_dir,
+            "download.prompt_for_download": False,
+            "download.directory_upgrade": True,
+            "safebrowsing.enabled": True
+        }
+        options.add_experimental_option("prefs", prefs)
+        
+        # Create driver using local Chrome
+        # Note: This assumes chromedriver is in PATH or you can specify the path
+        # service = Service('/path/to/chromedriver')  # Uncomment and set path if needed
+        driver = webdriver.Chrome(options=options)
+        
+        return driver
+    
+    def fetch(self, subtype="all"):
         """
         Scrapes health data from the DATASUS TABNET website.
         Requires up to 3 hours to run
+        
+        Parameters:
+        subtype (str): Type of data to fetch. Options: 'all', 'mortality', 'hospitalization', 'birth'
         """
 
         def fe_he_mo():
             """
             Fetch (scrape) mortality data from the DATASUS TABNET website.
-            """   
-            options = webdriver.ChromeOptions()
-            options.add_argument('--ignore-ssl-errors=yes')
-            options.add_argument('--ignore-certificate-errors')
-            #options.add_argument('--headless')
-            options.add_argument("--disable-extensions") 
-            options.add_argument("--disable-gpu") 
-            
-            prefs = {}
-            prefs["profile.default_content_settings.popups"]=0
-            prefs["download.default_directory"]="/home/seluser/downloads"
-            options.add_experimental_option("prefs", prefs)
+            """
             
             def worker(mode):
-                # Connect to the WebDriver
-                driver = webdriver.Remote(command_executor='http://localhost:4444/wd/hub', options=options)
+                # Create local Chrome WebDriver
+                driver = self._get_chrome_driver()
                 
                 # Years to query
                 if mode == "pre":
@@ -60,7 +96,7 @@ class health:
                             driver.get("http://tabnet.datasus.gov.br/cgi/deftohtm.exe?sim/cnv/obt10br.def")
                             
                         # Wait for the page to load
-                        time.sleep(3)  # Adjust the sleep time as needed
+                        time.sleep(3)
                         
                         # Select 'Faixa Etária' from the 'Coluna' dropdown
                         driver.find_element(By.XPATH, "//select[@name='Coluna']/option[@value='Faixa_Etária']").click()
@@ -94,7 +130,7 @@ class health:
                         driver.switch_to.window(driver.window_handles[0])
                         
                         # Optional: wait a bit before the next iteration
-                        time.sleep(2)  # Adjust the sleep time as needed
+                        time.sleep(2)
                         
                         # Click the reset button
                         driver.find_element(By.XPATH, "//input[@class='limpa']").click()
@@ -150,24 +186,13 @@ class health:
         def fe_he_ho():
             """
             Fetch (scrape) hospital data from the DATASUS TABNET website.
-            """   
-            options = webdriver.ChromeOptions()
-            options.add_argument('--ignore-ssl-errors=yes')
-            options.add_argument('--ignore-certificate-errors')
-            #options.add_argument('--headless')
-            options.add_argument("--disable-extensions") 
-            options.add_argument("--disable-gpu") 
+            """
             
-            prefs = {}
-            prefs["profile.default_content_settings.popups"]=0
-            prefs["download.default_directory"]="/home/seluser/downloads"
-            options.add_experimental_option("prefs", prefs)
-            
-            def worker(mode):
+            def worker(mode="default"):
                 ### --- OPTION "waterborne" NOT YET IMPLEMENTED ---
                 
-                # Connect to the WebDriver
-                driver = webdriver.Remote(command_executor='http://localhost:4444/wd/hub', options=options)
+                # Create local Chrome WebDriver
+                driver = self._get_chrome_driver()
                 
                 years = list(range(8, 22 + 1))
                 years = [str(x).zfill(2) for x in years]
@@ -290,13 +315,152 @@ class health:
             
             worker()
         
+        def fe_he_bi():
+            """
+            Fetch (scrape) birth data (SINASC) from the DATASUS TABNET website.
+            Fetches gestational duration and birth weight data for years 1994-2023.
+            """
+            
+            def worker(column_type):
+                """
+                Worker function to scrape birth data for a specific column type.
+                
+                Parameters:
+                column_type (str): Either 'gestational_duration' or 'birth_weight'
+                """
+                # Create local Chrome WebDriver
+                driver = self._get_chrome_driver()
+                
+                # Years to query (1994 to 2023)
+                years = list(range(1994, 2024))
+                latest_year = 2023  # Latest available year in the data
+                
+                # Dictionary to store the data
+                out_df = {year: None for year in years}
+                
+                # Map column types to XPATH values
+                column_mapping = {
+                    'gestational_duration': 'Duração_gestação',
+                    'birth_weight': 'Peso_ao_nascer'
+                }
+                
+                try:
+                    for year in years:
+                        print(f"Fetching {column_type} data for year {year}...")
+                        
+                        # Open the URL
+                        driver.get("http://tabnet.datasus.gov.br/cgi/tabcgi.exe?sinasc/cnv/nvbr.def")
+                        
+                        # Wait for the page to load
+                        time.sleep(3)
+                        
+                        # Select the appropriate column from the 'Coluna' dropdown
+                        driver.find_element(By.XPATH, f"//select[@name='Coluna']/option[@value='{column_mapping[column_type]}']").click()
+                        
+                        # Convert full year to two-digit format for file selection
+                        year_2digit = str(year % 100).zfill(2)
+                        latest_year_2digit = str(latest_year % 100).zfill(2)
+                        
+                        # Select the corresponding year option
+                        # Always deselect the latest year first, then select the target year
+                        if year != latest_year:
+                            driver.find_element(By.XPATH, f"//option[@value='nvbr{year_2digit}.dbf']").click()
+                            driver.find_element(By.XPATH, f"//option[@value='nvbr{latest_year_2digit}.dbf']").click()
+                            
+                        
+                        # Select the 'prn' format
+                        driver.find_element(By.XPATH, "//input[@name='formato' and @value='prn']").click()
+                        
+                        # Click the submit button
+                        driver.find_element(By.XPATH, "//input[@class='mostra']").click()
+                        
+                        # Switch to the new window
+                        driver.switch_to.window(driver.window_handles[-1])
+                        
+                        # Wait for the data to be displayed
+                        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, "//pre")))
+                        
+                        # Extract the data from the 'pre' tag
+                        data = driver.find_element(By.XPATH, "//pre").text
+                        
+                        # Read the data as a CSV from the string and store it in the dictionary
+                        out_df[year] = pd.read_csv(io.StringIO(data), sep=';', encoding='latin1')
+                        
+                        # Close the current window
+                        driver.close()
+                        
+                        # Switch back to the original window
+                        driver.switch_to.window(driver.window_handles[0])
+                        
+                        # Optional: wait a bit before the next iteration
+                        time.sleep(2)
+                        
+                        # Click the reset button
+                        driver.find_element(By.XPATH, "//input[@class='limpa']").click()
+                
+                finally:
+                    # Quit the WebDriver
+                    driver.quit()
+                
+                ## Data Postprocessing
+                
+                # Concatenate all dataframes in the dictionary into a single dataframe
+                out_df = pd.concat(out_df)
+                
+                # Reset index and set 'year' as a column
+                out_df = out_df.reset_index(level=0, names=["year"])
+                
+                # Year column is already in full format (1994-2023) from the dictionary keys
+                
+                # Extract municipality ID and name from the 'Município' column
+                out_df["mun_id"] = out_df.Município.str.extract(r"(\d{6})")[0].str.zfill(6)
+                out_df["mun_name"] = out_df.Município.str.extract(r"\d{6}(.*)")[0].str.strip()
+                
+                # Drop the original 'Município' column as it's no longer needed
+                out_df.drop(columns=["Município"], inplace=True)
+                
+                # Get the column names (excluding mun_id, mun_name, year, and Total)
+                value_cols = [col for col in out_df.columns if col not in ["mun_id", "mun_name", "year", "Total"]]
+                
+                # Replace '-' with '0' and convert columns to float32
+                out_df[value_cols] = out_df[value_cols].apply(lambda x: x.str.replace("-", "0"), axis=0).astype("float32")
+                
+                # Reorder columns to make 'mun_id', 'mun_name', and 'year' the first columns
+                out_df = out_df[["mun_id", "mun_name", "year"] + value_cols + ["Total"]]
+                
+                # Create output directory if it doesn't exist
+                os.makedirs("data/health", exist_ok=True)
+                
+                # Drop rows with any missing values and save the cleaned dataframe to a CSV file
+                out_df.dropna(subset=["mun_id"]).to_parquet(f"data/health/{column_type}.parquet", index=False)
+                
+                print(f"Saved {column_type} data to data/health/{column_type}.csv")
+            
+            # Fetch both types of birth data
+            print("Fetching gestational duration data...")
+            worker('gestational_duration')
+            
+            print("Fetching birth weight data...")
+            worker('birth_weight')
+        
         # ===========================================================
         # Execute scraping
         # ===========================================================
         
-        fe_he_mo()
-        fe_he_ho()  
-            
+        if subtype in ["all", "mortality"]:
+            print("Fetching mortality data...")
+            fe_he_mo()
+        
+        if subtype in ["all", "hospitalization"]:
+            print("Fetching hospitalization data...")
+            fe_he_ho()
+        
+        if subtype in ["all", "birth"]:
+            print("Fetching birth data...")
+            fe_he_bi()
+        
+        if subtype not in ["all", "mortality", "hospitalization", "birth"]:
+            raise ValueError(f"Invalid subtype: {subtype}. Choose from: 'all', 'mortality', 'hospitalization', 'birth'")
     
     def preprocess(self):
         pass

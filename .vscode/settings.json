@@ -46,14 +46,5 @@
         "cinttypes": "cpp",
         "typeinfo": "cpp"
     },
-    /*"terminal.integrated.env.osx": {
-        "R_HOME": "/pfs/work7/workspace/scratch/tu_zxobe27-master_thesis/setup/miniforge3/envs/thesis/lib/R"
-      },
-    "editor.acceptSuggestionOnEnter": "on"*/
-    "quarto.path": "/usr/local/bin/quarto",
     "editor.acceptSuggestionOnEnter": "on",
-    "terminal.integrated.env.osx": {
-        "R_HOME": "/Users/felixschulz/miniforge3/lib/R"
-      },
-    "r.rpath.osx": "/Users/felixschulz/miniforge3/bin/R"
 }
