@@ -17,7 +17,7 @@ import multiprocessing as mp
 import sys
 sys.path.append("/pfs/work7/workspace/scratch/tu_zxobe27-master_thesis/code")
 from data.river_network import calculate_distance_from_estuary
-from data.drainage_polygons import expand_bounds
+from code.data.drainage_polygons import expand_bounds
 
 
 def extract_worker(x, x_1):

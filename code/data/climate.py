@@ -12,7 +12,7 @@ import pickle
 
 class climate:
     """
-    A class to preprocess health data.
+    A class to download climate data.
     """
     
     def __init__(self):

@@ -28,7 +28,7 @@ from multiprocessing import Pool
 
 # Local module imports for specific functionality
 sys.path.append("/pfs/work7/workspace/scratch/tu_zxobe27-master_thesis/code")
-from data.preprocess.river_network import river_network, calculate_distance_from_estuary
+from code.data.river_network import river_network, calculate_distance_from_estuary
 from data.preprocess.drainage_polygons.fix_ana_drainage_polygons import fix_rivers_in_grid
 
 # Database connection to fetch grid data

@@ -9,7 +9,7 @@ import geopandas as gpd
 
 class water_quality:
     """
-    A class to preprocess health data.
+    A class to process health data.
     """
     
     def __init__(self):
