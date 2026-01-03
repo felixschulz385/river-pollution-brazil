@@ -1,14 +1,17 @@
 #!/bin/bash
-#SBATCH --partition=single
+#SBATCH --partition=scicore
+#SBATCH --qos=30min
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=8
-#SBATCH --time=12:00:00
-#SBATCH --mem=32000mb
+#SBATCH --time=0-00:30:00
+#SBATCH --mem=64000mb
 #SBATCH --job-name=compute_reachability_graph
-#SBATCH --mail-type=END
-#SBATCH --output=compute_reachability_graph.log
+#SBATCH --output=./log/compute_reachability_graph/slurm-%j.log
 
-eval "$(/pfs/work7/workspace/scratch/tu_zxobe27-master_thesis/setup/miniforge3/bin/conda shell.bash hook)"
-conda activate thesis
+eval "$(/scicore/home/meiera/schulz0022/miniforge-pypy3/bin/conda shell.bash hook)"
+conda activate rpb
 
-python /pfs/work7/workspace/scratch/tu_zxobe27-master_thesis/code/main/03_00_reachability_graph.py
+cd /scicore/home/meiera/schulz0022/projects/river-pollution-brazil
+
+# Run land-cover preprocessing using the CLI
+python code/data/cli.py river-network compute-reachability --shapefile-path "data/river_network/shapefile.parquet" --topology-path "data/river_network/topology.parquet" --distance-path "data/river_network/distance_from_estuary.parquet" --output-dir "data/river_network/"
