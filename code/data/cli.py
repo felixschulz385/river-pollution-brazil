@@ -5,7 +5,8 @@ Data processing CLI for Master Thesis project
 
 This script serves as a command-line interface (CLI) for processing various data modules
 related to the Master Thesis project. It allows users to fetch and preprocess health data,
-water quality data, and download specific datasets as required for the thesis research.
+water quality data, generate river network data, and download specific datasets as required
+for the thesis research.
 
 Usage:
   python cli.py <module> <action> [options]
@@ -13,12 +14,13 @@ Usage:
 Modules:
   health          Process health data
   water-quality   Process water quality data
-  land-cover      Process land cover data
-  download         Download datasets
+  river-network   Process river network data
+  download        Download datasets
 
 Actions:
   fetch           Fetch data from source
   preprocess      Preprocess the fetched data
+  generate        Generate processed river network data
 
 Options:
   -h, --help      Show this help message and exit
@@ -35,8 +37,8 @@ Examples:
   python cli.py health preprocess
   python cli.py water-quality fetch
   python cli.py water-quality preprocess
-  python cli.py land-cover fetch
-  python cli.py land-cover preprocess --n_jobs 16 --output results.feather
+  python cli.py river-network generate --gpkg-path /path/to/bho_2017.gpkg --output-dir ./river_data
+  python cli.py river-network generate --gpkg-path /path/to/bho_2017.gpkg --output-dir ./river_data --min-lon -55 --min-lat -4 --max-lon -47 --max-lat 3
   python cli.py download --dataset dem --area BRA --year 2010
 """
 
@@ -65,7 +67,7 @@ class DataSourceFactory:
         Create a data source instance based on the module name.
         
         Parameters:
-        module (str): Name of the data module ('health', 'water-quality', 'download')
+        module (str): Name of the data module ('health', 'water-quality', 'download', 'river-network')
         **kwargs: Additional arguments to pass to the data source constructor
         
         Returns:
@@ -80,16 +82,17 @@ class DataSourceFactory:
         elif module == "water-quality":
             from water_quality import water_quality
             return water_quality()
+        elif module == "river-network":
+            from river_network import RiverNetwork
+            return RiverNetwork()
         elif module == "land-cover":
             from land_cover import land_cover
             return land_cover()
-        elif module == "river-network":
-            from river_network import river_network
-            return river_network
         elif module == "download":
             from download import download_agent
             return download_agent(
-                root_dir=kwargs.get('root_dir', '/pfs/work7/workspace/scratch/tu_zxobe27-master_thesis/'),
+                remote_root_dir=kwargs.get('remote_root_dir', '/pfs/work7/workspace/scratch/tu_zxobe27-master_thesis/'),
+                local_root_dir=kwargs.get('local_root_dir', '/tmp'),
                 area=kwargs.get('area', 'BRA'),
                 year=kwargs.get('year', 2010)
             )
@@ -198,9 +201,14 @@ Examples:
     # Download module
     download_parser = subparsers.add_parser("download", help="Download datasets")
     download_parser.add_argument(
-        "--root-dir",
+        "--remote-root-dir",
         default="/pfs/work7/workspace/scratch/tu_zxobe27-master_thesis/",
-        help="Root directory for data storage"
+        help="Remote root directory for data storage"
+    )
+    download_parser.add_argument(
+        "--local-root-dir",
+        default="/tmp",
+        help="Local root directory for temporary data"
     )
     download_parser.add_argument(
         "--area",
@@ -219,6 +227,44 @@ Examples:
         help="Dataset name to fetch (e.g., 'dem')"
     )
     
+    # River network module
+    river_parser = subparsers.add_parser("river-network", help="Process river network data")
+    river_parser.add_argument(
+        "action",
+        choices=["generate"],
+        help="Action to perform"
+    )
+    river_parser.add_argument(
+        "--gpkg-path",
+        required=True,
+        help="Path to the GeoPackage file (e.g., '/path/to/bho_2017_v_01_05_5k.gpkg')"
+    )
+    river_parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Output directory for processed river network data"
+    )
+    river_parser.add_argument(
+        "--min-lon",
+        type=float,
+        help="Minimum longitude for spatial filtering (optional)"
+    )
+    river_parser.add_argument(
+        "--min-lat",
+        type=float,
+        help="Minimum latitude for spatial filtering (optional)"
+    )
+    river_parser.add_argument(
+        "--max-lon",
+        type=float,
+        help="Maximum longitude for spatial filtering (optional)"
+    )
+    river_parser.add_argument(
+        "--max-lat",
+        type=float,
+        help="Maximum latitude for spatial filtering (optional)"
+    )
+    
     args = parser.parse_args()
     
     if args.module is None:
@@ -230,7 +276,8 @@ Examples:
         if args.module == "download":
             agent = DataSourceFactory.create(
                 args.module,
-                root_dir=args.root_dir,
+                remote_root_dir=args.remote_root_dir,
+                local_root_dir=args.local_root_dir,
                 area=args.area,
                 year=args.year
             )
@@ -265,121 +312,42 @@ Examples:
                 )
 
         elif args.module == "river-network":
-            action = args.action
-            logger.info(f"Running {args.module} module: {action}")
+            print(f"Running river-network module: {args.action}")
             
-            if action == "debug":
-                # Debug configuration for testing reachability
-                logger.info("Starting debug configuration for reachability computation")
+            if args.action == "generate":
+                import geopandas as gpd
+                from shapely.geometry import box
                 
-                if not args.shapefile_path or not args.topology_path:
-                    logger.error("Debug mode requires --shapefile-path and --topology-path")
-                    sys.exit(1)
-                
-                logger.info(f"Loading shapefile from: {args.shapefile_path}")
-                logger.info(f"Loading topology from: {args.topology_path}")
-                
-                from river_network import river_network
-                
-                try:
-                    # Load existing network
-                    network = river_network.load_network(
-                        args.shapefile_path,
-                        args.topology_path,
-                        distance_path=args.distance_path,
-                        reachability_path=args.reachability_path
+                # Create bounding box if coordinates provided
+                bbox = None
+                if all([args.min_lon, args.min_lat, args.max_lon, args.max_lat]):
+                    bbox = gpd.GeoSeries(
+                        box(args.min_lon, args.min_lat, args.max_lon, args.max_lat),
+                        crs=4326
                     )
-                    logger.info("✓ Network loaded successfully")
-                    logger.info(f"  Shapefile shape: {network.shapefile.shape}")
-                    logger.info(f"  Topology shape: {network.topology.shape}")
-                    if network.distance_from_estuary is not None:
-                        logger.info(f"  Distance data shape: {network.distance_from_estuary.shape}")
-                    if network.reachability is not None:
-                        logger.info(f"  Reachability matrix shape: {network.reachability['matrix'].shape}")
-                    
-                    # Compute distances from estuaries if not present
-                    if network.distance_from_estuary is None:
-                        logger.info("Computing distances from estuary...")
-                        network.calculate_distance_from_estuary()
-                        logger.info(f"✓ Distances computed successfully")
-                        
-                        # Store distance data
-                        logger.info(f"Storing distance_from_estuary to: {args.output_dir}")
-                        network.store_distance_from_estuary(args.output_dir)
-                        logger.info("✓ Distance data stored successfully")
-                    else:
-                        logger.info("✓ Distance data already loaded")
-                    
-                    # Compute reachability
-                    logger.info("Computing reachability graph...")
-                    reachability_data = network.compute_reachability()
-                    logger.info(f"✓ Reachability computed successfully")
-                    logger.info(f"  Matrix shape: {reachability_data['matrix'].shape}")
-                    logger.info(f"  Non-zero entries: {reachability_data['matrix'].nnz}")
-                    
-                    # Store reachability results
-                    logger.info(f"Storing reachability to: {args.output_dir}")
-                    network.store_reachability(args.output_dir)
-                    logger.info("✓ Reachability data stored successfully")
-                    
-                except Exception as e:
-                    logger.error(f"Error during debug execution: {str(e)}")
-                    logger.debug("Traceback:", exc_info=True)
-                    sys.exit(1)
-            
-            elif action == "compute-reachability":
-                logger.info("Computing reachability for river network")
+                    print(f"Loading data with bbox: ({args.min_lon}, {args.min_lat}, {args.max_lon}, {args.max_lat})")
+                else:
+                    print("Loading full dataset (no spatial filter)")
                 
-                if not args.shapefile_path or not args.topology_path:
-                    logger.error("compute-reachability requires --shapefile-path and --topology-path")
-                    sys.exit(1)
+                # Load and process data
+                print("Loading trenches...")
+                agent.load_trenches(args.gpkg_path, bbox=bbox)
                 
-                from river_network import river_network
+                print("Loading drainage areas...")
+                agent.load_drainage_areas(args.gpkg_path, bbox=bbox)
                 
-                try:
-                    # Load network
-                    logger.info(f"Loading network from {args.shapefile_path} and {args.topology_path}")
-                    network = river_network.load_network(
-                        args.shapefile_path,
-                        args.topology_path,
-                        distance_path=args.distance_path,
-                        reachability_path=args.reachability_path
-                    )
-                    logger.info("✓ Network loaded")
-                    logger.info(f"  Shapefile shape: {network.shapefile.shape}")
-                    logger.info(f"  Topology shape: {network.topology.shape}")
-                    if network.distance_from_estuary is not None:
-                        logger.info(f"  Distance data shape: {network.distance_from_estuary.shape}")
-                    
-                    # Compute distances from estuaries if not present
-                    if network.distance_from_estuary is None:
-                        logger.info("Computing distances from estuary...")
-                        network.calculate_distance_from_estuary()
-                        logger.info("✓ Distances computed")
-                        
-                        logger.info(f"Storing distance_from_estuary to: {args.output_dir}")
-                        network.store_distance_from_estuary(args.output_dir)
-                        logger.info("✓ Distance data stored")
-                    else:
-                        logger.info("✓ Distance data already loaded")
-                    
-                    # Compute reachability
-                    logger.info("Computing reachability...")
-                    reachability_data = network.compute_reachability()
-                    logger.info("✓ Reachability computed")
-                    logger.info(f"  Matrix shape: {reachability_data['matrix'].shape}")
-                    logger.info(f"  Non-zero entries: {reachability_data['matrix'].nnz}")
-                    
-                    # Store reachability results
-                    logger.info(f"Storing reachability to: {args.output_dir}")
-                    network.store_reachability(args.output_dir)
-                    logger.info("✓ Reachability stored")
-                    
-                except Exception as e:
-                    logger.error(f"Error computing reachability: {str(e)}")
-                    logger.debug("Traceback:", exc_info=True)
-                    sys.exit(1)
-
+                print("Computing subsystems...")
+                agent.compute_subsystems()
+                
+                print("Computing distance matrices...")
+                agent.compute_distance_matrices()
+                
+                print("Arranging by systems and distances...")
+                agent.arrange_by_systems()
+                
+                print(f"Saving to {args.output_dir}...")
+                agent.save(args.output_dir)
+        
         elif args.module == "download":
             logger.info(f"Running download module for dataset: {args.dataset}")
             # Create a simple dataset dictionary for the fetch method
