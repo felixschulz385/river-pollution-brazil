@@ -46,13 +46,18 @@ import argparse
 import sys
 import logging
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
 logger = logging.getLogger(__name__)
+
+
+def configure_logging(level: str = "INFO") -> None:
+    """Configure root logging once for CLI and batch execution."""
+    numeric_level = getattr(logging, level.upper(), logging.INFO)
+    logging.basicConfig(
+        level=numeric_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        force=True,
+    )
 
 
 class DataSourceFactory:
@@ -86,8 +91,8 @@ class DataSourceFactory:
             from river_network import RiverNetwork
             return RiverNetwork()
         elif module == "land-cover":
-            from land_cover import land_cover
-            return land_cover()
+            from land_cover import LandCover
+            return LandCover()
         elif module == "download":
             from download import download_agent
             return download_agent(
@@ -108,18 +113,25 @@ def main():
         description="Data processing CLI for Master Thesis project",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  python cli.py health fetch --subtype mortality
-  python cli.py health fetch --subtype hospitalization
-  python cli.py health fetch --subtype birth
-  python cli.py health fetch --subtype all
-  python cli.py health preprocess
-  python cli.py water-quality fetch
-  python cli.py water-quality preprocess
-  python cli.py land-cover fetch
-  python cli.py land-cover preprocess --n_jobs 16 --output results.feather
-  python cli.py download --dataset dem --area BRA --year 2010
+        Examples:
+        python cli.py health fetch --subtype mortality
+        python cli.py health fetch --subtype hospitalization
+        python cli.py health fetch --subtype birth
+        python cli.py health fetch --subtype all
+        python cli.py health preprocess
+        python cli.py water-quality fetch
+        python cli.py water-quality preprocess
+        python cli.py land-cover fetch
+        python cli.py land-cover preprocess --n_jobs 16 --output results.feather
+        python cli.py land-cover preprocess --n_jobs 16 --output results.feather --river-network-path /path/to/network/
+        python cli.py download --dataset dem --area BRA --year 2010
         """
+        )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level for CLI execution (default: INFO)",
     )
     
     subparsers = parser.add_subparsers(dest="module", help="Data module to process")
@@ -164,38 +176,10 @@ Examples:
         default="land_cover_results.feather",
         help="Output file path (default: land_cover_results.feather)"
     )
-    
-    # River network module
-    rn_parser = subparsers.add_parser("river-network", help="Process river network data")
-    rn_parser.add_argument(
-        "action",
-        choices=["compute-reachability", "debug"],
-        help="Action to perform"
-    )
-    rn_parser.add_argument(
-        "--shapefile-path",
-        required=False,
-        help="Path to shapefile feather file"
-    )
-    rn_parser.add_argument(
-        "--topology-path",
-        required=False,
-        help="Path to topology feather file"
-    )
-    rn_parser.add_argument(
-        "--distance-path",
-        required=False,
-        help="Path to distance_from_estuary feather file"
-    )
-    rn_parser.add_argument(
-        "--reachability-path",
-        required=False,
-        help="Path to reachability npz file"
-    )
-    rn_parser.add_argument(
-        "--output-dir",
-        default="./",
-        help="Output directory for results (default: ./)"
+    lc_parser.add_argument(
+        "--river-network-path",
+        default=None,
+        help="Path to river network directory. If provided, uses drainage_areas from network instead of feather file"
     )
     
     # Download module
@@ -264,8 +248,23 @@ Examples:
         type=float,
         help="Maximum latitude for spatial filtering (optional)"
     )
+    river_parser.add_argument(
+        "--gadm-path",
+        help="Path to GADM GeoPackage for country filtering (optional)"
+    )
+    river_parser.add_argument(
+        "--gadm-layer",
+        default="ADM_ADM_0",
+        help="GADM layer name for country boundary (default: ADM_ADM_0)"
+    )
+    river_parser.add_argument(
+        "--gadm-adm2-layer",
+        default="ADM_ADM_2",
+        help="GADM layer name for ADM2 matches (default: ADM_ADM_2)"
+    )
     
     args = parser.parse_args()
+    configure_logging(args.log_level)
     
     if args.module is None:
         parser.print_help()
@@ -305,14 +304,22 @@ Examples:
             if action == "fetch":
                 agent.fetch()
             elif action == "preprocess":
-                logger.info(f"Preprocessing with n_jobs={args.n_jobs}")
+                logger.info(
+                    "Preprocessing with n_jobs=%s, output=%s, river_network_path=%s, log_level=%s",
+                    args.n_jobs,
+                    args.output,
+                    args.river_network_path,
+                    args.log_level,
+                )
                 agent.preprocess(
                     n_jobs=args.n_jobs,
-                    output_path=args.output
+                    river_network_path=args.river_network_path,
+                    output_path=args.output,
+                    log_level=args.log_level,
                 )
 
         elif args.module == "river-network":
-            print(f"Running river-network module: {args.action}")
+            logger.info("Running %s module: %s", args.module, args.action)
             
             if args.action == "generate":
                 import geopandas as gpd
@@ -325,27 +332,53 @@ Examples:
                         box(args.min_lon, args.min_lat, args.max_lon, args.max_lat),
                         crs=4326
                     )
-                    print(f"Loading data with bbox: ({args.min_lon}, {args.min_lat}, {args.max_lon}, {args.max_lat})")
+                    logger.info(
+                        "Loading data with bbox: (%s, %s, %s, %s)",
+                        args.min_lon,
+                        args.min_lat,
+                        args.max_lon,
+                        args.max_lat,
+                    )
                 else:
-                    print("Loading full dataset (no spatial filter)")
+                    logger.info("Loading full dataset (no spatial filter)")
                 
                 # Load and process data
-                print("Loading trenches...")
+                logger.info("Loading trenches")
                 agent.load_trenches(args.gpkg_path, bbox=bbox)
                 
-                print("Loading drainage areas...")
+                logger.info("Loading drainage areas")
                 agent.load_drainage_areas(args.gpkg_path, bbox=bbox)
                 
-                print("Computing subsystems...")
+                logger.info("Computing subsystems")
                 agent.compute_subsystems()
                 
-                print("Computing distance matrices...")
+                logger.info("Computing distance matrices")
                 agent.compute_distance_matrices()
                 
-                print("Arranging by systems and distances...")
-                agent.arrange_by_systems()
+                logger.info("Arranging by systems and distances")
+                agent.sort_trenches_by_system()
                 
-                print(f"Saving to {args.output_dir}...")
+                if args.gadm_path:
+                    logger.info(
+                        "Annotating drainage areas with country membership from %s layer %s",
+                        args.gadm_path,
+                        args.gadm_layer,
+                    )
+                    agent.annotate_drainage_areas_with_country_membership(
+                        args.gadm_path,
+                        layer=args.gadm_layer,
+                    )
+                    logger.info(
+                        "Building trench-to-ADM2 matches from %s layer %s",
+                        args.gadm_path,
+                        args.gadm_adm2_layer,
+                    )
+                    agent.build_trench_adm2_table(
+                        gadm_path=args.gadm_path,
+                        layer=args.gadm_adm2_layer,
+                    )
+                
+                logger.info("Saving to %s", args.output_dir)
                 agent.save(args.output_dir)
         
         elif args.module == "download":
