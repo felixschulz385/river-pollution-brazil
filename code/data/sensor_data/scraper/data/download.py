@@ -13,7 +13,7 @@ import duckdb
 import pandas as pd
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import InvalidSessionIdException, TimeoutException, WebDriverException
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
@@ -79,9 +79,32 @@ def _dump_debug_html(driver, root_dir=".", label="page", station_code=None):
     timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     code_prefix = f"{station_code}_" if station_code is not None else ""
     output_path = _debug_dir(root_dir) / f"{code_prefix}{label}_{timestamp}.html"
-    output_path.write_text(driver.page_source, encoding="utf-8", errors="ignore")
+    try:
+        page_source = driver.page_source
+    except Exception as exc:
+        page_source = f"<!-- Unable to capture page source: {exc} -->"
+        logger.warning("Could not capture debug HTML snapshot from the active browser: %s", exc)
+    output_path.write_text(page_source, encoding="utf-8", errors="ignore")
     logger.info("Saved debug HTML snapshot to %s.", output_path)
     return output_path
+
+
+def _browser_session_lost(exc: Exception) -> bool:
+    if isinstance(exc, InvalidSessionIdException):
+        return True
+    if not isinstance(exc, WebDriverException):
+        return False
+    message = str(exc).lower()
+    return any(
+        token in message
+        for token in (
+            "invalid session id",
+            "session deleted",
+            "disconnected",
+            "not connected to devtools",
+            "browser has closed the connection",
+        )
+    )
 
 
 def _archive_storage_name(station_code: str) -> str:
@@ -479,7 +502,13 @@ def _activate_tab(driver, label_fragment: str) -> None:
     _decency_wait(0.8, 1.6)
 
 
-def _search_station(driver, station_code: str, station_name: str, root_dir="."):
+def _search_station(
+    driver,
+    station_code: str,
+    station_name: str,
+    root_dir=".",
+    match_name: bool = True,
+):
     """Enter station code and station name into the search form."""
     station_input = WebDriverWait(driver, 20).until(
         EC.element_to_be_clickable(
@@ -501,7 +530,8 @@ def _search_station(driver, station_code: str, station_name: str, root_dir="."):
         )
     )
     station_name_input.clear()
-    station_name_input.send_keys(station_name)
+    if match_name:
+        station_name_input.send_keys(station_name)
     _decency_wait(0.5, 1.2)
 
     search_button_selectors = [
@@ -793,6 +823,7 @@ def _download_conventional_archives(
     root_dir=".",
     fetch_mode: str = "default",
     station_history: dict[tuple[str, str, str], pd.DataFrame] | None = None,
+    match_name: bool = True,
 ):
     """Download every MDB exposed for the searched station in the conventional table."""
     logger.debug(
@@ -801,7 +832,13 @@ def _download_conventional_archives(
         station_name,
     )
     _activate_tab(driver, "Convencion")
-    _search_station(driver, station_code, station_name, root_dir=root_dir)
+    _search_station(
+        driver,
+        station_code,
+        station_name,
+        root_dir=root_dir,
+        match_name=match_name,
+    )
     return _download_matching_rows_in_active_tab(
         run_id=run_id,
         attempted_at=attempted_at,
@@ -849,6 +886,7 @@ def download_by_id(
     root_dir=".",
     fetch_mode: str = "default",
     run_id: str | None = None,
+    browser_manager: ManagedBrowser | None = None,
 ):
     """Download all MDB categories exposed for one station, with retries."""
     if fetch_mode not in FETCH_MODES:
@@ -872,6 +910,7 @@ def download_by_id(
                 root_dir=root_dir,
                 fetch_mode=fetch_mode,
                 station_history=station_history,
+                match_name=(attempt == 1),
             )
             _merge_attempt_records(aggregated_records, attempt_records)
             if any(record["station_type"] is not None for record in aggregated_records.values()):
@@ -890,7 +929,14 @@ def download_by_id(
                 )
                 return list(aggregated_records.values())
         except Exception as exc:
-            _dump_debug_html(driver, root_dir=root_dir, label=f"attempt_{attempt}_failure", station_code=station_code)
+            session_lost = _browser_session_lost(exc)
+            if not session_lost:
+                _dump_debug_html(
+                    driver,
+                    root_dir=root_dir,
+                    label=f"attempt_{attempt}_failure",
+                    station_code=station_code,
+                )
             logger.warning(
                 "Download failed for station %s on attempt %s/5: %s",
                 station_code,
@@ -898,6 +944,14 @@ def download_by_id(
                 exc,
             )
             _decency_wait(1.5, 3.5)
+            if session_lost and browser_manager is not None:
+                logger.warning(
+                    "Browser session was lost while processing station %s; restarting Selenium before retry.",
+                    station_code,
+                )
+                driver = browser_manager.restart()
+                _refresh_session(driver)
+                continue
             if attempt in {2, 4}:
                 _refresh_session(driver)
             elif attempt == 3:
@@ -995,6 +1049,7 @@ def fetch_station_data(
                 root_dir=root_dir,
                 fetch_mode=fetch_mode,
                 run_id=run_id,
+                browser_manager=browser,
             )
             download_records.extend(station_records)
             download_record_buffer.extend(station_records)

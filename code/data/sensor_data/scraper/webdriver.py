@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import shutil
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from time import sleep
@@ -36,6 +38,8 @@ class ManagedBrowser:
         self.keep_open_on_error = keep_open_on_error
         self._driver: webdriver.Chrome | None = None
         self._driver_binary_path: str | None = None
+        self._profile_dir: Path | None = None
+        self._cache_dir: Path | None = None
 
     def __enter__(self) -> webdriver.Chrome:
         self._driver = self._create_driver()
@@ -61,6 +65,7 @@ class ManagedBrowser:
                 logger.warning("Error while quitting driver: %s", exc)
             finally:
                 self._driver = None
+        self._cleanup_browser_dirs()
 
     @property
     def current_driver(self) -> webdriver.Chrome | None:
@@ -92,7 +97,19 @@ class ManagedBrowser:
             options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-background-networking")
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
+        options.add_argument("--disable-features=Translate,OptimizationGuideModelDownloading")
         options.add_argument(f"--window-size={DEFAULT_WINDOW_WIDTH},{DEFAULT_WINDOW_HEIGHT}")
+
+        self._cleanup_browser_dirs()
+        self._profile_dir = Path(tempfile.mkdtemp(prefix="sensor_chrome_profile_"))
+        self._cache_dir = Path(tempfile.mkdtemp(prefix="sensor_chrome_cache_"))
+        options.add_argument(f"--user-data-dir={self._profile_dir}")
+        options.add_argument(f"--disk-cache-dir={self._cache_dir}")
 
         if self.download_dir:
             resolved_download_dir = str(Path(self.download_dir).expanduser().resolve())
@@ -114,7 +131,8 @@ class ManagedBrowser:
             try:
                 service = Service(self._driver_binary_path)
                 driver = webdriver.Chrome(service=service, options=options)
-                driver.set_window_size(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
+                if not self.headless:
+                    driver.set_window_size(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
                 logger.debug("Chrome driver created.")
                 return driver
             except Exception as exc:
@@ -127,6 +145,14 @@ class ManagedBrowser:
                 )
                 sleep(min(5, attempt * 2))
         raise RuntimeError("Unable to create Chrome driver after repeated failures.") from last_error
+
+    def _cleanup_browser_dirs(self) -> None:
+        for path_attr in ("_profile_dir", "_cache_dir"):
+            path = getattr(self, path_attr)
+            if path is None:
+                continue
+            shutil.rmtree(path, ignore_errors=True)
+            setattr(self, path_attr, None)
 
 
 @contextmanager
