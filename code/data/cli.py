@@ -103,6 +103,10 @@ class DataSourceFactory:
                 keep_browser_on_error=kwargs.get("keep_browser_on_error", False),
                 single_station=kwargs.get("single_station"),
                 fetch_mode=kwargs.get("fetch_mode", "default"),
+                preprocess_workers=kwargs.get("preprocess_workers"),
+                source_tables=kwargs.get("source_tables"),
+                preprocess_backend=kwargs.get("preprocess_backend", "thread"),
+                log_every_tables=kwargs.get("log_every_tables"),
             )
         elif module == "river-network":
             from river_network import RiverNetwork
@@ -231,6 +235,29 @@ def main():
         default="default",
         choices=["default", "missing-only", "retry-failed", "redownload-all"],
         help="History-aware fetch mode for water-quality downloads (default: default)",
+    )
+    wq_parser.add_argument(
+        "--preprocess-workers",
+        type=int,
+        default=None,
+        help="Number of worker processes for water-quality MDB preprocessing (default: up to 4)",
+    )
+    wq_parser.add_argument(
+        "--source-tables",
+        default=None,
+        help="Optional comma-separated original Access table names to read during preprocessing, e.g. Estacao",
+    )
+    wq_parser.add_argument(
+        "--preprocess-backend",
+        default="thread",
+        choices=["thread", "process"],
+        help="Executor backend for water-quality MDB preprocessing (default: thread)",
+    )
+    wq_parser.add_argument(
+        "--log-every-tables",
+        type=int,
+        default=None,
+        help="Emit an INFO progress log after this many Access source tables have been read (default: 1000)",
     )
     
     # Land cover module
@@ -371,6 +398,10 @@ def main():
                 keep_browser_on_error=args.keep_browser_on_error,
                 single_station=args.single_station,
                 fetch_mode=args.fetch_mode,
+                preprocess_workers=args.preprocess_workers,
+                source_tables=args.source_tables,
+                preprocess_backend=args.preprocess_backend,
+                log_every_tables=args.log_every_tables,
             )
         else:
             agent = DataSourceFactory.create(args.module)

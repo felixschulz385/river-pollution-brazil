@@ -1,20 +1,53 @@
+import asyncio
 import logging
-import warnings
-import zipfile
+import os
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
-from uuid import uuid4
+from time import monotonic
 
 import pandas as pd
-import pyodbc
+
+try:
+    from tqdm import tqdm
+except ImportError:
+    class _TqdmFallback:
+        def __init__(self, iterable=None, *args, **kwargs):
+            self.iterable = iterable
+
+        def __iter__(self):
+            return iter(self.iterable or [])
+
+        def update(self, count=1):
+            return None
+
+        def close(self):
+            return None
+
+    def tqdm(iterable=None, *args, **kwargs):
+        return _TqdmFallback(iterable, *args, **kwargs)
 
 from ..database import (
     RAW_ARCHIVES_TABLE,
     SENSOR_ARCHIVE_FILES_TABLE,
+    append_dataframe_table,
     write_dataframe_table,
 )
-from ..paths import ensure_water_quality_dirs, get_raw_dir
+from ..paths import (
+    ensure_water_quality_dirs,
+    get_download_log_database_path,
+    get_raw_dir,
+    get_sensor_database_path,
+)
+from .access_reader import read_archive_payload
 
 logger = logging.getLogger(__name__)
+LOG_EVERY_N_ARCHIVES = 500
+LOG_EVERY_N_TABLES_READ = 1000
+FLUSH_EVERY_N_ARCHIVES = 500
+DEFAULT_PREPROCESS_WORKERS = max(1, min(4, (os.cpu_count() or 2) - 1))
+DEFAULT_PREPROCESS_BACKEND = "thread"
+PREPROCESS_METADATA_FILENAME = "sensor_data_preprocess_metadata.md"
 
 ARCHIVE_TABLE_RECORD_COLUMNS = [
     "station_code",
@@ -72,201 +105,426 @@ def list_valid_raw_archives(root_dir="."):
     return files.reset_index(drop=True)
 
 
-def _list_archive_mdb_members(archive_path: Path) -> list[str]:
-    """Return MDB files contained in one downloaded archive."""
-    try:
-        with zipfile.ZipFile(archive_path, "r") as archive_file:
-            return [
-                member_name
-                for member_name in archive_file.namelist()
-                if member_name.lower().endswith(".mdb")
-            ]
-    except zipfile.BadZipFile:
-        return []
+def _append_pending_frame(
+    root_dir: str,
+    table_name: str,
+    frames: list[pd.DataFrame],
+    written_tables: set[str],
+) -> tuple[int, int]:
+    """Flush one table batch to DuckDB and return written rows plus frame count."""
+    if not frames:
+        return 0, 0
+
+    combined = pd.concat(frames, ignore_index=True, sort=False)
+    if table_name in written_tables:
+        append_dataframe_table(root_dir, table_name, combined)
+    else:
+        write_dataframe_table(root_dir, table_name, combined)
+        written_tables.add(table_name)
+    return len(combined), len(frames)
 
 
-def _extract_mdb_member(archive_path: Path, member_name: str, extract_root: Path) -> Path:
-    """Extract one MDB file to a stable local path for the Access ODBC driver."""
-    target_path = extract_root / f"{uuid4().hex}_{Path(member_name).name}"
-    with zipfile.ZipFile(archive_path, "r") as archive_file:
-        with archive_file.open(member_name, "r") as source_handle:
-            target_path.write_bytes(source_handle.read())
-    return target_path
+def _parse_source_tables(source_tables: str | list[str] | None) -> list[str] | None:
+    if source_tables is None:
+        return None
+    if isinstance(source_tables, str):
+        parsed = [table.strip() for table in source_tables.split(",")]
+    else:
+        parsed = [str(table).strip() for table in source_tables]
+    return [table for table in parsed if table]
 
 
-def _connect_access_database(mdb_path: Path):
-    """Open a Microsoft Access MDB file with the Windows Access ODBC driver."""
-    return pyodbc.connect(
-        rf"Driver={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={mdb_path.resolve()};"
-    )
+def _format_markdown_table(headers: list[str], rows: list[list[object]]) -> str:
+    if not rows:
+        return "_None._"
+
+    header_line = "| " + " | ".join(headers) + " |"
+    separator_line = "| " + " | ".join(["---"] * len(headers)) + " |"
+    row_lines = [
+        "| " + " | ".join(str(value) for value in row) + " |"
+        for row in rows
+    ]
+    return "\n".join([header_line, separator_line, *row_lines])
 
 
-def _list_user_tables(connection) -> list[str]:
-    """List non-system tables from one MDB file."""
-    cursor = connection.cursor()
-    return [
-        row.table_name
-        for row in cursor.tables(tableType="TABLE")
-        if not str(row.table_name).startswith("MSys")
+def _write_preprocess_metadata(
+    root_dir: str,
+    *,
+    raw_dir: Path,
+    started_at_iso: str,
+    elapsed_minutes: float,
+    total_input_archives: int,
+    single_station: str | None,
+    requested_source_tables: list[str] | None,
+    tables_to_read: list[str],
+    worker_count: int,
+    preprocess_backend: str,
+    log_every_tables: int,
+    processed_archives: int,
+    archives_without_mdb: int,
+    archives_with_only_empty_tables: int,
+    extracted_mdb_count: int,
+    source_table_count: int,
+    nonempty_source_table_count: int,
+    parsed_row_count: int,
+    flush_count: int,
+    written_row_counts: dict[str, int],
+    written_frame_counts: dict[str, int],
+) -> Path:
+    """Write a human-readable run summary beside the main sensor database."""
+    sensor_database_path = get_sensor_database_path(root_dir)
+    download_log_database_path = get_download_log_database_path(root_dir)
+    metadata_path = sensor_database_path.with_name(PREPROCESS_METADATA_FILENAME)
+    completed_at_iso = datetime.now().astimezone().isoformat(timespec="seconds")
+    source_table_mode = "all mapped source tables" if requested_source_tables is None else "requested source tables"
+    source_table_preview = ", ".join(tables_to_read[:20])
+    if len(tables_to_read) > 20:
+        source_table_preview += f", ... ({len(tables_to_read)} total)"
+
+    output_rows = [
+        [table_name, row_count, written_frame_counts.get(table_name, 0)]
+        for table_name, row_count in sorted(written_row_counts.items())
     ]
 
+    content = f"""# Sensor Data Preprocess Metadata
 
-def _clean_fallback_name(name: str) -> str:
-    """Create a stable fallback name if the mapping file has no explicit entry."""
-    return (
-        str(name)
-        .strip()
-        .replace(" ", "_")
-        .replace("-", "_")
-        .replace("/", "_")
-        .lower()
-    )
+## Run
 
+| Field | Value |
+| --- | --- |
+| Started at | {started_at_iso} |
+| Completed at | {completed_at_iso} |
+| Elapsed minutes | {elapsed_minutes:.2f} |
+| Root directory | {Path(root_dir).resolve()} |
+| Raw archive directory | {raw_dir.resolve()} |
+| Main database | {sensor_database_path.resolve()} |
+| Download log database | {download_log_database_path.resolve()} |
 
-def _rename_columns(frame: pd.DataFrame, source_table: str, column_map: dict[str, dict[str, str]]) -> pd.DataFrame:
-    """Translate raw Portuguese Access column names to readable English names."""
-    table_column_map = column_map.get(source_table, {})
-    renamed_columns = {
-        column_name: table_column_map.get(column_name, _clean_fallback_name(column_name))
-        for column_name in frame.columns
-    }
-    return frame.rename(columns=renamed_columns)
+## Options
 
+| Field | Value |
+| --- | --- |
+| Single station | {single_station or ""} |
+| Source table mode | {source_table_mode} |
+| Source tables | {source_table_preview} |
+| Worker count | {worker_count} |
+| Backend | {preprocess_backend} |
+| Log every tables | {log_every_tables} |
 
-def _normalize_object_columns(frame: pd.DataFrame) -> pd.DataFrame:
-    """Trim text values and coerce decimal-comma strings when the full column allows it."""
-    normalized = frame.copy()
-    for column in normalized.columns:
-        if normalized[column].dtype != object:
-            continue
-        text_values = normalized[column].astype(str).str.strip()
-        text_values = text_values.replace({"": pd.NA, "nan": pd.NA, "None": pd.NA})
-        numeric_candidate = pd.to_numeric(text_values.str.replace(",", ".", regex=False), errors="coerce")
-        if text_values.notna().sum() > 0 and numeric_candidate.notna().sum() == text_values.notna().sum():
-            normalized[column] = numeric_candidate
-        else:
-            normalized[column] = text_values
-    return normalized
+## Counts
 
+| Field | Value |
+| --- | --- |
+| Input archives | {total_input_archives} |
+| Processed archives | {processed_archives} |
+| Archives without MDB | {archives_without_mdb} |
+| Archives with only empty tables | {archives_with_only_empty_tables} |
+| Extracted MDB files | {extracted_mdb_count} |
+| Source tables read | {source_table_count} |
+| Non-empty source tables | {nonempty_source_table_count} |
+| Parsed rows | {parsed_row_count} |
+| DuckDB flush batches | {flush_count} |
+| Output tables | {len(written_row_counts)} |
 
-def _load_mdb_tables(
-    mdb_path: Path,
-    archive_name: str,
-    station_code: str,
-    table_map: dict[str, str],
-    column_map: dict[str, dict[str, str]],
-) -> tuple[dict[str, list[pd.DataFrame]], list[dict[str, object]], bool]:
-    """Read all MDB tables and split them into non-empty table payloads plus metadata."""
-    parsed_tables: dict[str, list[pd.DataFrame]] = {}
-    archive_records: list[dict[str, object]] = []
-    has_nonempty_table = False
+## Output Tables
 
-    with _connect_access_database(mdb_path) as connection:
-        user_tables = _list_user_tables(connection)
-        for source_table in user_tables:
-            table_name = table_map.get(source_table, _clean_fallback_name(source_table))
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    message="pandas only supports SQLAlchemy connectable",
-                    category=UserWarning,
-                )
-                frame = pd.read_sql(f"SELECT * FROM [{source_table}]", connection)
-            row_count = len(frame)
-            archive_records.append(
-                {
-                    "station_code": station_code,
-                    "source_archive_name": archive_name,
-                    "source_mdb_name": mdb_path.name,
-                    "source_table_name": source_table,
-                    "table_name": table_name,
-                    "row_count": row_count,
-                    "is_empty_table": int(row_count == 0),
-                }
-            )
-            if row_count == 0:
-                continue
-
-            has_nonempty_table = True
-            processed = _rename_columns(frame, source_table, column_map)
-            processed = _normalize_object_columns(processed)
-            processed["source_archive_name"] = archive_name
-            processed["source_mdb_name"] = mdb_path.name
-            processed["source_table_name"] = source_table
-            parsed_tables.setdefault(table_name, []).append(processed)
-
-    return parsed_tables, archive_records, has_nonempty_table
+{_format_markdown_table(["Table", "Rows", "Source frames"], output_rows)}
+"""
+    metadata_path.write_text(content, encoding="utf-8")
+    return metadata_path
 
 
-def preprocess_station_data(root_dir=".", single_station=None):
+def preprocess_station_data(
+    root_dir=".",
+    single_station=None,
+    preprocess_workers: int | None = None,
+    source_tables: str | list[str] | None = None,
+    preprocess_backend: str = DEFAULT_PREPROCESS_BACKEND,
+    log_every_tables: int = LOG_EVERY_N_TABLES_READ,
+):
     """Parse downloaded MDB archives and persist translated Access tables into DuckDB."""
+    started_at = monotonic()
+    started_at_iso = datetime.now().astimezone().isoformat(timespec="seconds")
     water_quality_dir, raw_dir = ensure_water_quality_dirs(root_dir)
     files = list_valid_raw_archives(root_dir)
     if single_station is not None:
         files = files.loc[files["station_code"].astype(str) == str(single_station)].copy()
+        logger.info("Filtering preprocess input to station %s.", single_station)
     if files.empty:
         raise ValueError(f"No valid raw station MDB archives found in {raw_dir}.")
 
-    extract_root = (water_quality_dir / "_mdb_extract").resolve()
-    extract_root.mkdir(parents=True, exist_ok=True)
-
     table_map, column_map = _load_name_mapping()
-    logger.info("Preprocessing %s raw MDB archive(s) from %s.", len(files), raw_dir)
+    requested_source_tables = _parse_source_tables(source_tables)
+    tables_to_read = requested_source_tables or list(table_map.keys())
+    worker_count = preprocess_workers or DEFAULT_PREPROCESS_WORKERS
+    worker_count = max(1, int(worker_count))
+    executor_class = ProcessPoolExecutor if preprocess_backend == "process" else ThreadPoolExecutor
+    extract_root = water_quality_dir / "_mdb_extract"
+    extract_root.mkdir(parents=True, exist_ok=True)
+    logger.info(
+        "Preprocessing %s raw MDB archive(s) from %s into %s.",
+        len(files),
+        raw_dir,
+        water_quality_dir,
+    )
+    logger.info(
+        "Loaded %s source table name mapping(s) and %s source table column mapping group(s).",
+        len(table_map),
+        len(column_map),
+    )
+    if requested_source_tables is None:
+        logger.info(
+            "Reading %s mapped source table(s) directly with %s %s worker(s); skipping Access table discovery.",
+            len(tables_to_read),
+            worker_count,
+            preprocess_backend,
+        )
+    else:
+        logger.info(
+            "Reading only requested source table(s) with %s %s worker(s): %s.",
+            worker_count,
+            preprocess_backend,
+            ", ".join(requested_source_tables),
+        )
 
     archive_metadata = files.copy()
     archive_metadata["archive_kind"] = "mdb"
     archive_metadata["is_empty_archive"] = 0
 
     archive_table_records: list[dict[str, object]] = []
-    parsed_tables: dict[str, list[pd.DataFrame]] = {}
+    pending_tables: dict[str, list[pd.DataFrame]] = {}
+    written_tables: set[str] = set()
+    written_row_counts: dict[str, int] = {}
+    written_frame_counts: dict[str, int] = {}
+    processed_archives = 0
+    archives_without_mdb = 0
+    archives_with_only_empty_tables = 0
+    extracted_mdb_count = 0
+    source_table_count = 0
+    nonempty_source_table_count = 0
+    parsed_row_count = 0
+    flush_count = 0
+    last_flush_at = monotonic()
+    next_table_log_at = max(1, int(log_every_tables or LOG_EVERY_N_TABLES_READ))
 
-    for file_row in files.itertuples(index=False):
-        archive_path = raw_dir / file_row.filename
-        mdb_members = _list_archive_mdb_members(archive_path)
-        if not mdb_members:
-            logger.info("Skipping archive without MDB members: %s", archive_path.name)
-            archive_metadata.loc[archive_metadata["filename"] == file_row.filename, "is_empty_archive"] = 1
-            continue
+    def _write_run_metadata() -> Path:
+        return _write_preprocess_metadata(
+            root_dir,
+            raw_dir=raw_dir,
+            started_at_iso=started_at_iso,
+            elapsed_minutes=(monotonic() - started_at) / 60,
+            total_input_archives=len(files),
+            single_station=single_station,
+            requested_source_tables=requested_source_tables,
+            tables_to_read=tables_to_read,
+            worker_count=worker_count,
+            preprocess_backend=preprocess_backend,
+            log_every_tables=max(1, int(log_every_tables or LOG_EVERY_N_TABLES_READ)),
+            processed_archives=processed_archives,
+            archives_without_mdb=archives_without_mdb,
+            archives_with_only_empty_tables=archives_with_only_empty_tables,
+            extracted_mdb_count=extracted_mdb_count,
+            source_table_count=source_table_count,
+            nonempty_source_table_count=nonempty_source_table_count,
+            parsed_row_count=parsed_row_count,
+            flush_count=flush_count,
+            written_row_counts=written_row_counts,
+            written_frame_counts=written_frame_counts,
+        )
 
-        archive_has_nonempty_data = False
-        extracted_paths: list[Path] = []
-        try:
-            for member_name in mdb_members:
-                extracted_mdb_path = _extract_mdb_member(archive_path, member_name, extract_root)
-                extracted_paths.append(extracted_mdb_path)
-                member_tables, member_records, has_nonempty_table = _load_mdb_tables(
-                    extracted_mdb_path,
-                    archive_name=file_row.filename,
-                    station_code=str(file_row.station_code),
-                    table_map=table_map,
-                    column_map=column_map,
-                )
-                archive_table_records.extend(member_records)
-                archive_has_nonempty_data = archive_has_nonempty_data or has_nonempty_table
-                for table_name, frames in member_tables.items():
-                    parsed_tables.setdefault(table_name, []).extend(frames)
-        finally:
-            for extracted_path in extracted_paths:
-                extracted_path.unlink(missing_ok=True)
+    def _flush_pending_tables(reason: str) -> None:
+        nonlocal flush_count, last_flush_at
+        pending_frame_count = sum(len(frames) for frames in pending_tables.values())
+        if pending_frame_count == 0:
+            return
 
-        if not archive_has_nonempty_data:
-            logger.info("Archive %s contains only empty MDB tables.", file_row.filename)
-            archive_metadata.loc[archive_metadata["filename"] == file_row.filename, "is_empty_archive"] = 1
+        flush_count += 1
+        pending_table_count = len(pending_tables)
+        logger.info(
+            "Flushing batch %s to DuckDB (%s): %s frame(s) across %s table(s).",
+            flush_count,
+            reason,
+            pending_frame_count,
+            pending_table_count,
+        )
+        flush_started_at = monotonic()
+        for table_name, frames in tqdm(
+            list(pending_tables.items()),
+            total=pending_table_count,
+            desc=f"Flushing batch {flush_count}",
+        ):
+            row_count, frame_count = _append_pending_frame(
+                root_dir,
+                table_name,
+                frames,
+                written_tables,
+            )
+            written_row_counts[table_name] = written_row_counts.get(table_name, 0) + row_count
+            written_frame_counts[table_name] = written_frame_counts.get(table_name, 0) + frame_count
+            frames.clear()
 
+        pending_tables.clear()
+        last_flush_at = monotonic()
+        logger.info(
+            "Finished DuckDB batch %s in %.1f min; %s total output table(s), %s total row(s) written so far.",
+            flush_count,
+            (last_flush_at - flush_started_at) / 60,
+            len(written_tables),
+            sum(written_row_counts.values()),
+        )
+
+    def _log_archive_progress() -> None:
+        elapsed_minutes = (monotonic() - started_at) / 60
+        logger.info(
+            "Parsed %s/%s archive(s) in %.1f min: %s MDB file(s), %s source table(s), %s non-empty table(s), %s row(s), %s output table(s), %.1f min since last flush.",
+            processed_archives,
+            len(files),
+            elapsed_minutes,
+            extracted_mdb_count,
+            source_table_count,
+            nonempty_source_table_count,
+            parsed_row_count,
+            len(written_tables.union(pending_tables.keys())),
+            (monotonic() - last_flush_at) / 60,
+        )
+
+    def _log_table_progress() -> None:
+        elapsed_seconds = max(monotonic() - started_at, 0.001)
+        elapsed_minutes = elapsed_seconds / 60
+        logger.info(
+            "Read %s source table(s) from %s archive(s) in %.1f min: %s non-empty table(s), %s row(s), %.1f table(s)/sec.",
+            source_table_count,
+            processed_archives,
+            elapsed_minutes,
+            nonempty_source_table_count,
+            parsed_row_count,
+            source_table_count / elapsed_seconds,
+        )
+
+    def _record_archive_result(result: dict[str, object]) -> None:
+        nonlocal processed_archives
+        nonlocal archives_without_mdb
+        nonlocal archives_with_only_empty_tables
+        nonlocal extracted_mdb_count
+        nonlocal source_table_count
+        nonlocal nonempty_source_table_count
+        nonlocal parsed_row_count
+        nonlocal next_table_log_at
+
+        processed_archives += 1
+        archive_name = str(result["archive_name"])
+        if result["without_mdb"]:
+            archives_without_mdb += 1
+            logger.warning("Skipping archive without MDB members: %s", archive_name)
+            archive_metadata.loc[archive_metadata["filename"] == archive_name, "is_empty_archive"] = 1
+        else:
+            extracted_mdb_count += int(result["mdb_members"])
+            member_records = result["archive_records"]
+            archive_table_records.extend(member_records)
+            source_table_count += len(member_records)
+            nonempty_source_table_count += sum(
+                1 for record in member_records if not record["is_empty_table"]
+            )
+            parsed_row_count += sum(int(record["row_count"]) for record in member_records)
+
+            if not result["has_nonempty_table"]:
+                archives_with_only_empty_tables += 1
+                logger.debug("Archive %s contains only empty MDB tables.", archive_name)
+                archive_metadata.loc[archive_metadata["filename"] == archive_name, "is_empty_archive"] = 1
+
+            for table_name, frames in result["parsed_tables"].items():
+                pending_tables.setdefault(table_name, []).extend(frames)
+
+        if source_table_count >= next_table_log_at:
+            _log_table_progress()
+            while source_table_count >= next_table_log_at:
+                next_table_log_at += max(1, int(log_every_tables or LOG_EVERY_N_TABLES_READ))
+        if processed_archives % LOG_EVERY_N_ARCHIVES == 0 or processed_archives == len(files):
+            _log_archive_progress()
+        if processed_archives % FLUSH_EVERY_N_ARCHIVES == 0:
+            _flush_pending_tables(f"{processed_archives} archive(s) parsed")
+
+    async def _read_archives() -> None:
+        loop = asyncio.get_running_loop()
+        archive_records = files.loc[:, ["filename", "station_code"]].to_dict("records")
+        batch_size = max(worker_count * 4, 1)
+
+        with executor_class(max_workers=worker_count) as executor:
+            progress = tqdm(total=len(archive_records), desc="Reading MDB archives")
+            try:
+                for batch_start in range(0, len(archive_records), batch_size):
+                    batch = archive_records[batch_start : batch_start + batch_size]
+                    futures = [
+                        loop.run_in_executor(
+                            executor,
+                            read_archive_payload,
+                            str(raw_dir / record["filename"]),
+                            record["filename"],
+                            str(record["station_code"]),
+                            table_map,
+                            column_map,
+                            tables_to_read,
+                            str(extract_root),
+                        )
+                        for record in batch
+                    ]
+                    for future in asyncio.as_completed(futures):
+                        result = await future
+                        _record_archive_result(result)
+                        progress.update(1)
+            finally:
+                progress.close()
+
+    asyncio.run(_read_archives())
+    _flush_pending_tables("final parse batch")
+
+    logger.info(
+        "Finished parsing archives: %s processed, %s without MDB files, %s with only empty tables, %s MDB file(s), %s source table(s), %s non-empty source table(s), %s parsed row(s), %s output table(s).",
+        processed_archives,
+        archives_without_mdb,
+        archives_with_only_empty_tables,
+        extracted_mdb_count,
+        source_table_count,
+        nonempty_source_table_count,
+        parsed_row_count,
+        len(written_tables),
+    )
+    logger.info("Writing archive metadata to DuckDB table %s.", RAW_ARCHIVES_TABLE)
     write_dataframe_table(root_dir, RAW_ARCHIVES_TABLE, archive_metadata)
+    logger.info(
+        "Writing %s archive table record(s) to DuckDB table %s.",
+        len(archive_table_records),
+        SENSOR_ARCHIVE_FILES_TABLE,
+    )
     write_dataframe_table(
         root_dir,
         SENSOR_ARCHIVE_FILES_TABLE,
         pd.DataFrame(archive_table_records, columns=ARCHIVE_TABLE_RECORD_COLUMNS),
     )
 
-    if not parsed_tables:
+    if not written_tables:
         logger.info("All processed MDB archives were empty. No data tables were written.")
+        metadata_path = _write_run_metadata()
+        logger.info("Wrote preprocess metadata to %s.", metadata_path)
         return {}
 
-    for table_name, frames in parsed_tables.items():
-        combined = pd.concat(frames, ignore_index=True)
-        logger.info("Writing %s rows to DuckDB table %s.", len(combined), table_name)
-        write_dataframe_table(root_dir, table_name, combined)
+    logger.info(
+        "Finished writing %s parsed output table(s) to DuckDB across %s batch(es).",
+        len(written_tables),
+        flush_count,
+    )
+    for table_name, row_count in sorted(written_row_counts.items()):
+        logger.info(
+            "Output table %s: %s row(s) from %s source frame(s).",
+            table_name,
+            row_count,
+            written_frame_counts.get(table_name, 0),
+        )
 
-    return parsed_tables
+    logger.info(
+        "Water-quality preprocess finished in %.1f min.",
+        (monotonic() - started_at) / 60,
+    )
+    metadata_path = _write_run_metadata()
+    logger.info("Wrote preprocess metadata to %s.", metadata_path)
+    return written_row_counts

@@ -216,7 +216,15 @@ def append_dataframe_table(
             connection.execute(f"CREATE TABLE {table_name} AS SELECT * FROM _table_frame")
             _write_metadata(connection, table_name, json_columns=json_columns)
         else:
-            connection.execute(f"INSERT INTO {table_name} SELECT * FROM _table_frame")
+            existing_columns = {
+                row[1]
+                for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+            }
+            frame_schema = connection.execute("DESCRIBE SELECT * FROM _table_frame").fetchall()
+            for column_name, column_type, *_ in frame_schema:
+                if column_name not in existing_columns:
+                    connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+            connection.execute(f"INSERT INTO {table_name} BY NAME SELECT * FROM _table_frame")
         connection.unregister("_table_frame")
     return _database_path_for_table(root_dir, table_name)
 

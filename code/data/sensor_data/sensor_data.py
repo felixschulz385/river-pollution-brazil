@@ -13,6 +13,10 @@ class sensor_data:
         keep_browser_on_error=False,
         single_station=None,
         fetch_mode="default",
+        preprocess_workers=None,
+        source_tables=None,
+        preprocess_backend="thread",
+        log_every_tables=None,
     ):
         self.root_dir = root_dir
         self.download_dir = download_dir
@@ -20,6 +24,10 @@ class sensor_data:
         self.keep_browser_on_error = keep_browser_on_error
         self.single_station = single_station
         self.fetch_mode = fetch_mode
+        self.preprocess_workers = preprocess_workers
+        self.source_tables = source_tables
+        self.preprocess_backend = preprocess_backend
+        self.log_every_tables = log_every_tables
 
     def fetch(self):
         """Download raw station archives for prepared sensor stations."""
@@ -41,4 +49,8 @@ class sensor_data:
         preprocess_station_data(
             root_dir=self.root_dir,
             single_station=self.single_station,
+            preprocess_workers=self.preprocess_workers,
+            source_tables=self.source_tables,
+            preprocess_backend=self.preprocess_backend,
+            log_every_tables=self.log_every_tables,
         )
