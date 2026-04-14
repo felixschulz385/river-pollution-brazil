@@ -3,6 +3,13 @@ import pandas as pd
 from ..database import STATIONS_TABLE, STATION_RIVERS_TABLE, read_dataframe_table
 
 
+def _column_name(frame, *candidates):
+    for candidate in candidates:
+        if candidate in frame.columns:
+            return candidate
+    raise KeyError(f"None of these columns exist in the station table: {', '.join(candidates)}")
+
+
 def _normalise_station_code(value) -> str | None:
     """Return a stable string station code.
 
@@ -32,13 +39,23 @@ def load_queryable_stations(root_dir="."):
     # table. The archive API can expose multiple sensor families per station, so
     # every curated station remains eligible for scraping.
     curated_stations = read_dataframe_table(root_dir, STATION_RIVERS_TABLE)
-    curated_stations = curated_stations.loc[:, ["station_code"]].copy()
+    curated_code_column = _column_name(curated_stations, "Codigo", "station_code", "codigo")
+    curated_stations = curated_stations.loc[:, [curated_code_column]].copy()
+    curated_stations = curated_stations.rename(columns={curated_code_column: "station_code"})
     curated_stations["station_code"] = curated_stations["station_code"].map(_normalise_station_code)
     curated_stations = curated_stations.dropna(subset=["station_code"])
     curated_stations = curated_stations.reset_index(drop=True).drop_duplicates(subset=["station_code"])
 
     station_inventory = read_dataframe_table(root_dir, STATIONS_TABLE)
-    station_inventory = station_inventory.loc[:, ["station_code", "station_name"]].copy()
+    inventory_code_column = _column_name(station_inventory, "Codigo", "station_code", "codigo")
+    inventory_name_column = _column_name(station_inventory, "Nome", "station_name", "nome")
+    station_inventory = station_inventory.loc[:, [inventory_code_column, inventory_name_column]].copy()
+    station_inventory = station_inventory.rename(
+        columns={
+            inventory_code_column: "station_code",
+            inventory_name_column: "station_name",
+        }
+    )
     station_inventory["station_code"] = station_inventory["station_code"].map(_normalise_station_code)
     station_inventory["station_name"] = station_inventory["station_name"].map(_normalise_station_name)
     station_inventory = station_inventory.dropna(subset=["station_code", "station_name"])

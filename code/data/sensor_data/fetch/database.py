@@ -9,8 +9,6 @@ tables.
 from __future__ import annotations
 
 import json
-import re
-import unicodedata
 from pathlib import Path
 
 import duckdb
@@ -60,6 +58,10 @@ def _connect(root_dir: str = ".", table_name: str | None = None) -> duckdb.DuckD
     return connection
 
 
+def _quote_identifier(name: str) -> str:
+    return '"' + str(name).replace('"', '""') + '"'
+
+
 def _normalise_frame(frame: pd.DataFrame) -> pd.DataFrame:
     """Persist indexes as columns so tables round-trip cleanly."""
     if isinstance(frame.index, pd.RangeIndex):
@@ -68,29 +70,8 @@ def _normalise_frame(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def clean_column_names(frame: pd.DataFrame) -> pd.DataFrame:
-    """Normalise column names for DuckDB-friendly querying.
-
-    The ANA payloads use mixed case, accents, and repeated name fragments.
-    Converting them once at write time gives every downstream query a stable,
-    SQL-friendly schema.
-    """
-
-    def _clean_one(name: str) -> str:
-        ascii_name = unicodedata.normalize("NFKD", str(name)).encode("ascii", "ignore").decode("ascii")
-        ascii_name = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", ascii_name)
-        snake_name = re.sub(r"[^0-9a-zA-Z]+", "_", ascii_name).strip("_").lower()
-        return snake_name or "column"
-
-    counts: dict[str, int] = {}
-    renamed_columns = {}
-    for original_name in frame.columns:
-        cleaned_name = _clean_one(original_name)
-        counts[cleaned_name] = counts.get(cleaned_name, 0) + 1
-        if counts[cleaned_name] > 1:
-            cleaned_name = f"{cleaned_name}_{counts[cleaned_name]}"
-        renamed_columns[original_name] = cleaned_name
-
-    return frame.rename(columns=renamed_columns)
+    """Return a copy without changing source database field names."""
+    return frame.copy()
 
 
 def _encode_json_columns(
@@ -186,9 +167,10 @@ def write_dataframe_table(
     """Persist a pandas DataFrame into DuckDB as a replace-in-place table."""
     prepared_frame = clean_column_names(frame)
     prepared_frame = _encode_json_columns(_normalise_frame(prepared_frame), json_columns=json_columns)
+    quoted_table_name = _quote_identifier(table_name)
     with _connect(root_dir, table_name=table_name) as connection:
         connection.register("_table_frame", prepared_frame)
-        connection.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM _table_frame")
+        connection.execute(f"CREATE OR REPLACE TABLE {quoted_table_name} AS SELECT * FROM _table_frame")
         connection.unregister("_table_frame")
         _write_metadata(connection, table_name, json_columns=json_columns)
     return _database_path_for_table(root_dir, table_name)
@@ -203,6 +185,7 @@ def append_dataframe_table(
     """Append rows into a DuckDB table, creating it on first write."""
     prepared_frame = clean_column_names(frame)
     prepared_frame = _encode_json_columns(_normalise_frame(prepared_frame), json_columns=json_columns)
+    quoted_table_name = _quote_identifier(table_name)
     with _connect(root_dir, table_name=table_name) as connection:
         connection.register("_table_frame", prepared_frame)
         table_already_exists = (
@@ -213,26 +196,30 @@ def append_dataframe_table(
             > 0
         )
         if not table_already_exists:
-            connection.execute(f"CREATE TABLE {table_name} AS SELECT * FROM _table_frame")
+            connection.execute(f"CREATE TABLE {quoted_table_name} AS SELECT * FROM _table_frame")
             _write_metadata(connection, table_name, json_columns=json_columns)
         else:
             existing_columns = {
                 row[1]
-                for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+                for row in connection.execute(f"PRAGMA table_info({quoted_table_name})").fetchall()
             }
             frame_schema = connection.execute("DESCRIBE SELECT * FROM _table_frame").fetchall()
             for column_name, column_type, *_ in frame_schema:
                 if column_name not in existing_columns:
-                    connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
-            connection.execute(f"INSERT INTO {table_name} BY NAME SELECT * FROM _table_frame")
+                    quoted_column_name = _quote_identifier(column_name)
+                    connection.execute(
+                        f"ALTER TABLE {quoted_table_name} ADD COLUMN {quoted_column_name} {column_type}"
+                    )
+            connection.execute(f"INSERT INTO {quoted_table_name} BY NAME SELECT * FROM _table_frame")
         connection.unregister("_table_frame")
     return _database_path_for_table(root_dir, table_name)
 
 
 def read_dataframe_table(root_dir: str, table_name: str) -> pd.DataFrame:
     """Load a pandas DataFrame from DuckDB and restore JSON-backed columns."""
+    quoted_table_name = _quote_identifier(table_name)
     with _connect(root_dir, table_name=table_name) as connection:
-        frame = connection.execute(f"SELECT * FROM {table_name}").fetchdf()
+        frame = connection.execute(f"SELECT * FROM {quoted_table_name}").fetchdf()
         metadata = _read_metadata(connection, table_name)
     return _decode_json_columns(frame, json_columns=metadata["json_columns"])
 
@@ -254,12 +241,13 @@ def write_geodataframe_table(
     prepared_frame = _normalise_frame(cleaned_frame)
     prepared_frame = _encode_json_columns(prepared_frame, json_columns=json_columns)
     prepared_frame = prepared_frame.copy()
-    # Re-wrap the renamed frame as a GeoDataFrame before serialising to WKT so
-    # geopandas still treats the geometry column as active geometry.
+    # Re-wrap the frame as a GeoDataFrame before serialising to WKT so geopandas
+    # still treats the geometry column as active geometry.
     prepared_frame[geometry_column] = cleaned_geoframe.geometry.reset_index(drop=True).to_wkt()
+    quoted_table_name = _quote_identifier(table_name)
     with _connect(root_dir, table_name=table_name) as connection:
         connection.register("_table_frame", prepared_frame)
-        connection.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM _table_frame")
+        connection.execute(f"CREATE OR REPLACE TABLE {quoted_table_name} AS SELECT * FROM _table_frame")
         connection.unregister("_table_frame")
         _write_metadata(
             connection,
@@ -273,8 +261,9 @@ def write_geodataframe_table(
 
 def read_geodataframe_table(root_dir: str, table_name: str) -> gpd.GeoDataFrame:
     """Load a GeoDataFrame and rebuild geometry objects from WKT text."""
+    quoted_table_name = _quote_identifier(table_name)
     with _connect(root_dir, table_name=table_name) as connection:
-        frame = connection.execute(f"SELECT * FROM {table_name}").fetchdf()
+        frame = connection.execute(f"SELECT * FROM {quoted_table_name}").fetchdf()
         metadata = _read_metadata(connection, table_name)
     frame = _decode_json_columns(frame, json_columns=metadata["json_columns"])
     geometry_column = metadata["geometry_column"] or "geometry"

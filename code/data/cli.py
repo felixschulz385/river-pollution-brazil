@@ -13,14 +13,13 @@ Usage:
 
 Modules:
   health          Process health data
-  sensor-stations Process water-quality station inventory
   water-quality   Process water quality data
   river-network   Process river network data
   download        Download datasets
 
 Actions:
   fetch           Fetch data from source
-  preprocess      Preprocess the fetched data
+  preprocess      Preprocess fetched data for modules that still expose it
   generate        Generate processed river network data
 
 Options:
@@ -36,8 +35,6 @@ Examples:
   python cli.py health fetch --subtype birth
   python cli.py health fetch --subtype all
   python cli.py health preprocess
-  python cli.py sensor-stations fetch
-  python cli.py sensor-stations preprocess
   python cli.py water-quality fetch
   python cli.py water-quality preprocess
   python cli.py river-network generate --gpkg-path /path/to/bho_2017.gpkg --output-dir ./river_data
@@ -75,7 +72,7 @@ class DataSourceFactory:
         Create a data source instance based on the module name.
         
         Parameters:
-        module (str): Name of the data module ('health', 'sensor-stations', 'water-quality', 'download', 'river-network')
+        module (str): Name of the data module ('health', 'water-quality', 'download', 'river-network')
         **kwargs: Additional arguments to pass to the data source constructor
         
         Returns:
@@ -87,17 +84,12 @@ class DataSourceFactory:
         if module == "health":
             from health import health
             return health()
-        elif module == "sensor-stations":
-            from sensor_data.sensor_stations import sensor_stations
-            return sensor_stations(
-                root_dir=kwargs.get("root_dir", "."),
-                brazil_boundary_path=kwargs.get("brazil_boundary_path"),
-                river_network_dir=kwargs.get("river_network_dir"),
-            )
         elif module == "water-quality":
             from sensor_data.sensor_data import sensor_data
             return sensor_data(
                 root_dir=kwargs.get("root_dir", "."),
+                brazil_boundary_path=kwargs.get("brazil_boundary_path"),
+                river_network_dir=kwargs.get("river_network_dir"),
                 download_dir=kwargs.get("download_dir"),
                 headless=kwargs.get("headless", False),
                 keep_browser_on_error=kwargs.get("keep_browser_on_error", False),
@@ -140,8 +132,6 @@ def main():
         python cli.py health fetch --subtype birth
         python cli.py health fetch --subtype all
         python cli.py health preprocess
-        python cli.py sensor-stations fetch
-        python cli.py sensor-stations preprocess
         python cli.py water-quality fetch
         python cli.py water-quality preprocess
         python cli.py land-cover fetch
@@ -173,31 +163,6 @@ def main():
         help="Type of health data to fetch (default: all)"
     )
 
-    stations_parser = subparsers.add_parser(
-        "sensor-stations",
-        help="Process water-quality station inventory",
-    )
-    stations_parser.add_argument(
-        "action",
-        choices=["fetch", "preprocess"],
-        help="Action to perform",
-    )
-    stations_parser.add_argument(
-        "--root-dir",
-        default=".",
-        help="Project root directory containing the data folder (default: current working directory)",
-    )
-    stations_parser.add_argument(
-        "--brazil-boundary-path",
-        default=None,
-        help="Optional path relative to --root-dir for the Brazil boundary file",
-    )
-    stations_parser.add_argument(
-        "--river-network-dir",
-        default=None,
-        help="Optional path relative to --root-dir for saved river-network outputs",
-    )
-    
     # Water quality module
     wq_parser = subparsers.add_parser("water-quality", help="Process water quality data")
     wq_parser.add_argument(
@@ -211,6 +176,16 @@ def main():
         help="Project root directory containing the data folder (default: current working directory)",
     )
     wq_parser.add_argument(
+        "--brazil-boundary-path",
+        default=None,
+        help="Optional path relative to --root-dir for the Brazil boundary file",
+    )
+    wq_parser.add_argument(
+        "--river-network-dir",
+        default=None,
+        help="Optional path relative to --root-dir for saved river-network outputs",
+    )
+    wq_parser.add_argument(
         "--download-dir",
         default=None,
         help="Optional local Chrome download directory (default: data/sensor_data/raw)",
@@ -218,7 +193,7 @@ def main():
     wq_parser.add_argument(
         "--headless",
         action="store_true",
-        help="Run the water-quality scraper in headless mode",
+        help="Run the water-quality fetcher in headless mode",
     )
     wq_parser.add_argument(
         "--keep-browser-on-error",
@@ -382,17 +357,12 @@ def main():
                 area=args.area,
                 year=args.year
             )
-        elif args.module == "sensor-stations":
+        elif args.module == "water-quality":
             agent = DataSourceFactory.create(
                 args.module,
                 root_dir=args.root_dir,
                 brazil_boundary_path=args.brazil_boundary_path,
                 river_network_dir=args.river_network_dir,
-            )
-        elif args.module == "water-quality":
-            agent = DataSourceFactory.create(
-                args.module,
-                root_dir=args.root_dir,
                 download_dir=args.download_dir,
                 headless=args.headless,
                 keep_browser_on_error=args.keep_browser_on_error,
@@ -407,7 +377,7 @@ def main():
             agent = DataSourceFactory.create(args.module)
         
         # Execute the requested action
-        if args.module in ["health", "sensor-stations", "water-quality"]:
+        if args.module in ["health", "water-quality"]:
             action = args.action
             logger.info(f"Running {args.module} module: {action}")
             

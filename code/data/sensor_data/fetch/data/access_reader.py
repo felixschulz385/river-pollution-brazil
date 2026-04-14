@@ -11,26 +11,9 @@ import pyodbc
 logger = logging.getLogger(__name__)
 
 
-def clean_fallback_name(name: str) -> str:
-    """Create a stable fallback name if the mapping file has no explicit entry."""
-    return (
-        str(name)
-        .strip()
-        .replace(" ", "_")
-        .replace("-", "_")
-        .replace("/", "_")
-        .lower()
-    )
-
-
 def rename_columns(frame: pd.DataFrame, source_table: str, column_map: dict[str, dict[str, str]]) -> pd.DataFrame:
-    """Translate raw Portuguese Access column names to readable English names."""
-    table_column_map = column_map.get(source_table, {})
-    renamed_columns = {
-        column_name: table_column_map.get(column_name, clean_fallback_name(column_name))
-        for column_name in frame.columns
-    }
-    return frame.rename(columns=renamed_columns)
+    """Keep raw Access column names for the database conversion step."""
+    return frame.copy()
 
 
 def normalize_object_columns(frame: pd.DataFrame) -> pd.DataFrame:
@@ -117,7 +100,7 @@ def load_mdb_tables(
                     continue
                 raise
 
-            table_name = table_map.get(source_table, clean_fallback_name(source_table))
+            table_name = source_table
             row_count = len(frame)
             archive_records.append(
                 {

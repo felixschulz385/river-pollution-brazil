@@ -60,28 +60,9 @@ ARCHIVE_TABLE_RECORD_COLUMNS = [
 ]
 
 
-def _mapping_file_path() -> Path:
-    """Return the checked-in table/column translation file."""
-    return Path(__file__).resolve().parents[4] / "data" / "sensor_data" / "raw_column_name_mapping.csv"
-
-
 def _load_name_mapping() -> tuple[dict[str, str], dict[str, dict[str, str]]]:
-    """Load English table and column names derived in the notebook workflow."""
-    mapping = pd.read_csv(_mapping_file_path())
-
-    table_map = (
-        mapping.loc[:, ["table_original", "table_english"]]
-        .dropna(subset=["table_original", "table_english"])
-        .drop_duplicates(subset=["table_original"])
-        .set_index("table_original")["table_english"]
-        .to_dict()
-    )
-
-    column_mapping_rows = mapping.dropna(subset=["table_original", "column_original", "column_english"])
-    column_map: dict[str, dict[str, str]] = {}
-    for row in column_mapping_rows.itertuples(index=False):
-        column_map.setdefault(row.table_original, {})[row.column_original] = row.column_english
-    return table_map, column_map
+    """Return empty mappings because raw database names are preserved."""
+    return {}, {}
 
 
 def list_valid_raw_archives(root_dir="."):
@@ -156,7 +137,7 @@ def _write_preprocess_metadata(
     total_input_archives: int,
     single_station: str | None,
     requested_source_tables: list[str] | None,
-    tables_to_read: list[str],
+    tables_to_read: list[str] | None,
     worker_count: int,
     preprocess_backend: str,
     log_every_tables: int,
@@ -176,10 +157,13 @@ def _write_preprocess_metadata(
     download_log_database_path = get_download_log_database_path(root_dir)
     metadata_path = sensor_database_path.with_name(PREPROCESS_METADATA_FILENAME)
     completed_at_iso = datetime.now().astimezone().isoformat(timespec="seconds")
-    source_table_mode = "all mapped source tables" if requested_source_tables is None else "requested source tables"
-    source_table_preview = ", ".join(tables_to_read[:20])
-    if len(tables_to_read) > 20:
-        source_table_preview += f", ... ({len(tables_to_read)} total)"
+    source_table_mode = "all discovered source tables" if requested_source_tables is None else "requested source tables"
+    if tables_to_read is None:
+        source_table_preview = "discovered per MDB"
+    else:
+        source_table_preview = ", ".join(tables_to_read[:20])
+        if len(tables_to_read) > 20:
+            source_table_preview += f", ... ({len(tables_to_read)} total)"
 
     output_rows = [
         [table_name, row_count, written_frame_counts.get(table_name, 0)]
@@ -242,7 +226,7 @@ def preprocess_station_data(
     preprocess_backend: str = DEFAULT_PREPROCESS_BACKEND,
     log_every_tables: int = LOG_EVERY_N_TABLES_READ,
 ):
-    """Parse downloaded MDB archives and persist translated Access tables into DuckDB."""
+    """Parse downloaded MDB archives and persist raw Access tables into DuckDB."""
     started_at = monotonic()
     started_at_iso = datetime.now().astimezone().isoformat(timespec="seconds")
     water_quality_dir, raw_dir = ensure_water_quality_dirs(root_dir)
@@ -255,7 +239,7 @@ def preprocess_station_data(
 
     table_map, column_map = _load_name_mapping()
     requested_source_tables = _parse_source_tables(source_tables)
-    tables_to_read = requested_source_tables or list(table_map.keys())
+    tables_to_read = requested_source_tables
     worker_count = preprocess_workers or DEFAULT_PREPROCESS_WORKERS
     worker_count = max(1, int(worker_count))
     executor_class = ProcessPoolExecutor if preprocess_backend == "process" else ThreadPoolExecutor
@@ -268,14 +252,11 @@ def preprocess_station_data(
         water_quality_dir,
     )
     logger.info(
-        "Loaded %s source table name mapping(s) and %s source table column mapping group(s).",
-        len(table_map),
-        len(column_map),
+        "Raw database table and field names will be preserved.",
     )
     if requested_source_tables is None:
         logger.info(
-            "Reading %s mapped source table(s) directly with %s %s worker(s); skipping Access table discovery.",
-            len(tables_to_read),
+            "Discovering Access source tables with %s %s worker(s).",
             worker_count,
             preprocess_backend,
         )

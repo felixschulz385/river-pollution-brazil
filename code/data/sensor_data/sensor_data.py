@@ -1,13 +1,11 @@
 class sensor_data:
-    """Thin wrapper around the water-quality scraping pipeline.
-
-    The heavy lifting lives in `scraper/`. This wrapper keeps the public module
-    interface small and makes CLI integration straightforward.
-    """
+    """Run sensor-data fetching, conversion, and cleaning workflows."""
 
     def __init__(
         self,
         root_dir=".",
+        brazil_boundary_path=None,
+        river_network_dir=None,
         download_dir=None,
         headless=False,
         keep_browser_on_error=False,
@@ -19,6 +17,8 @@ class sensor_data:
         log_every_tables=None,
     ):
         self.root_dir = root_dir
+        self.brazil_boundary_path = brazil_boundary_path
+        self.river_network_dir = river_network_dir
         self.download_dir = download_dir
         self.headless = headless
         self.keep_browser_on_error = keep_browser_on_error
@@ -30,9 +30,20 @@ class sensor_data:
         self.log_every_tables = log_every_tables
 
     def fetch(self):
-        """Download raw station archives for prepared sensor stations."""
-        from .scraper.data.download import fetch_station_data
+        """Fetch inventory and archives, then convert both into DuckDB tables."""
+        from .fetch.data.download import fetch_station_data
+        from .fetch.data.preprocess import preprocess_station_data
+        from .fetch.stations.inventory import (
+            fetch_station_inventory,
+            preprocess_station_inventory,
+        )
 
+        fetch_station_inventory(root_dir=self.root_dir)
+        preprocess_station_inventory(
+            root_dir=self.root_dir,
+            brazil_boundary_path=self.brazil_boundary_path,
+            river_network_dir=self.river_network_dir,
+        )
         fetch_station_data(
             root_dir=self.root_dir,
             download_dir=self.download_dir,
@@ -41,12 +52,7 @@ class sensor_data:
             single_station=self.single_station,
             fetch_mode=self.fetch_mode,
         )
-
-    def preprocess(self):
-        """Parse downloaded station archives into DuckDB tables."""
-        from .scraper.data.preprocess import preprocess_station_data
-
-        preprocess_station_data(
+        return preprocess_station_data(
             root_dir=self.root_dir,
             single_station=self.single_station,
             preprocess_workers=self.preprocess_workers,
@@ -54,3 +60,11 @@ class sensor_data:
             preprocess_backend=self.preprocess_backend,
             log_every_tables=self.log_every_tables,
         )
+
+    def preprocess(self):
+        """Rename, clean, and export sensor data as parquet files."""
+        from .preprocess import preprocess_all
+
+        return preprocess_all(root_dir=self.root_dir)
+
+__all__ = ["sensor_data"]
