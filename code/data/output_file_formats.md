@@ -60,6 +60,23 @@ Top-level keys:
 
 Matrix order is derived from `river_trenches.parquet`.
 
+Semantics:
+
+- Node matrices use the per-system node ordering implied by
+  `upstream_node_index` and `downstream_node_index`.
+- `node_reachability_matrices[system_id][i, j] == 1` means upstream node `i`
+  can reach downstream node `j`.
+- `node_distance_matrices[system_id][i, j]` is the along-network distance from
+  node `i` to node `j`.
+- Trench matrices use `trench_index` within each `system_id`.
+- `trench_reachability_matrices[system_id][i, j] == 1` means upstream trench
+  `j` drains into downstream trench `i`.
+- `trench_distance_matrices[system_id][i, j]` is the along-network distance
+  from upstream trench `j` to downstream trench `i`.
+- Consumers that want all upstream trenches for a target trench should read the
+  row corresponding to that target trench's `trench_index` and map nonzero
+  column positions back to trench ids using `river_trenches.parquet`.
+
 ## RiverNetwork Methods
 
 ### `compute_distance_matrices()`
