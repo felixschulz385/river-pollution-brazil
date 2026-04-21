@@ -5,10 +5,13 @@ PREPROCESS_OUTPUT_DIRNAME = "preprocess"
 CLEAN_WATER_QUALITY_PARQUET = "water_quality.parquet"
 CLEAN_STREAMFLOW_PARQUET = "streamflow.parquet"
 STATIONS_RIVERS_PARQUET = "stations_rivers.parquet"
+ASSEMBLED_SENSOR_DATA_PARQUET = "water_quality_streamflow.parquet"
 TRANSFORMATION_RECOMMENDATIONS_JSON = "water_quality_transformations.json"
 CLEANING_FLAGS_PARQUET = "water_quality_cleaning_flags.parquet"
 CLEANING_SUMMARY_PARQUET = "water_quality_cleaning_summary.parquet"
 DATETIME_COLUMN = "datetime"
+STREAMFLOW_MATCH_RADIUS_M = 10_000.0
+STREAMFLOW_ROLLING_WINDOWS = (7, 31)
 STREAMFLOW_DAILY_SCHEMA = [
     "station_code",
     "date",
@@ -498,7 +501,6 @@ AUXILIARY_WATER_QUALITY_COLUMNS = {
     "temporary",
     "removed",
     "duplicate_imported",
-    "station_code",
     "consistency_level",
     "date",
     "time",

@@ -14,6 +14,7 @@
 
 # Temporary Files
 *.log
+*.err
 *.out
 *.pyc
 
@@ -32,6 +33,7 @@
 .DS_Store
 .DS_Store?
 
+.venv/*
 .vscode/*
 data/*/**
 aux/
