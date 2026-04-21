@@ -33,11 +33,13 @@
 .DS_Store
 .DS_Store?
 
+.venv/*
 .vscode/*
 data/*/**
 aux/
 output/documents/*/*/**
 output/presentations/
+output/analysis/
 data/*/**
 api_creds
 setup/miniforge3/*
