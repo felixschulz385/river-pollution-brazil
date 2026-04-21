@@ -31,6 +31,7 @@
 # System Files
 .DS_Store
 .DS_Store?
+.codex/
 
 .vscode/*
 data/*/**
