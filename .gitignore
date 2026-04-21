@@ -35,8 +35,10 @@
 .vscode/*
 data/*/**
 aux/
+log/
 output/documents/*/*/**
 output/presentations/
+output/analysis/
 data/*/**
 api_creds
 setup/miniforge3/*
