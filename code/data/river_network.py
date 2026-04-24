@@ -17,6 +17,25 @@ Saved output files
 `river_system_matrices.pkl`
     Matrix bundle keyed by `system_id`. The row and column ordering metadata
     is not duplicated in the pickle; it is derived from `river_trenches.parquet`.
+
+Matrix semantics
+----------------
+Node matrices are ordered by the per-system node indices stored indirectly via
+`river_trenches.parquet` (`upstream_node_index` and `downstream_node_index`).
+For a node matrix entry `(i, j)`, row `i` is an upstream node and column `j` is
+the downstream node reachable from it.
+
+Trench matrices are ordered by `trench_index` within each `system_id`. Trench
+matrix rows are the queried downstream trench and columns are candidate
+upstream trenches. `trench_reachability_matrices[system_id][i, j] == 1` means
+that trench `j` can drain into trench `i`, and
+`trench_distance_matrices[system_id][i, j]` stores the along-network distance
+from upstream trench `j` to downstream trench `i`.
+
+Downstream consumers such as `code.data.land_cover.assembly` therefore look up a
+target trench's `system_id` and `trench_index`, read that sparse matrix row, map
+the returned column indices back to trench identifiers using
+`river_trenches.parquet`, and bucket the resulting upstream distances.
 """
 
 import numpy as np
@@ -372,13 +391,22 @@ class RiverNetwork:
     def compute_distance_matrices(self) -> None:
         """
         Compute reachability and distance matrices for each river subsystem.
-        
+
         For each subsystem, computes:
-        - Reachability matrix: 1 if node i can reach node j, 0 otherwise
-        - Distance matrix: Distance from node i to node j (based on estuary distance)
-        
+        - node reachability: 1 if upstream node `i` can reach downstream node `j`
+        - node distance: along-network distance from node `i` to node `j`
+        - trench reachability: 1 if trench `j` drains into downstream trench `i`
+        - trench distance: along-network distance from upstream trench `j` to
+          downstream trench `i`
+
+        The trench matrices intentionally use the orientation expected by
+        downstream lookup code: callers take the row indexed by a target
+        trench's `trench_index` and interpret the nonzero columns as all
+        reachable upstream trenches in that same system.
+
         Populates both node-level and trench-level reachability/distance
-        matrices together with their identifier orders.
+        matrices together with their identifier orders written back to
+        `self.trenches`.
         """
         logger.info("Computing node and trench matrices")
         graph = self._build_directed_graph()
@@ -493,7 +521,11 @@ class RiverNetwork:
         -------
         pd.DataFrame
             Table with columns `trench_id`, `upstream_distance`, and `system_id`.
-            Includes the queried trench itself with distance 0.
+            Includes the queried trench itself with distance 0. Internally this
+            reads one row from `trench_reachability_matrices[system_id]` and
+            `trench_distance_matrices[system_id]`, where the row is keyed by the
+            queried trench's `trench_index` and the returned columns identify
+            upstream trenches in that same saved trench order.
         """
         if self.trenches is None or TRENCH_INDEX_COLUMN not in self.trenches.columns:
             raise ValueError(

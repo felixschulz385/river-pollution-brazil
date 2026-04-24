@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=sensor_analysis
 #SBATCH --output=./log/sensor_analysis/slurm-%j.log
-#SBATCH --error=./log/sensor_analysis/slurm-error-%j.err
+#SBATCH --error=./log/sensor_analysis/slurm-%j.err
 #SBATCH --partition=scicore
-#SBATCH --time=0-12:00:00
-#SBATCH --qos=12hours
+#SBATCH --time=1-00:00:00
+#SBATCH --qos=1day
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=128G
 
