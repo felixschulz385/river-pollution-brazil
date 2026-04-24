@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TypeAlias
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -27,15 +28,44 @@ class ImportanceTier:
 
 
 @dataclass(frozen=True)
+class LandCoverTransform:
+    """Transformation applied to land-cover regressors before estimation."""
+
+    kind: str = "identity"
+    offset: float = 0.0
+
+    def column_suffix(self) -> str:
+        """Return a deterministic suffix for transformed land-cover columns."""
+        if self.kind == "identity":
+            return ""
+        offset = str(self.offset).replace("-", "m").replace(".", "p")
+        return f"__{self.kind}_{offset}"
+
+
+@dataclass(frozen=True)
+class FixedEffectVariable:
+    """Atomic fixed-effect component built from a data column."""
+
+    source_column: str
+    datetime_accessor: str | None = None
+
+
+FixedEffectSpec: TypeAlias = str | tuple[str, ...] | list[str]
+
+
+@dataclass(frozen=True)
 class SensorAnalysisSettings:
     """Default configuration for the sensor analysis suite."""
 
+    # Paths
     project_root: Path = PROJECT_ROOT
     sensor_data_path: Path = PROJECT_ROOT / "data/sensor_data/water_quality_assembled.parquet"
     land_cover_path: Path = PROJECT_ROOT / "data/land_cover/land_cover_sensor_upstream.parquet"
     transformations_path: Path = PROJECT_ROOT / "data/sensor_data/water_quality_transformations.json"
     trenches_path: Path = PROJECT_ROOT / "data/river_network/trenches.parquet"
     output_dir: Path = PROJECT_ROOT / "output/analysis/sensor_data"
+
+    # Land-cover regressors
     distance_buckets: tuple[str, ...] = (
         "0_10km",
         "10_50km",
@@ -57,17 +87,36 @@ class SensorAnalysisSettings:
         "c41",
         "c42",
     )
-    land_cover_statistic: str = "cnt"
-    fixed_effects: tuple[str, ...] = ("station_code", "quarter_year_system")
+    land_cover_statistic: str = "shr"
+    land_cover_transform: LandCoverTransform = field(
+        default_factory=lambda: LandCoverTransform(kind="log", offset=0.01)
+    )
+
+    # Fixed effects and inference
+    fixed_effect_variables: dict[str, FixedEffectVariable] = field(
+        default_factory=lambda: {
+            "quarter": FixedEffectVariable("date", "quarter"),
+            "year": FixedEffectVariable("date", "year"),
+            "system": FixedEffectVariable("system_id"),
+        }
+    )
+    fixed_effects: tuple[FixedEffectSpec, ...] = (
+        "station_code",
+        ("quarter", "year", "system"),
+    )
     cluster_variable: str = "station_code"
     vcov_type: str = "CRV1"
     minimum_observations: int = 5_000
+
+    # Pollutant grouping
     importance_tiers: tuple[ImportanceTier, ...] = (
         ImportanceTier("high", 100_000),
         ImportanceTier("medium", 25_000),
         ImportanceTier("low", 5_000),
         ImportanceTier("rare", 0),
     )
+
+    # Regression controls
     controls: tuple[ControlVariable, ...] = (
         ControlVariable(
             source_column="streamflow_discharge_day",
@@ -80,6 +129,8 @@ class SensorAnalysisSettings:
             scale=100.0,
         ),
     )
+
+    # Pollutant catalog exclusions
     excluded_pollutant_columns: tuple[str, ...] = (
         "station_code",
         "datetime",
@@ -106,6 +157,8 @@ class SensorAnalysisSettings:
         "liquid_discharge",
         "rained",
     )
+
+    # Pollutant catalog grouping
     type_group_names: tuple[str, ...] = (
         "core_physicochemical",
         "nutrients",
@@ -116,6 +169,8 @@ class SensorAnalysisSettings:
         "composite_indices",
         "other",
     )
+
+    # Land-cover labels
     subclass_labels: dict[str, str] = field(
         default_factory=lambda: {
             "c0": "Forest formation",
@@ -132,6 +187,27 @@ class SensorAnalysisSettings:
         }
     )
 
+    def land_cover_source_column(self, bucket: str, subclass: str) -> str:
+        """Return the raw input column name for a land-cover regressor."""
+        return f"lc_{bucket}_{subclass}_{self.land_cover_statistic}"
+
+    def land_cover_column(self, bucket: str, subclass: str) -> str:
+        """Return the analysis column name for a land-cover regressor."""
+        return (
+            f"{self.land_cover_source_column(bucket, subclass)}"
+            f"{self.land_cover_transform.column_suffix()}"
+        )
+
+    def resolve_fixed_effect_name(self, effect: FixedEffectSpec) -> str:
+        """Return the materialized column name for a fixed effect."""
+        if isinstance(effect, str):
+            return effect
+        return "_".join(tuple(effect))
+
+    def resolved_fixed_effects(self) -> tuple[str, ...]:
+        """Return concrete fixed-effect column names used in formulas."""
+        return tuple(self.resolve_fixed_effect_name(effect) for effect in self.fixed_effects)
+
 
 DEFAULT_SETTINGS = SensorAnalysisSettings()
 
@@ -139,7 +215,10 @@ DEFAULT_SETTINGS = SensorAnalysisSettings()
 __all__ = [
     "ControlVariable",
     "DEFAULT_SETTINGS",
+    "FixedEffectSpec",
+    "FixedEffectVariable",
     "ImportanceTier",
+    "LandCoverTransform",
     "PROJECT_ROOT",
     "SensorAnalysisSettings",
 ]

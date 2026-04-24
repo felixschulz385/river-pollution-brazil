@@ -10,7 +10,7 @@ import pandas as pd
 
 from .catalog import PollutantDefinition, build_land_cover_catalog, build_pollutant_catalog
 from .loaders import load_analysis_inputs
-from ..settings import DEFAULT_SETTINGS, SensorAnalysisSettings
+from ..settings import DEFAULT_SETTINGS, FixedEffectVariable, SensorAnalysisSettings
 
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,111 @@ def _build_transformed_columns(
     return pd.DataFrame(transformed_series, index=frame.index)
 
 
+def _apply_land_cover_transform(
+    series: pd.Series,
+    settings: SensorAnalysisSettings,
+) -> pd.Series:
+    transform = settings.land_cover_transform
+    if transform.kind == "identity":
+        return series.astype(float)
+    values = series.astype(float) + float(transform.offset)
+    if transform.kind == "log":
+        return np.log(values.where(values > 0))
+    if transform.kind == "log10":
+        return np.log10(values.where(values > 0))
+    raise ValueError(f"Unsupported land-cover transform `{transform.kind}`.")
+
+
+def _build_land_cover_columns(
+    frame: pd.DataFrame,
+    settings: SensorAnalysisSettings,
+) -> pd.DataFrame:
+    """Build transformed land-cover columns in one batch."""
+    if settings.land_cover_transform.kind == "identity":
+        return pd.DataFrame(index=frame.index)
+
+    transformed_series: dict[str, pd.Series] = {}
+    for bucket in settings.distance_buckets:
+        for subclass in settings.land_cover_subclasses:
+            transformed_series[settings.land_cover_column(bucket, subclass)] = _apply_land_cover_transform(
+                frame[settings.land_cover_source_column(bucket, subclass)],
+                settings,
+            )
+    return pd.DataFrame(transformed_series, index=frame.index)
+
+
+def _extract_fixed_effect_variable(
+    frame: pd.DataFrame,
+    definition: FixedEffectVariable,
+) -> pd.Series:
+    """Extract one atomic fixed-effect component from the merged analysis frame."""
+    if definition.source_column not in frame.columns:
+        raise ValueError(
+            f"Fixed-effect source column `{definition.source_column}` is missing."
+        )
+
+    source = frame[definition.source_column]
+    if definition.datetime_accessor is None:
+        return source
+
+    datetimes = pd.to_datetime(source, errors="coerce")
+    accessor = getattr(datetimes.dt, definition.datetime_accessor, None)
+    if accessor is None:
+        raise ValueError(
+            f"Unsupported pandas datetime accessor `{definition.datetime_accessor}` "
+            f"for fixed-effect source `{definition.source_column}`."
+        )
+    return accessor() if callable(accessor) else accessor
+
+
+def _fixed_effect_component(
+    frame: pd.DataFrame,
+    atomic_columns: dict[str, pd.Series],
+    component: str,
+) -> pd.Series:
+    if component in atomic_columns:
+        return atomic_columns[component]
+    if component in frame.columns:
+        return frame[component]
+    raise ValueError(f"Unknown fixed-effect component `{component}`.")
+
+
+def _stringify_fixed_effect_component(series: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(series, errors="coerce")
+    if numeric.notna().any() and numeric.dropna().mod(1).eq(0).all():
+        return numeric.astype("Int64").astype("string")
+    return series.astype("string")
+
+
+def _build_fixed_effect_columns(
+    frame: pd.DataFrame,
+    settings: SensorAnalysisSettings,
+) -> pd.DataFrame:
+    """Build atomic and composite fixed-effect columns in one batch."""
+    derived_columns = {
+        name: _extract_fixed_effect_variable(frame, definition)
+        for name, definition in settings.fixed_effect_variables.items()
+    }
+
+    composite_columns: dict[str, pd.Series] = {}
+    for effect in settings.fixed_effects:
+        if isinstance(effect, str):
+            continue
+        components = tuple(effect)
+        component_series = [
+            _stringify_fixed_effect_component(
+                _fixed_effect_component(frame, derived_columns, component)
+            )
+            for component in components
+        ]
+        composite = component_series[0]
+        for series in component_series[1:]:
+            composite = composite.str.cat(series, sep="_")
+        composite_columns[settings.resolve_fixed_effect_name(effect)] = composite
+
+    return pd.DataFrame({**derived_columns, **composite_columns}, index=frame.index)
+
+
 def build_analysis_data(
     settings: SensorAnalysisSettings = DEFAULT_SETTINGS,
 ) -> PreparedAnalysisData:
@@ -83,25 +188,16 @@ def build_analysis_data(
         validate="many_to_one",
     )
 
-    system_id = merged["system_id"].astype("Int64")
-    derived_columns: dict[str, pd.Series] = {
-        "system_id": system_id,
-        "quarter_year_system": (
-            merged["year"].astype(str)
-            + "_Q"
-            + merged["quarter"].astype(str)
-            + "_"
-            + system_id.astype(str)
-        ),
-    }
-
     for control in settings.controls:
-        derived_columns[control.scaled_column] = (
+        merged[control.scaled_column] = (
             merged[control.source_column] / control.scale
         )
 
+    fixed_effect_columns = _build_fixed_effect_columns(merged, settings)
+    land_cover_columns = _build_land_cover_columns(merged, settings)
+    replacement_columns = list(fixed_effect_columns.columns) + list(land_cover_columns.columns)
     merged = pd.concat(
-        [merged.drop(columns=["system_id"], errors="ignore"), pd.DataFrame(derived_columns, index=merged.index)],
+        [merged.drop(columns=replacement_columns, errors="ignore"), fixed_effect_columns, land_cover_columns],
         axis=1,
     )
 

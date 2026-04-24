@@ -48,9 +48,7 @@ def load_land_cover(settings: SensorAnalysisSettings) -> pd.DataFrame:
     required_columns = {"trench_id", "year"}
     for bucket in settings.distance_buckets:
         for subclass in settings.land_cover_subclasses:
-            required_columns.add(
-                f"lc_{bucket}_{subclass}_{settings.land_cover_statistic}"
-            )
+            required_columns.add(settings.land_cover_source_column(bucket, subclass))
     validate_required_columns(land_cover, required_columns, "land_cover")
     return land_cover
 

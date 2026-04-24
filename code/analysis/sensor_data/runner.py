@@ -84,7 +84,7 @@ def _analysis_columns(settings: SensorAnalysisSettings, spec) -> list[str]:
         spec.outcome_column,
         *spec.coefficient_columns,
         *(control.scaled_column for control in settings.controls),
-        *settings.fixed_effects,
+        *settings.resolved_fixed_effects(),
         settings.cluster_variable,
     ]
     return list(dict.fromkeys(columns))
