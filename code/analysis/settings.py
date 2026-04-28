@@ -173,17 +173,16 @@ class SensorAnalysisSettings:
     # Land-cover labels
     subclass_labels: dict[str, str] = field(
         default_factory=lambda: {
-            "c0": "Forest formation",
-            "c1": "Savanna formation",
-            "c2": "Mangrove",
-            "c3": "Floodable forest",
-            "c4": "Wetland",
-            "c5": "Grassland",
+            "c0": "NA",
+            "c1": "Forest",
+            "c2": "Non-forest natural vegetation",
+            "c3": "Farming",
             "c30": "Pasture",
             "c31": "Agriculture",
-            "c40": "Non-vegetated area",
-            "c41": "Urban area",
-            "c42": "Mining",
+            "c4": "Non-vegetated area",
+            "c40": "Urban area",
+            "c41": "Mining",
+            "c5": "Water",
         }
     )
 
