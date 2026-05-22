@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=sensor_analysis
 #SBATCH --output=./log/sensor_analysis/slurm-%j.log
-#SBATCH --error=./log/sensor_analysis/slurm-%j.err
+#SBATCH --error=./log/sensor_analysis/slurm-error-%j.log
 #SBATCH --partition=scicore
 #SBATCH --time=1-00:00:00
 #SBATCH --qos=1day
@@ -46,7 +46,7 @@ case "${GROUP_KIND}" in
 esac
 
 eval "$(/scicore/home/meiera/schulz0022/miniforge-pypy3/bin/conda shell.bash hook)"
-conda activate rpb
+conda activate 311
 
 cd /scicore/home/meiera/schulz0022/projects/river-pollution-brazil
 mkdir -p log/sensor_analysis

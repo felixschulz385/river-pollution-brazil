@@ -178,15 +178,28 @@ def build_analysis_data(
 
     merged = sensor_data.merge(
         inputs.land_cover,
-        on=["trench_id", "year"],
+        on=["station_code", "year"],
         how="left",
         validate="many_to_one",
+        suffixes=("", "_land_cover"),
     ).merge(
         inputs.trenches,
         on="trench_id",
         how="left",
         validate="many_to_one",
     )
+
+    trench_mismatch = (
+        merged["trench_id_land_cover"].notna()
+        & merged["trench_id"].notna()
+        & merged["trench_id_land_cover"].ne(merged["trench_id"])
+    )
+    if trench_mismatch.any():
+        logger.warning(
+            "Found %d station-year row(s) where land-cover trench_id does not match "
+            "sensor-data trench_id.",
+            int(trench_mismatch.sum()),
+        )
 
     for control in settings.controls:
         merged[control.scaled_column] = (
