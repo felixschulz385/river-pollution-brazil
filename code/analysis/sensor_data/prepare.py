@@ -178,7 +178,7 @@ def build_analysis_data(
 
     merged = sensor_data.merge(
         inputs.land_cover,
-        on=["trench_id", "year"],
+        on=["station_code", "trench_id", "year"],
         how="left",
         validate="many_to_one",
     ).merge(
