@@ -14,6 +14,7 @@
 
 # Temporary Files
 *.log
+*.err
 *.out
 *.pyc
 
@@ -33,11 +34,14 @@
 .DS_Store?
 .codex/
 
+.venv/*
 .vscode/*
 data/*/**
 aux/
+log/
 output/documents/*/*/**
 output/presentations/
+output/analysis/
 data/*/**
 api_creds
 setup/miniforge3/*

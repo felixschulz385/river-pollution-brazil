@@ -1,4 +1,5 @@
 __all__ = [
+    "assemble_sensor_data",
     "preprocess_all",
     "preprocess_sensor_data",
     "preprocess_stations_rivers",
@@ -7,6 +8,10 @@ __all__ = [
 
 
 def __getattr__(name):
+    if name == "assemble_sensor_data":
+        from .assembly import assemble_sensor_data as _assemble_sensor_data
+
+        return _assemble_sensor_data
     if name == "preprocess_sensor_data":
         from .preprocess import preprocess_sensor_data as _preprocess_sensor_data
 

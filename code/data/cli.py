@@ -20,6 +20,7 @@ Modules:
 Actions:
   fetch           Fetch data from source
   preprocess      Preprocess fetched data for modules that still expose it
+  assemble        Assemble analysis-ready datasets
   generate        Generate processed river network data
 
 Options:
@@ -37,6 +38,8 @@ Examples:
   python cli.py health preprocess
   python cli.py water-quality fetch
   python cli.py water-quality preprocess
+  python cli.py water-quality assemble
+  python cli.py land-cover assemble
   python cli.py river-network generate --gpkg-path /path/to/bho_2017.gpkg --output-dir ./river_data
   python cli.py river-network generate --gpkg-path /path/to/bho_2017.gpkg --output-dir ./river_data --min-lon -55 --min-lat -4 --max-lon -47 --max-lat 3
   python cli.py download --dataset dem --area BRA --year 2010
@@ -167,7 +170,7 @@ def main():
     wq_parser = subparsers.add_parser("water-quality", help="Process water quality data")
     wq_parser.add_argument(
         "action",
-        choices=["fetch", "preprocess"],
+        choices=["fetch", "preprocess", "assemble"],
         help="Action to perform"
     )
     wq_parser.add_argument(
@@ -182,6 +185,8 @@ def main():
     )
     wq_parser.add_argument(
         "--river-network-dir",
+        "--river-network-path",
+        dest="river_network_dir",
         default=None,
         help="Optional path relative to --root-dir for saved river-network outputs",
     )
@@ -234,12 +239,38 @@ def main():
         default=None,
         help="Emit an INFO progress log after this many Access source tables have been read (default: 1000)",
     )
+    wq_parser.add_argument(
+        "--water-quality-path",
+        default=None,
+        help="Cleaned water-quality parquet path for assemble",
+    )
+    wq_parser.add_argument(
+        "--streamflow-path",
+        default=None,
+        help="Cleaned streamflow parquet path for assemble",
+    )
+    wq_parser.add_argument(
+        "--stations-rivers-path",
+        default=None,
+        help="Station-to-river parquet path for assemble",
+    )
+    wq_parser.add_argument(
+        "--output",
+        default=None,
+        help="Assembled water-quality/streamflow parquet output path",
+    )
+    wq_parser.add_argument(
+        "--n_jobs",
+        type=int,
+        default=None,
+        help="Number of parallel jobs for water-quality assembly matching (default: all CPUs)",
+    )
     
     # Land cover module
     lc_parser = subparsers.add_parser("land-cover", help="Process land cover data")
     lc_parser.add_argument(
         "action",
-        choices=["fetch", "preprocess"],
+        choices=["fetch", "preprocess", "assemble"],
         help="Action to perform"
     )
     lc_parser.add_argument(
@@ -250,13 +281,36 @@ def main():
     )
     lc_parser.add_argument(
         "--output",
-        default="land_cover_results.feather",
-        help="Output file path (default: land_cover_results.feather)"
+        default=None,
+        help=(
+            "Output file path. Defaults to land_cover_results.feather for preprocess "
+            "and data/land_cover/land_cover_sensor_upstream.parquet for assemble."
+        )
     )
     lc_parser.add_argument(
         "--river-network-path",
         default=None,
         help="Path to river network directory. If provided, uses drainage_areas from network instead of feather file"
+    )
+    lc_parser.add_argument(
+        "--variant",
+        default="sensor_upstream_distance_buckets",
+        help="Land-cover assembly variant (default: sensor_upstream_distance_buckets)"
+    )
+    lc_parser.add_argument(
+        "--land-cover-path",
+        default="data/land_cover/land_cover.feather",
+        help="Preprocessed trench-year land-cover feather path for assemble"
+    )
+    lc_parser.add_argument(
+        "--water-quality-path",
+        default="data/sensor_data/water_quality.parquet",
+        help="Cleaned water-quality parquet path for assemble"
+    )
+    lc_parser.add_argument(
+        "--stations-rivers-path",
+        default="data/sensor_data/stations_rivers.parquet",
+        help="Station-to-river parquet path for assemble"
     )
     
     # Download module
@@ -389,6 +443,15 @@ def main():
                     agent.fetch()
             elif action == "preprocess":
                 agent.preprocess()
+            elif action == "assemble":
+                agent.assemble(
+                    water_quality_path=args.water_quality_path,
+                    streamflow_path=args.streamflow_path,
+                    stations_rivers_path=args.stations_rivers_path,
+                    river_network_path=args.river_network_dir,
+                    output_path=args.output,
+                    n_jobs=args.n_jobs,
+                )
         
         elif args.module == "land-cover":
             action = args.action
@@ -397,18 +460,43 @@ def main():
             if action == "fetch":
                 agent.fetch()
             elif action == "preprocess":
+                output_path = args.output or "land_cover_results.feather"
                 logger.info(
                     "Preprocessing with n_jobs=%s, output=%s, river_network_path=%s, log_level=%s",
                     args.n_jobs,
-                    args.output,
+                    output_path,
                     args.river_network_path,
                     args.log_level,
                 )
                 agent.preprocess(
                     n_jobs=args.n_jobs,
                     river_network_path=args.river_network_path,
-                    output_path=args.output,
+                    output_path=output_path,
                     log_level=args.log_level,
+                )
+            elif action == "assemble":
+                output_path = args.output or "data/land_cover/land_cover_sensor_upstream.parquet"
+                river_network_path = args.river_network_path or "data/river_network"
+                logger.info(
+                    "Assembling land cover with variant=%s, land_cover_path=%s, "
+                    "water_quality_path=%s, stations_rivers_path=%s, "
+                    "river_network_path=%s, output=%s, n_jobs=%s",
+                    args.variant,
+                    args.land_cover_path,
+                    args.water_quality_path,
+                    args.stations_rivers_path,
+                    river_network_path,
+                    output_path,
+                    args.n_jobs,
+                )
+                agent.assemble(
+                    variant=args.variant,
+                    land_cover_path=args.land_cover_path,
+                    water_quality_path=args.water_quality_path,
+                    stations_rivers_path=args.stations_rivers_path,
+                    river_network_path=river_network_path,
+                    output_path=output_path,
+                    n_jobs=args.n_jobs,
                 )
 
         elif args.module == "river-network":

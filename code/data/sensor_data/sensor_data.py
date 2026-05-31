@@ -67,4 +67,26 @@ class sensor_data:
 
         return preprocess_all(root_dir=self.root_dir)
 
+    def assemble(
+        self,
+        water_quality_path=None,
+        streamflow_path=None,
+        stations_rivers_path=None,
+        river_network_path=None,
+        output_path=None,
+        n_jobs=None,
+    ):
+        """Assemble cleaned water-quality observations with streamflow data."""
+        from .preprocess import assemble_sensor_data
+
+        return assemble_sensor_data(
+            root_dir=self.root_dir,
+            water_quality_path=water_quality_path,
+            streamflow_path=streamflow_path,
+            stations_rivers_path=stations_rivers_path,
+            river_network_path=river_network_path or self.river_network_dir or "data/river_network",
+            output_path=output_path,
+            n_jobs=n_jobs,
+        )
+
 __all__ = ["sensor_data"]
