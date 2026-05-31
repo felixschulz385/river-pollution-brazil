@@ -1,8 +1,11 @@
 import os
+import logging
 
 import pandas as pd
 
 from .forms import DatasusTabnetForm
+
+logger = logging.getLogger(__name__)
 
 MORTALITY_URLS = {
     "pre_1996": "http://tabnet.datasus.gov.br/cgi/deftohtm.exe?sim/cnv/obt09br.def",
@@ -14,33 +17,13 @@ BIRTH_COLUMN_OPTIONS = {
     "birth_weight": "Peso_ao_nascer",
 }
 
-SIH_RESIDENCE_URL = "http://tabnet.datasus.gov.br/cgi/deftohtm.exe?sih/cnv/nrbr.def"
 SIH_TOTAL_REQUEST_ID = "SIH_RESIDENCE_TOTAL_MUNICIPALITY_YEAR"
 SIH_ICD10_CHAPTER_REQUEST_ID = "SIH_RESIDENCE_ICD10_CHAPTER_MUNICIPALITY_YEAR"
 SIH_SELECTED_MORBIDITY_LIST_REQUEST_ID = "SIH_RESIDENCE_SELECTED_MORBIDITY_LIST_MUNICIPALITY_YEAR"
 
-SIH_TOTAL_CONTENTS = [
-    "Internações",
-    "Valor total",
-    "Dias permanência",
-    "Média permanência",
-    "Óbitos",
-    "Taxa mortalidade",
-]
-
-SIH_CHANNEL_CONTENTS = [
-    "Internações",
-    "Valor total",
-    "Dias permanência",
-    "Óbitos",
-    "Taxa mortalidade",
-]
-
 SIH_MUNICIPALITY_ROW_VALUE = "Município"
-SIH_YEAR_COLUMN_VALUE = "Ano_atendimento"
 SIH_CHAPTER_COLUMN_VALUE = "Capítulo_CID-10"
 SIH_NO_ACTIVE_COLUMN_VALUE = "--Não-Ativa--"
-SIH_MORBIDITY_LIST_LINE_VALUE = "Lista_Morb__CID-10"
 SIH_CHAPTER_FILTER_SELECT = "SCapítulo_CID-10"
 SIH_MORBIDITY_LIST_FILTER_SELECT = "SLista_Morb__CID-10"
 SIH_PERIOD_SELECT = "Arquivos"
@@ -60,6 +43,51 @@ SIH_SELECTED_MORBIDITY_LIST_FRAGMENTS = [
     "Doenças do aparelho digestivo",
     "Doenças da pele e tecido subcutâneo",
 ]
+SIH_RESIDENCE_SOURCES = {
+    "legacy": {
+        "url": "http://tabnet.datasus.gov.br/cgi/deftohtm.exe?sih/cnv/mrbr.def",
+        "year_min": 1995,
+        "year_max": 2007,
+        "content_labels": {
+            "hospitalizations": "Internações",
+            "total_approved_value": "Valor Total",
+            "days_of_stay": "Dias Permanência",
+            "average_length_of_stay": "Média Permanência",
+            "in_hospital_deaths": "Óbitos",
+            "hospital_mortality_rate": "Taxa Mortalidade",
+        },
+    },
+    "current": {
+        "url": "http://tabnet.datasus.gov.br/cgi/deftohtm.exe?sih/cnv/nrbr.def",
+        "year_min": 2008,
+        "year_max": 2024,
+        "content_labels": {
+            "hospitalizations": "Internações",
+            "total_approved_value": "Valor total",
+            "days_of_stay": "Dias permanência",
+            "average_length_of_stay": "Média permanência",
+            "in_hospital_deaths": "Óbitos",
+            "hospital_mortality_rate": "Taxa mortalidade",
+        },
+    },
+}
+
+SIH_TOTAL_METRICS = [
+    "hospitalizations",
+    "total_approved_value",
+    "days_of_stay",
+    "average_length_of_stay",
+    "in_hospital_deaths",
+    "hospital_mortality_rate",
+]
+
+SIH_CHANNEL_METRICS = [
+    "hospitalizations",
+    "total_approved_value",
+    "days_of_stay",
+    "in_hospital_deaths",
+    "hospital_mortality_rate",
+]
 
 
 def _raw_dir(root_dir):
@@ -73,43 +101,86 @@ def _save_raw_table(frame, path):
     return path
 
 
-def _parse_period_value(period_value):
+def _parse_sih_period_value(period_value):
     yy = int(period_value[4:6])
     year = 2000 + yy
     month = int(period_value[6:8])
     return year, month
 
 
-def _available_sih_period_values(form):
+def _list_available_sih_period_values(form):
     return [option["value"] for option in form.get_select_options(SIH_PERIOD_SELECT)]
 
 
-def _complete_sih_years(period_values):
+def _list_complete_sih_years(period_values):
     months_by_year = {}
     for period_value in period_values:
-        year, month = _parse_period_value(period_value)
+        year, month = _parse_sih_period_value(period_value)
         months_by_year.setdefault(year, set()).add(month)
     return sorted(year for year, months in months_by_year.items() if months == set(range(1, 13)))
 
 
-def _period_values_for_year(period_values, year):
-    return [period_value for period_value in period_values if _parse_period_value(period_value)[0] == year]
+def _filter_sih_period_values_for_year(period_values, year):
+    return [period_value for period_value in period_values if _parse_sih_period_value(period_value)[0] == year]
 
 
-def _fetch_sih_residence_export(
+def _group_years_into_batches(years, batch_size):
+    return [years[index : index + batch_size] for index in range(0, len(years), batch_size)]
+
+
+def _source_key_for_year(year):
+    return "legacy" if year <= 2007 else "current"
+
+
+def _content_label(source_key, metric_key):
+    return SIH_RESIDENCE_SOURCES[source_key]["content_labels"][metric_key]
+
+
+def _list_source_years(form, source_key):
+    source = SIH_RESIDENCE_SOURCES[source_key]
+    form.open(source["url"])
+    available_period_values = _list_available_sih_period_values(form)
+    complete_years = _list_complete_sih_years(available_period_values)
+    year_min = source["year_min"]
+    year_max = source["year_max"]
+    return [
+        year
+        for year in complete_years
+        if year >= year_min and (year_max is None or year <= year_max)
+    ], available_period_values
+
+
+def _run_sih_residence_query(
     form,
     *,
+    source_url,
+    source_key,
     row_value,
-    column_value,
-    content_metric,
+    content_label,
+    column_value=SIH_NO_ACTIVE_COLUMN_VALUE,
     period_values=None,
+    export_year=None,
     chapter_filter_text=None,
     morbidity_filter_text=None,
 ):
-    form.open(SIH_RESIDENCE_URL)
+    query_bits = [
+        f"source={source_key}",
+        f"row={row_value}",
+        f"column={column_value}",
+        f"content={content_label}",
+    ]
+    if export_year is not None:
+        query_bits.append(f"year={export_year}")
+    if chapter_filter_text is not None:
+        query_bits.append(f"chapter={chapter_filter_text}")
+    if morbidity_filter_text is not None:
+        query_bits.append(f"morbidity_list={morbidity_filter_text}")
+    logger.info("DATASUS query: %s", ", ".join(query_bits))
+
+    form.open(source_url)
     form.select_line(row_value)
     form.select_column(column_value)
-    form.select_content_text(content_metric)
+    form.select_content_text(content_label)
 
     if period_values is not None:
         form.set_multiselect_values(SIH_PERIOD_SELECT, period_values)
@@ -169,30 +240,43 @@ def fetch_mortality_age_tables(root_dir=".", headless=False, download_dir=None):
     return output_paths
 
 
-def fetch_sih_residence_total_municipality_year(root_dir=".", headless=False, download_dir=None):
+def fetch_sih_residence_total_municipality_year(
+    root_dir=".",
+    headless=False,
+    download_dir=None,
+):
     """Fetch SIH residence totals by municipality and year."""
     output_dir = _raw_dir(root_dir)
     form = DatasusTabnetForm(headless=headless, download_dir=download_dir)
     raw_tables = []
     try:
-        form.open(SIH_RESIDENCE_URL)
-        complete_years = _complete_sih_years(_available_sih_period_values(form))
-        annual_period_values = [
-            period_value
-            for year in complete_years
-            for period_value in _period_values_for_year(_available_sih_period_values(form), year)
-        ]
-        for content_metric in SIH_TOTAL_CONTENTS:
-            table = _fetch_sih_residence_export(
-                form,
-                row_value=SIH_MUNICIPALITY_ROW_VALUE,
-                column_value=SIH_YEAR_COLUMN_VALUE,
-                content_metric=content_metric,
-                period_values=annual_period_values,
-            )
-            table.insert(0, "request_id", SIH_TOTAL_REQUEST_ID)
-            table.insert(1, "content_metric", content_metric)
-            raw_tables.append(table)
+        source_periods = {}
+        source_years = {}
+        for source_key in SIH_RESIDENCE_SOURCES:
+            years, period_values = _list_source_years(form, source_key)
+            source_years[source_key] = years
+            source_periods[source_key] = period_values
+
+        for source_key, years in source_years.items():
+            source_url = SIH_RESIDENCE_SOURCES[source_key]["url"]
+            available_period_values = source_periods[source_key]
+            for year in years:
+                period_values = _filter_sih_period_values_for_year(available_period_values, year)
+                for metric_key in SIH_TOTAL_METRICS:
+                    table = _run_sih_residence_query(
+                        form,
+                        source_url=source_url,
+                        source_key=source_key,
+                        row_value=SIH_MUNICIPALITY_ROW_VALUE,
+                        content_label=_content_label(source_key, metric_key),
+                        period_values=period_values,
+                        export_year=year,
+                    )
+                    table.insert(0, "request_id", SIH_TOTAL_REQUEST_ID)
+                    table.insert(1, "source_key", source_key)
+                    table.insert(2, "export_year", year)
+                    table.insert(3, "metric_key", metric_key)
+                    raw_tables.append(table)
     finally:
         form.close()
 
@@ -211,23 +295,32 @@ def fetch_sih_residence_icd10_chapter_municipality_year(
     form = DatasusTabnetForm(headless=headless, download_dir=download_dir)
     raw_tables = []
     try:
-        form.open(SIH_RESIDENCE_URL)
-        available_period_values = _available_sih_period_values(form)
-        complete_years = _complete_sih_years(available_period_values)
-        years = years or complete_years
+        if years is None:
+            years = []
+            for source_key in SIH_RESIDENCE_SOURCES:
+                source_years, _ = _list_source_years(form, source_key)
+                years.extend(source_years)
+        years = sorted(years)
         for year in years:
-            period_values = _period_values_for_year(available_period_values, year)
-            for content_metric in SIH_CHANNEL_CONTENTS:
-                table = _fetch_sih_residence_export(
+            source_key = _source_key_for_year(year)
+            source_url = SIH_RESIDENCE_SOURCES[source_key]["url"]
+            _, available_period_values = _list_source_years(form, source_key)
+            period_values = _filter_sih_period_values_for_year(available_period_values, year)
+            for metric_key in SIH_CHANNEL_METRICS:
+                table = _run_sih_residence_query(
                     form,
+                    source_url=source_url,
+                    source_key=source_key,
                     row_value=SIH_MUNICIPALITY_ROW_VALUE,
                     column_value=SIH_CHAPTER_COLUMN_VALUE,
-                    content_metric=content_metric,
+                    content_label=_content_label(source_key, metric_key),
                     period_values=period_values,
+                    export_year=year,
                 )
                 table.insert(0, "request_id", SIH_ICD10_CHAPTER_REQUEST_ID)
                 table.insert(1, "export_year", year)
-                table.insert(2, "content_metric", content_metric)
+                table.insert(2, "source_key", source_key)
+                table.insert(3, "metric_key", metric_key)
                 raw_tables.append(table)
     finally:
         form.close()
@@ -248,31 +341,40 @@ def fetch_sih_residence_selected_morbidity_list_municipality_year(
     form = DatasusTabnetForm(headless=headless, download_dir=download_dir)
     raw_tables = []
     try:
-        form.open(SIH_RESIDENCE_URL)
-        available_period_values = _available_sih_period_values(form)
-        complete_years = _complete_sih_years(available_period_values)
-        years = years or complete_years
+        if years is None:
+            years = []
+            for source_key in SIH_RESIDENCE_SOURCES:
+                source_years, _ = _list_source_years(form, source_key)
+                years.extend(source_years)
+        years = sorted(years)
         selected_fragments = morbidity_list_fragments or SIH_SELECTED_MORBIDITY_LIST_FRAGMENTS
-        selected_morbidity_lists = form.find_option_texts_by_fragments(
-            SIH_MORBIDITY_LIST_FILTER_SELECT,
-            selected_fragments,
-        )
         for year in years:
-            period_values = _period_values_for_year(available_period_values, year)
-            for content_metric in SIH_CHANNEL_CONTENTS:
+            source_key = _source_key_for_year(year)
+            source_url = SIH_RESIDENCE_SOURCES[source_key]["url"]
+            form.open(source_url)
+            available_period_values = _list_available_sih_period_values(form)
+            selected_morbidity_lists = form.find_option_texts_by_fragments(
+                SIH_MORBIDITY_LIST_FILTER_SELECT,
+                selected_fragments,
+            )
+            period_values = _filter_sih_period_values_for_year(available_period_values, year)
+            for metric_key in SIH_CHANNEL_METRICS:
                 for morbidity_list_text in selected_morbidity_lists:
-                    table = _fetch_sih_residence_export(
+                    table = _run_sih_residence_query(
                         form,
+                        source_url=source_url,
+                        source_key=source_key,
                         row_value=SIH_MUNICIPALITY_ROW_VALUE,
-                        column_value=SIH_NO_ACTIVE_COLUMN_VALUE,
-                        content_metric=content_metric,
+                        content_label=_content_label(source_key, metric_key),
                         period_values=period_values,
+                        export_year=year,
                         morbidity_filter_text=morbidity_list_text,
                     )
                     table.insert(0, "request_id", SIH_SELECTED_MORBIDITY_LIST_REQUEST_ID)
                     table.insert(1, "export_year", year)
-                    table.insert(2, "content_metric", content_metric)
-                    table.insert(3, "morbidity_list_cid10", morbidity_list_text)
+                    table.insert(2, "source_key", source_key)
+                    table.insert(3, "metric_key", metric_key)
+                    table.insert(4, "morbidity_list_cid10", morbidity_list_text)
                     raw_tables.append(table)
     finally:
         form.close()

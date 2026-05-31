@@ -110,30 +110,45 @@ def _extract_municipality_fields(frame):
     return frame.dropna(subset=["municipality_code"])
 
 
-def _metric_column_name(content_metric):
-    metric_map = {
-        "Internações": "hospitalizations",
-        "Valor total": "total_approved_value",
-        "Dias permanência": "days_of_stay",
-        "Média permanência": "average_length_of_stay",
-        "Óbitos": "in_hospital_deaths",
-        "Taxa mortalidade": "hospital_mortality_rate",
-    }
-    return metric_map[content_metric]
-
-
 def _preprocess_sih_total_request(raw_path, output_path):
     frame = _extract_municipality_fields(pd.read_parquet(raw_path))
-    year_columns = [column for column in frame.columns if str(column).isdigit()]
-    long_frame = frame.melt(
-        id_vars=["Município", "municipality_code", "municipality_name", "content_metric"],
-        value_vars=year_columns,
-        var_name="year",
-        value_name="value",
-    )
-    long_frame["year"] = long_frame["year"].astype(int)
-    long_frame["value"] = _coerce_tabnet_numeric(long_frame["value"])
-    long_frame["metric"] = long_frame["content_metric"].map(_metric_column_name)
+    if {"export_year", "metric_key", "Total"}.issubset(frame.columns):
+        long_frame = frame[
+            [
+                "municipality_code",
+                "municipality_name",
+                "export_year",
+                "metric_key",
+                "Total",
+            ]
+        ].rename(
+            columns={
+                "export_year": "year",
+                "metric_key": "metric",
+                "Total": "value",
+            }
+        )
+        long_frame["year"] = long_frame["year"].astype(int)
+        long_frame["value"] = _coerce_tabnet_numeric(long_frame["value"])
+    else:
+        year_columns = [column for column in frame.columns if str(column).isdigit()]
+        long_frame = frame.melt(
+            id_vars=["Município", "municipality_code", "municipality_name", "content_metric"],
+            value_vars=year_columns,
+            var_name="year",
+            value_name="value",
+        )
+        long_frame["year"] = long_frame["year"].astype(int)
+        long_frame["value"] = _coerce_tabnet_numeric(long_frame["value"])
+        metric_map = {
+            "Internações": "hospitalizations",
+            "Valor total": "total_approved_value",
+            "Dias permanência": "days_of_stay",
+            "Média permanência": "average_length_of_stay",
+            "Óbitos": "in_hospital_deaths",
+            "Taxa mortalidade": "hospital_mortality_rate",
+        }
+        long_frame["metric"] = long_frame["content_metric"].map(metric_map)
     wide_frame = (
         long_frame.dropna(subset=["value"])
         .pivot_table(
@@ -153,10 +168,11 @@ def _preprocess_sih_channel_request(raw_path, output_path, category_column_name)
     base_id_columns = {
         "request_id",
         "export_year",
-        "content_metric",
+        "metric_key",
         "Município",
         "municipality_code",
         "municipality_name",
+        "source_key",
     }
 
     if category_column_name in frame.columns and "Total" in frame.columns:
@@ -164,21 +180,21 @@ def _preprocess_sih_channel_request(raw_path, output_path, category_column_name)
             [
                 "request_id",
                 "export_year",
-                "content_metric",
+                "metric_key",
                 "Município",
                 "municipality_code",
                 "municipality_name",
                 category_column_name,
                 "Total",
             ]
-        ].rename(columns={"Total": "value"})
+        ].rename(columns={"Total": "value", "metric_key": "metric"})
     else:
         category_columns = [column for column in frame.columns if column not in base_id_columns]
         long_frame = frame.melt(
             id_vars=[
                 "request_id",
                 "export_year",
-                "content_metric",
+                "metric_key",
                 "Município",
                 "municipality_code",
                 "municipality_name",
@@ -188,10 +204,10 @@ def _preprocess_sih_channel_request(raw_path, output_path, category_column_name)
             value_name="value",
         )
         long_frame = long_frame[long_frame[category_column_name].ne("Total")].copy()
+        long_frame = long_frame.rename(columns={"metric_key": "metric"})
 
     long_frame["year"] = long_frame["export_year"].astype(int)
     long_frame["value"] = _coerce_tabnet_numeric(long_frame["value"])
-    long_frame["metric"] = long_frame["content_metric"].map(_metric_column_name)
     wide_frame = (
         long_frame.dropna(subset=["value"])
         .pivot_table(

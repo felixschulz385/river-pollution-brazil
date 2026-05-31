@@ -1,8 +1,10 @@
+import csv
 import io
 import time
 
 import pandas as pd
 from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
@@ -13,13 +15,31 @@ from ..webdriver import create_chrome_driver
 class DatasusTabnetForm:
     """Small Selenium wrapper around common DATASUS TABNET form interactions."""
 
-    def __init__(self, headless=False, download_dir=None, page_load_wait=3, reset_wait=2):
+    def __init__(
+        self,
+        headless=False,
+        download_dir=None,
+        page_load_wait=3,
+        reset_wait=2,
+        result_wait_seconds=180,
+    ):
         self.driver = create_chrome_driver(headless=headless, download_dir=download_dir)
         self.page_load_wait = page_load_wait
         self.reset_wait = reset_wait
+        self.result_wait_seconds = result_wait_seconds
 
     def open(self, url):
-        self.driver.get(url)
+        try:
+            self.driver.get(url)
+        except TimeoutException:
+            # DATASUS pages often keep loading background resources long after the form is usable.
+            self.driver.execute_script("window.stop();")
+        WebDriverWait(self.driver, 20).until(
+            EC.presence_of_element_located((By.XPATH, "//select[@name='Linha']"))
+        )
+        WebDriverWait(self.driver, 20).until(
+            EC.presence_of_element_located((By.XPATH, "//select[@name='Incremento']"))
+        )
         time.sleep(self.page_load_wait)
 
     def _click_option(self, xpath):
@@ -47,13 +67,15 @@ class DatasusTabnetForm:
     def select_increment(self, value):
         self._click_option(f"//select[@name='Incremento']/option[@value='{value}']")
 
+    def select_content_value(self, value):
+        self.set_multiselect_values("Incremento", [value])
+
     def select_content_text(self, text, exact=False):
-        for select_name in ["Conteudo", "Incremento"]:
-            try:
-                self._click_option(self._option_text_xpath(select_name, text, exact=exact))
-                return
-            except NoSuchElementException:
-                continue
+        for option in self.get_select_options("Incremento"):
+            option_text = option["text"]
+            if (exact and option_text == text) or ((not exact) and text in option_text):
+                self.select_content_value(option["value"])
+                return option["value"]
         raise NoSuchElementException(f"Could not find content option matching {text!r}")
 
     def select_option_value(self, value):
@@ -145,16 +167,41 @@ class DatasusTabnetForm:
         time.sleep(wait_seconds)
 
     def select_output_format_prn(self):
-        self._click_option("//input[@name='formato' and @value='prn']")
+        WebDriverWait(self.driver, 20).until(
+            EC.element_to_be_clickable((By.XPATH, "//input[@name='formato' and @value='prn']"))
+        ).click()
 
     def submit_query(self):
-        self.driver.find_element(By.XPATH, "//input[@class='mostra']").click()
+        WebDriverWait(self.driver, 20).until(
+            EC.element_to_be_clickable((By.XPATH, "//input[@class='mostra']"))
+        ).click()
         self.driver.switch_to.window(self.driver.window_handles[-1])
 
     def read_result_table(self):
-        WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.XPATH, "//pre")))
+        WebDriverWait(self.driver, self.result_wait_seconds).until(
+            EC.presence_of_element_located((By.XPATH, "//pre"))
+        )
         raw_text = self.driver.find_element(By.XPATH, "//pre").text
-        return pd.read_csv(io.StringIO(raw_text), sep=";", encoding="latin1")
+        try:
+            return pd.read_csv(io.StringIO(raw_text), sep=";", encoding="latin1")
+        except pd.errors.ParserError:
+            return self._parse_result_table_with_csv_reader(raw_text)
+
+    def _parse_result_table_with_csv_reader(self, raw_text):
+        rows = list(csv.reader(io.StringIO(raw_text), delimiter=";", quotechar='"'))
+        if not rows:
+            return pd.DataFrame()
+
+        header = rows[0]
+        normalized_rows = []
+        expected_width = len(header)
+        for row in rows[1:]:
+            if len(row) < expected_width:
+                row = row + [None] * (expected_width - len(row))
+            elif len(row) > expected_width:
+                row = row[: expected_width - 1] + [";".join(row[expected_width - 1 :])]
+            normalized_rows.append(row)
+        return pd.DataFrame(normalized_rows, columns=header)
 
     def reset_query(self):
         self.driver.close()
