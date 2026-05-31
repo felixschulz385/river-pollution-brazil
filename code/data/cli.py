@@ -86,7 +86,11 @@ class DataSourceFactory:
         """
         if module == "health":
             from health import health
-            return health()
+            return health(
+                root_dir=kwargs.get("root_dir", "."),
+                headless=kwargs.get("headless", False),
+                download_dir=kwargs.get("download_dir"),
+            )
         elif module == "water-quality":
             from sensor_data.sensor_data import sensor_data
             return sensor_data(
@@ -164,6 +168,21 @@ def main():
         choices=["all", "mortality", "hospitalization", "birth"],
         default="all",
         help="Type of health data to fetch (default: all)"
+    )
+    health_parser.add_argument(
+        "--root-dir",
+        default=".",
+        help="Project root directory containing the data folder (default: current working directory)",
+    )
+    health_parser.add_argument(
+        "--download-dir",
+        default=None,
+        help="Optional local Chrome download directory for health fetches",
+    )
+    health_parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run the health fetcher in headless mode",
     )
 
     # Water quality module
@@ -411,22 +430,23 @@ def main():
                 area=args.area,
                 year=args.year
             )
-        elif args.module == "water-quality":
+        elif args.module in ["health", "water-quality"]:
             agent = DataSourceFactory.create(
                 args.module,
                 root_dir=args.root_dir,
-                brazil_boundary_path=args.brazil_boundary_path,
-                river_network_dir=args.river_network_dir,
                 download_dir=args.download_dir,
                 headless=args.headless,
-                keep_browser_on_error=args.keep_browser_on_error,
-                single_station=args.single_station,
-                fetch_mode=args.fetch_mode,
-                preprocess_workers=args.preprocess_workers,
-                source_tables=args.source_tables,
-                preprocess_backend=args.preprocess_backend,
-                log_every_tables=args.log_every_tables,
             )
+            if args.module == "water-quality":
+                agent.brazil_boundary_path = args.brazil_boundary_path
+                agent.river_network_dir = args.river_network_dir
+                agent.keep_browser_on_error = args.keep_browser_on_error
+                agent.single_station = args.single_station
+                agent.fetch_mode = args.fetch_mode
+                agent.preprocess_workers = args.preprocess_workers
+                agent.source_tables = args.source_tables
+                agent.preprocess_backend = args.preprocess_backend
+                agent.log_every_tables = args.log_every_tables
         else:
             agent = DataSourceFactory.create(args.module)
         
@@ -442,7 +462,10 @@ def main():
                 else:
                     agent.fetch()
             elif action == "preprocess":
-                agent.preprocess()
+                if args.module == "health":
+                    agent.preprocess(subtype=args.subtype)
+                else:
+                    agent.preprocess()
             elif action == "assemble":
                 agent.assemble(
                     water_quality_path=args.water_quality_path,
