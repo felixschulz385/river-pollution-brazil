@@ -1,15 +1,23 @@
 import csv
 import io
+import logging
 import time
 
 import pandas as pd
 from selenium.common.exceptions import NoSuchElementException
 from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 from ..webdriver import create_chrome_driver
+
+logger = logging.getLogger(__name__)
+
+FORM_READY_TIMEOUT_SECONDS = 20
+FORM_OPEN_RETRIES = 3
+FORM_OPEN_RETRY_BACKOFF_SECONDS = 2
 
 
 class DatasusTabnetForm:
@@ -22,25 +30,62 @@ class DatasusTabnetForm:
         page_load_wait=3,
         reset_wait=2,
         result_wait_seconds=180,
+        form_ready_timeout_seconds=FORM_READY_TIMEOUT_SECONDS,
+        form_open_retries=FORM_OPEN_RETRIES,
     ):
         self.driver = create_chrome_driver(headless=headless, download_dir=download_dir)
         self.page_load_wait = page_load_wait
         self.reset_wait = reset_wait
         self.result_wait_seconds = result_wait_seconds
+        self.form_ready_timeout_seconds = form_ready_timeout_seconds
+        self.form_open_retries = form_open_retries
 
     def open(self, url):
-        try:
-            self.driver.get(url)
-        except TimeoutException:
-            # DATASUS pages often keep loading background resources long after the form is usable.
-            self.driver.execute_script("window.stop();")
-        WebDriverWait(self.driver, 20).until(
+        last_error = None
+        for attempt in range(1, self.form_open_retries + 1):
+            try:
+                self.driver.get(url)
+                self._wait_for_form_ready()
+                time.sleep(self.page_load_wait)
+                return
+            except TimeoutException as exc:
+                last_error = exc
+                self._stop_page_load()
+            except WebDriverException as exc:
+                last_error = exc
+                self._stop_page_load()
+
+            if attempt == self.form_open_retries:
+                break
+
+            time.sleep(min(5, attempt * FORM_OPEN_RETRY_BACKOFF_SECONDS))
+
+        raise TimeoutException(f"Unable to open DATASUS form after {self.form_open_retries} attempts: {url}") from last_error
+
+    def _wait_for_form_ready(self):
+        WebDriverWait(self.driver, self.form_ready_timeout_seconds).until(
             EC.presence_of_element_located((By.XPATH, "//select[@name='Linha']"))
         )
-        WebDriverWait(self.driver, 20).until(
+        WebDriverWait(self.driver, self.form_ready_timeout_seconds).until(
             EC.presence_of_element_located((By.XPATH, "//select[@name='Incremento']"))
         )
-        time.sleep(self.page_load_wait)
+
+    def _wait_for_select_options(self, select_name, minimum_options=1):
+        WebDriverWait(self.driver, self.form_ready_timeout_seconds).until(
+            EC.presence_of_element_located((By.XPATH, f"//select[@name='{select_name}']"))
+        )
+        WebDriverWait(self.driver, self.form_ready_timeout_seconds).until(
+            lambda driver: len(
+                driver.find_elements(By.XPATH, f"//select[@name='{select_name}']/option")
+            )
+            >= minimum_options
+        )
+
+    def _stop_page_load(self):
+        try:
+            self.driver.execute_script("window.stop();")
+        except WebDriverException:
+            pass
 
     def _click_option(self, xpath):
         self.driver.find_element(By.XPATH, xpath).click()
@@ -70,6 +115,12 @@ class DatasusTabnetForm:
     def select_content_value(self, value):
         self.set_multiselect_values("Incremento", [value])
 
+    def select_content_values(self, values):
+        self.set_multiselect_values("Incremento", values)
+
+    def select_all_content_values(self):
+        self.set_all_multiselect_options("Incremento")
+
     def select_content_text(self, text, exact=False):
         for option in self.get_select_options("Incremento"):
             option_text = option["text"]
@@ -96,13 +147,12 @@ class DatasusTabnetForm:
     def select_filter_option_text(self, select_names, text, exact=False):
         if isinstance(select_names, str):
             select_names = [select_names]
-        last_error = None
         for select_name in select_names:
             try:
                 self._click_option(self._option_text_xpath(select_name, text, exact=exact))
                 return select_name
-            except NoSuchElementException as exc:
-                last_error = exc
+            except NoSuchElementException:
+                pass
         if exact:
             self.select_option_with_exact_text(text)
         else:
@@ -114,7 +164,11 @@ class DatasusTabnetForm:
             self.select_filter_option_text(select_names, text, exact=exact)
             time.sleep(pause_seconds)
 
+    def select_filter_option_value(self, select_name, value):
+        self.set_multiselect_values(select_name, [str(value)])
+
     def get_select_options(self, select_name):
+        self._wait_for_select_options(select_name)
         options = self.driver.find_elements(By.XPATH, f"//select[@name='{select_name}']/option")
         return [
             {
@@ -127,9 +181,17 @@ class DatasusTabnetForm:
 
     def set_multiselect_values(self, select_name, values, clear_first=True):
         values = list(values)
+        available_options = self.get_select_options(select_name)
+        available_values = {option["value"] for option in available_options}
+        missing_values = [value for value in values if value not in available_values]
+        if missing_values:
+            raise NoSuchElementException(
+                f"Could not find values {missing_values!r} in select {select_name!r}"
+            )
+
         script = """
             const select = document.querySelector(`select[name="${arguments[0]}"]`);
-            if (!select) return false;
+            if (!select) return null;
             const targets = new Set(arguments[1]);
             const clearFirst = arguments[2];
             for (const option of select.options) {
@@ -141,11 +203,23 @@ class DatasusTabnetForm:
                 }
             }
             select.dispatchEvent(new Event('change', { bubbles: true }));
-            return true;
+            return Array.from(select.options)
+                .filter(option => option.selected)
+                .map(option => option.value);
         """
-        found = self.driver.execute_script(script, select_name, values, clear_first)
-        if not found:
+        selected_values = self.driver.execute_script(script, select_name, values, clear_first)
+        if selected_values is None:
             raise NoSuchElementException(f"Could not find select {select_name!r}")
+        missing_after_selection = [value for value in values if value not in set(selected_values)]
+        if missing_after_selection:
+            raise RuntimeError(
+                f"Failed to select values {missing_after_selection!r} in select {select_name!r}"
+            )
+        logger.debug(
+            "Selected multiselect values: select=%s, count=%s",
+            select_name,
+            len(selected_values),
+        )
 
     def set_all_multiselect_options(self, select_name):
         values = [option["value"] for option in self.get_select_options(select_name)]
@@ -160,6 +234,19 @@ class DatasusTabnetForm:
                 if fragment in option_text and option_text not in seen:
                     matched.append(option_text)
                     seen.add(option_text)
+        return matched
+
+    def find_options_by_values(self, select_name, values):
+        value_set = {str(value) for value in values}
+        matched = []
+        for option in self.get_select_options(select_name):
+            if option["value"] in value_set:
+                matched.append(
+                    {
+                        "value": option["value"],
+                        "text": option["text"],
+                    }
+                )
         return matched
 
     def open_dimension_picker(self, image_id, wait_seconds=1):
@@ -179,8 +266,14 @@ class DatasusTabnetForm:
 
     def read_result_table(self):
         WebDriverWait(self.driver, self.result_wait_seconds).until(
-            EC.presence_of_element_located((By.XPATH, "//pre"))
+            lambda driver: driver.find_elements(By.XPATH, "//pre")
+            or driver.find_elements(By.XPATH, "//h2")
         )
+        message_elements = self.driver.find_elements(By.XPATH, "//h2")
+        if message_elements:
+            message_text = " ".join(element.text.strip() for element in message_elements if element.text.strip())
+            if "Nenhum registro selecionado" in message_text:
+                raise RuntimeError(f"DATASUS returned no selected records: {message_text}")
         raw_text = self.driver.find_element(By.XPATH, "//pre").text
         try:
             return pd.read_csv(io.StringIO(raw_text), sep=";", encoding="latin1")

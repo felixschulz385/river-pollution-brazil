@@ -11,6 +11,8 @@ from time import sleep
 from typing import Generator
 
 from selenium import webdriver
+from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
@@ -19,8 +21,22 @@ DEFAULT_WINDOW_HEIGHT = 1000
 DRIVER_CREATE_RETRIES = 3
 DRIVER_RESTART_RETRIES = 2
 PAGE_LOAD_TIMEOUT_SECONDS = 30
+PAGE_LOAD_RETRIES = 3
+PAGE_LOAD_RETRY_BACKOFF_SECONDS = 2
 
 logger = logging.getLogger(__name__)
+NOISY_WEBDRIVER_LOGGERS = (
+    "WDM",
+    "urllib3.connectionpool",
+    "selenium.webdriver.remote.remote_connection",
+    "selenium.webdriver.common.service",
+    "selenium.webdriver.common.driver_finder",
+)
+
+
+def _mute_noisy_webdriver_loggers() -> None:
+    for logger_name in NOISY_WEBDRIVER_LOGGERS:
+        logging.getLogger(logger_name).setLevel(logging.INFO)
 
 
 def _build_chrome_options(
@@ -32,6 +48,7 @@ def _build_chrome_options(
     profile_dir: Path | None = None,
     cache_dir: Path | None = None,
 ) -> webdriver.ChromeOptions:
+    _mute_noisy_webdriver_loggers()
     options = webdriver.ChromeOptions()
     options.page_load_strategy = page_load_strategy
     if headless:
@@ -89,9 +106,16 @@ class ManagedBrowser:
         self._driver_binary_path: str | None = None
         self._profile_dir: Path | None = None
         self._cache_dir: Path | None = None
+        self._raw_driver_get = None
         self._raw_driver_quit = None
 
     def __enter__(self) -> webdriver.Chrome:
+        logger.debug(
+            "Opening managed Chrome browser: headless=%s, download_dir=%s, page_load_strategy=%s",
+            self.headless,
+            self.download_dir,
+            self.page_load_strategy,
+        )
         self._driver = self._create_driver()
         return self._driver
 
@@ -109,6 +133,7 @@ class ManagedBrowser:
     def quit(self) -> None:
         if self._driver is not None:
             try:
+                logger.debug("Closing Chrome driver.")
                 if self._raw_driver_quit is not None:
                     self._raw_driver_quit()
                 else:
@@ -118,6 +143,7 @@ class ManagedBrowser:
                 logger.warning("Error while quitting driver: %s", exc)
             finally:
                 self._driver = None
+                self._raw_driver_get = None
                 self._raw_driver_quit = None
         self._cleanup_browser_dirs()
 
@@ -149,6 +175,11 @@ class ManagedBrowser:
         self._cleanup_browser_dirs()
         self._profile_dir = Path(tempfile.mkdtemp(prefix="shared_chrome_profile_"))
         self._cache_dir = Path(tempfile.mkdtemp(prefix="shared_chrome_cache_"))
+        logger.debug(
+            "Prepared Chrome profile directories: profile_dir=%s, cache_dir=%s",
+            self._profile_dir,
+            self._cache_dir,
+        )
         options = _build_chrome_options(
             headless=self.headless,
             download_dir=self.download_dir,
@@ -159,18 +190,32 @@ class ManagedBrowser:
         )
 
         if self._driver_binary_path is None:
+            logger.debug("Resolving ChromeDriver binary with webdriver_manager.")
             self._driver_binary_path = ChromeDriverManager().install()
+            logger.debug("Resolved ChromeDriver binary: %s", self._driver_binary_path)
 
         last_error: Exception | None = None
         for attempt in range(1, DRIVER_CREATE_RETRIES + 1):
             try:
+                logger.debug(
+                    "Creating Chrome driver attempt %s/%s with page_load_strategy=%s",
+                    attempt,
+                    DRIVER_CREATE_RETRIES,
+                    self.page_load_strategy,
+                )
                 service = Service(self._driver_binary_path)
                 driver = webdriver.Chrome(service=service, options=options)
+                self._raw_driver_get = driver.get
                 self._raw_driver_quit = driver.quit
+                driver.get = self.get
                 driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT_SECONDS)
                 if not self.headless:
                     driver.set_window_size(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
-                logger.debug("Chrome driver created.")
+                logger.debug(
+                    "Chrome driver created successfully: browser=%s, page_load_timeout=%ss",
+                    driver.capabilities.get("browserVersion"),
+                    PAGE_LOAD_TIMEOUT_SECONDS,
+                )
                 return driver
             except Exception as exc:
                 last_error = exc
@@ -188,8 +233,61 @@ class ManagedBrowser:
             path = getattr(self, path_attr)
             if path is None:
                 continue
+            logger.debug("Cleaning Chrome temporary directory: %s", path)
             shutil.rmtree(path, ignore_errors=True)
             setattr(self, path_attr, None)
+
+    def _stop_page_load(self) -> None:
+        if self._driver is None:
+            return
+        try:
+            logger.debug("Stopping in-flight Chrome page load.")
+            self._driver.execute_script("window.stop();")
+        except WebDriverException:
+            logger.debug("Unable to stop current page load.", exc_info=True)
+
+    def get(self, url: str) -> None:
+        if self._driver is None or self._raw_driver_get is None:
+            raise RuntimeError("Chrome driver is not initialized.")
+
+        last_error: Exception | None = None
+        for attempt in range(1, PAGE_LOAD_RETRIES + 1):
+            try:
+                logger.debug("Loading page attempt %s/%s: %s", attempt, PAGE_LOAD_RETRIES, url)
+                self._raw_driver_get(url)
+                logger.debug("Page load returned control for %s", url)
+                return
+            except TimeoutException as exc:
+                last_error = exc
+                self._stop_page_load()
+                logger.warning(
+                    "Chrome page load timed out for %s on attempt %s/%s.",
+                    url,
+                    attempt,
+                    PAGE_LOAD_RETRIES,
+                )
+            except WebDriverException as exc:
+                last_error = exc
+                self._stop_page_load()
+                logger.warning(
+                    "Chrome page load failed for %s on attempt %s/%s: %s",
+                    url,
+                    attempt,
+                    PAGE_LOAD_RETRIES,
+                    exc,
+                )
+
+            if attempt == PAGE_LOAD_RETRIES:
+                break
+
+            logger.debug(
+                "Backing off %ss before retrying page load for %s",
+                min(5, attempt * PAGE_LOAD_RETRY_BACKOFF_SECONDS),
+                url,
+            )
+            sleep(min(5, attempt * PAGE_LOAD_RETRY_BACKOFF_SECONDS))
+
+        raise RuntimeError(f"Unable to load page after {PAGE_LOAD_RETRIES} attempts: {url}") from last_error
 
 
 def create_chrome_driver(
