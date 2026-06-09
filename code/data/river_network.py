@@ -14,6 +14,9 @@ Saved output files
     Drainage polygons deduplicated to one row per `trench_id`.
 `trench_adm2_matches.parquet`
     Exploded trench-to-ADM2 join table with one row per intersecting match.
+`adm2_dominant_systems.parquet`
+    One row per ADM2 region with the dominant river `system_id`, selected by
+    maximum summed intersecting trench distance.
 `river_system_matrices.pkl`
     Matrix bundle keyed by `system_id`. The row and column ordering metadata
     is not duplicated in the pickle; it is derived from `river_trenches.parquet`.
@@ -53,6 +56,7 @@ TRENCHES_FILENAME = "river_trenches.parquet"
 DRAINAGE_AREAS_FILENAME = "drainage_areas.parquet"
 SYSTEM_MATRICES_FILENAME = "river_system_matrices.pkl"
 TRENCH_ADM2_TABLE_FILENAME = "trench_adm2_matches.parquet"
+ADM2_DOMINANT_SYSTEM_TABLE_FILENAME = "adm2_dominant_systems.parquet"
 DEFAULT_GADM_PATH = "/scicore/home/meiera/schulz0022/projects/river-pollution-brazil/data/gadm/gadm41_BRA.gpkg"
 DEFAULT_ADM2_LAYER = "ADM_ADM_2"
 BRAZIL_PROJECTED_CRS = 5641
@@ -102,6 +106,7 @@ class RiverNetwork:
         self.trenches = None
         self.drainage_areas = None
         self.trench_adm2_table = None
+        self.adm2_dominant_system_table = None
         self.node_reachability_matrices = {}
         self.node_distance_matrices = {}
         self.trench_reachability_matrices = {}
@@ -132,6 +137,10 @@ class RiverNetwork:
     def _empty_trench_adm2_table(self) -> pd.DataFrame:
         """Return an empty exploded trench-to-ADM2 join table."""
         return pd.DataFrame(columns=[TRENCH_ID_COLUMN, ADM2_COLUMN])
+
+    def _empty_adm2_dominant_system_table(self) -> pd.DataFrame:
+        """Return an empty ADM2-to-dominant-system table."""
+        return pd.DataFrame(columns=[ADM2_COLUMN, SYSTEM_ID_KEY])
 
     def _build_directed_graph(self) -> nx.DiGraph:
         """Build the directed flow graph from the trench table."""
@@ -298,6 +307,20 @@ class RiverNetwork:
         """Return node identifiers in the saved node-matrix order."""
         ordered_nodes = self._ordered_nodes_for_system(system_id)
         return ordered_nodes[NODE_ID_INDEX_NAME].to_numpy(dtype=np.int64)
+
+    def get_adm2_dominant_system_table(self) -> pd.DataFrame:
+        """
+        Return the dominant river system for each ADM2 region.
+
+        The table contains one row per `adm2`, where `system_id` is selected
+        as the system with the largest total intersecting trench distance.
+        """
+        if self.adm2_dominant_system_table is None:
+            raise ValueError(
+                "ADM2 dominant-system table not available. "
+                "Call build_adm2_dominant_system_table() first."
+            )
+        return self.adm2_dominant_system_table.copy()
     
     def load_trenches(
         self,
@@ -642,6 +665,61 @@ class RiverNetwork:
         logger.info("Computed %d trench-to-ADM2 matches", len(self.trench_adm2_table))
         
         return self.trench_adm2_table
+
+    def build_adm2_dominant_system_table(self) -> pd.DataFrame:
+        """
+        Build the dominant river system lookup for each ADM2 region.
+
+        Returns
+        -------
+        pd.DataFrame
+            Table with columns `adm2` and `system_id`, containing one row per
+            ADM2 region. The selected `system_id` is the one with the greatest
+            summed intersecting trench distance within that ADM2.
+        """
+        if self.trench_adm2_table is None:
+            raise ValueError(
+                "Trench-to-ADM2 table not loaded. Call build_trench_adm2_table() first."
+            )
+        if self.trenches is None:
+            raise ValueError("Trenches data not loaded. Call load_trenches() first.")
+
+        required_trench_columns = {TRENCH_ID_COLUMN, SYSTEM_ID_KEY, DISTANCE_COLUMN}
+        missing_trench_columns = required_trench_columns.difference(self.trenches.columns)
+        if missing_trench_columns:
+            raise ValueError(
+                "Trenches data is missing required column(s): "
+                + ", ".join(sorted(missing_trench_columns))
+            )
+
+        if self.trench_adm2_table.empty:
+            self.adm2_dominant_system_table = self._empty_adm2_dominant_system_table()
+            return self.adm2_dominant_system_table
+
+        merged = pd.merge(
+            self.trench_adm2_table[[TRENCH_ID_COLUMN, ADM2_COLUMN]],
+            self.trenches[[TRENCH_ID_COLUMN, SYSTEM_ID_KEY, DISTANCE_COLUMN]],
+            on=TRENCH_ID_COLUMN,
+            how="inner",
+        )
+
+        if merged.empty:
+            self.adm2_dominant_system_table = self._empty_adm2_dominant_system_table()
+            return self.adm2_dominant_system_table
+
+        self.adm2_dominant_system_table = (
+            merged.groupby([ADM2_COLUMN, SYSTEM_ID_KEY], as_index=False)[DISTANCE_COLUMN]
+            .sum()
+            .sort_values([ADM2_COLUMN, DISTANCE_COLUMN, SYSTEM_ID_KEY])
+            .drop_duplicates(ADM2_COLUMN, keep="last")
+            [[ADM2_COLUMN, SYSTEM_ID_KEY]]
+            .reset_index(drop=True)
+        )
+        logger.info(
+            "Computed %d ADM2 dominant-system assignments",
+            len(self.adm2_dominant_system_table),
+        )
+        return self.adm2_dominant_system_table
     
     def arrange_by_systems(self) -> None:
         """
@@ -718,6 +796,11 @@ class RiverNetwork:
 
         if self.trench_adm2_table is not None:
             self.trench_adm2_table.to_parquet(output_path / TRENCH_ADM2_TABLE_FILENAME)
+
+        if self.adm2_dominant_system_table is not None:
+            self.adm2_dominant_system_table.to_parquet(
+                output_path / ADM2_DOMINANT_SYSTEM_TABLE_FILENAME
+            )
         
         if self.drainage_areas is not None:
             self._deduplicate_drainage_areas()
@@ -755,6 +838,14 @@ class RiverNetwork:
             self.trench_adm2_table = pd.read_parquet(trench_adm2_table_file)
         else:
             self.trench_adm2_table = self._empty_trench_adm2_table()
+
+        adm2_dominant_system_table_file = input_path / ADM2_DOMINANT_SYSTEM_TABLE_FILENAME
+        if adm2_dominant_system_table_file.exists():
+            self.adm2_dominant_system_table = pd.read_parquet(
+                adm2_dominant_system_table_file
+            )
+        else:
+            self.adm2_dominant_system_table = self._empty_adm2_dominant_system_table()
         
         drainage_file = input_path / DRAINAGE_AREAS_FILENAME
         if drainage_file.exists():

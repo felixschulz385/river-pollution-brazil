@@ -67,7 +67,7 @@ def deduplicate_drainage_polygons(drainage_polygons):
         subset=[TRENCH_ID_COLUMN],
         keep="first",
     )
-    return drainage_polygons.set_index(TRENCH_ID_COLUMN, drop=False)
+    return drainage_polygons.reset_index(drop=True)
 
 
 def add_crs(geom, crs=4326):

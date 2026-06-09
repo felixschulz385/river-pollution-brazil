@@ -91,6 +91,16 @@ Builds `self.trench_adm2_table` as an exploded relation table with columns:
 - `trench_id`
 - `adm2`
 
+### `build_adm2_dominant_system_table()`
+
+Builds `self.adm2_dominant_system_table` with columns:
+
+- `adm2`
+- `system_id`
+
+`system_id` is chosen per ADM2 as the river system with the largest summed
+intersecting trench distance.
+
 ### `annotate_drainage_areas_with_country_membership(...)`
 
 Adds the `within_brazil` flag to `self.drainage_areas`.
