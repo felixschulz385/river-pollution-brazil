@@ -112,3 +112,20 @@ Semantics:
   them.
 - Matrix lookup uses `system_id` and `trench_index` from
   `river_trenches.parquet`.
+
+## Population Outputs
+
+### `data/population/raw/population_raw.parquet`
+
+Raw BigQuery extract from `basedosdados.br_ms_populacao.municipio` joined to
+the municipality directory for names.
+
+### `data/population/population.parquet`
+
+Cleaned municipality population table with columns:
+
+- `mun_id`
+- `year`
+- `sex`
+- `age_group`
+- `population`

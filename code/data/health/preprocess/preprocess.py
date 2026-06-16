@@ -1,8 +1,12 @@
 import os
+import csv
+import unicodedata
 
 import pandas as pd
-from shared.batches import completed_batch_paths
-from health.fetch.datasus import SIH_SELECTED_MORBIDITY_CHANNELS
+from pandas.api.types import is_numeric_dtype
+from shared.batches import load_manifest
+from health.fetch.datasus import SIH_CHANNEL_METRICS, SIH_SELECTED_MORBIDITY_CHANNELS
+from health.fetch.datasus import SIH_ALL_METRICS_KEY
 
 HEALTH_DATASET_NAME = "health"
 SIH_METRIC_NAMES = {
@@ -72,6 +76,19 @@ ICD10_CHAPTER_LABELS = {
     "Não disponível": ("99", "Not available"),
 }
 
+
+def _normalize_metric_label(value):
+    normalized = unicodedata.normalize("NFKD", str(value))
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    normalized = normalized.replace("_", " ").replace("-", " ")
+    normalized = " ".join(normalized.lower().split())
+    return normalized
+
+
+SIH_METRIC_NAMES_NORMALIZED = {
+    _normalize_metric_label(key): value for key, value in SIH_METRIC_NAMES.items()
+}
+
 def _health_dir(root_dir):
     path = os.path.join(root_dir, "data", "health")
     os.makedirs(path, exist_ok=True)
@@ -83,9 +100,39 @@ def _raw_dir(root_dir):
 
 
 def _load_completed_batch_frame(root_dir, table_name, legacy_raw_filename=None):
-    completed_paths = completed_batch_paths(root_dir, HEALTH_DATASET_NAME, table_name)
-    if completed_paths:
-        return pd.concat([pd.read_parquet(path) for path in completed_paths], ignore_index=True)
+    completed_entries = [
+        entry
+        for entry in load_manifest(root_dir, HEALTH_DATASET_NAME, table_name)
+        if entry.get("status") == "completed"
+        and entry.get("raw_path")
+        and os.path.exists(entry["raw_path"])
+    ]
+    if completed_entries:
+        frames = []
+        for entry in completed_entries:
+            raw_path = entry["raw_path"]
+            if raw_path.endswith(".csv"):
+                frame = _read_datasus_csv(raw_path)
+                frame.insert(0, "request_id", entry["request_id"])
+                frame.insert(1, "source_key", entry["source_key"])
+                frame.insert(2, "export_year", entry["export_year"])
+                frame.insert(3, "metric_key", entry["metric_key"])
+                insert_at = 4
+                if entry.get("morbidity_channel") is not None:
+                    frame.insert(insert_at, "morbidity_channel", entry["morbidity_channel"])
+                    insert_at += 1
+                if entry.get("morbidity_filter_values") is not None:
+                    frame.insert(insert_at, "morbidity_filter_values", ",".join(entry["morbidity_filter_values"]))
+                    insert_at += 1
+                if entry.get("morbidity_filter_value") is not None:
+                    frame.insert(insert_at, "morbidity_list_cid10_value", entry["morbidity_filter_value"])
+                    insert_at += 1
+                if entry.get("morbidity_filter_text") is not None:
+                    frame.insert(insert_at, "morbidity_list_cid10", entry["morbidity_filter_text"])
+            else:
+                frame = pd.read_parquet(raw_path)
+            frames.append(frame)
+        return pd.concat(frames, ignore_index=True)
 
     if legacy_raw_filename is not None:
         legacy_path = os.path.join(_raw_dir(root_dir), legacy_raw_filename)
@@ -93,6 +140,49 @@ def _load_completed_batch_frame(root_dir, table_name, legacy_raw_filename=None):
             return pd.read_parquet(legacy_path)
 
     raise FileNotFoundError(f"No completed raw batches found for {table_name}")
+
+
+def _read_datasus_csv(path):
+    with open(path, "r", encoding="latin1", errors="ignore", newline="") as handle:
+        lines = [line.rstrip("\n\r") for line in handle]
+
+    header_index = next(
+        (
+            idx
+            for idx, line in enumerate(lines)
+            if ";" in line and '"Munic' in line
+        ),
+        None,
+    )
+    if header_index is None:
+        raise ValueError(f"Unable to locate DATASUS CSV header in {path}")
+
+    data_lines = []
+    for line in lines[header_index:]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("Fonte:") or stripped.startswith("Fonte :"):
+            break
+        data_lines.append(line)
+
+    rows = list(csv.reader(data_lines, delimiter=";", quotechar='"'))
+    if not rows:
+        return pd.DataFrame()
+
+    header = rows[0]
+    body = rows[1:]
+    if body and body[-1] and body[-1][0].strip('"') == "Total":
+        body = body[:-1]
+    expected_width = len(header)
+    normalized_rows = []
+    for row in body:
+        if len(row) < expected_width:
+            row = row + [None] * (expected_width - len(row))
+        elif len(row) > expected_width:
+            row = row[: expected_width - 1] + [";".join(row[expected_width - 1 :])]
+        normalized_rows.append(row)
+    return pd.DataFrame(normalized_rows, columns=header)
 
 
 def _empty_total_hospitalization_frame():
@@ -159,7 +249,14 @@ def _clean_mortality_age_frame(frame):
         "80 anos e mais",
         "Idade ignorada",
     ]
-    frame[age_columns] = frame[age_columns].apply(lambda col: col.str.replace("-", "0"), axis=0).astype("float32")
+    raw_count_columns = age_columns + ["total"]
+    frame[raw_count_columns] = (
+        frame[raw_count_columns]
+        .apply(lambda col: col.str.replace("-", "0"), axis=0)
+        .apply(pd.to_numeric, errors="coerce")
+        .fillna(0)
+        .astype("float32")
+    )
     frame["mun_id"] = frame["Município"].str.extract(r"(\d{6})")[0].str.zfill(6)
     frame["mun_name"] = frame["Município"].str.extract(r"\d{6}(.*)")[0].str.strip()
     frame = frame.drop(columns=["Município", "year_code"])
@@ -183,7 +280,36 @@ def _clean_mortality_age_frame(frame):
         "age_unknown",
         "total",
     ]
-    return frame.dropna()
+    count_columns = [
+        "under_1",
+        "1_to_4",
+        "5_to_9",
+        "10_to_14",
+        "15_to_19",
+        "20_to_29",
+        "30_to_39",
+        "40_to_49",
+        "50_to_59",
+        "60_to_69",
+        "70_to_79",
+        "80_and_more",
+        "age_unknown",
+        "total",
+    ]
+    frame[count_columns] = frame[count_columns].fillna(0)
+    frame = frame.dropna(subset=["mun_id", "mun_name", "year"]).copy()
+
+    municipality_frame = (
+        frame[["mun_id", "mun_name"]]
+        .drop_duplicates()
+        .sort_values(["mun_id", "mun_name"], ignore_index=True)
+    )
+    year_frame = pd.DataFrame({"year": sorted(frame["year"].dropna().unique())})
+    complete_index = municipality_frame.merge(year_frame, how="cross")
+    frame = complete_index.merge(frame, on=["mun_id", "mun_name", "year"], how="left")
+    frame[count_columns] = frame[count_columns].fillna(0)
+
+    return frame.sort_values(["mun_id", "year"], ignore_index=True)
 
 
 def preprocess_mortality_age_tables(root_dir="."):
@@ -210,12 +336,16 @@ def preprocess_mortality_age_tables(root_dir="."):
 
 
 def _coerce_tabnet_numeric(series):
+    if is_numeric_dtype(series):
+        return pd.to_numeric(series, errors="coerce")
+
+    normalized = series.astype(str).str.strip().str.replace("-", "0", regex=False)
+    has_decimal_comma = normalized.str.contains(",", na=False)
+    normalized = normalized.where(~has_decimal_comma, normalized.str.replace(".", "", regex=False))
+    normalized = normalized.str.replace(",", ".", regex=False)
+
     return pd.to_numeric(
-        series.astype(str)
-        .str.strip()
-        .str.replace(".", "", regex=False)
-        .str.replace(",", ".", regex=False)
-        .str.replace("-", "0", regex=False),
+        normalized,
         errors="coerce",
     )
 
@@ -230,7 +360,14 @@ def _extract_municipality_fields(frame):
 def _metric_name(metric_value):
     if metric_value in SIH_METRIC_NAMES.values():
         return metric_value
-    return SIH_METRIC_NAMES[metric_value]
+    if metric_value in SIH_METRIC_NAMES:
+        return SIH_METRIC_NAMES[metric_value]
+
+    normalized_metric_value = _normalize_metric_label(metric_value)
+    if normalized_metric_value in SIH_METRIC_NAMES_NORMALIZED:
+        return SIH_METRIC_NAMES_NORMALIZED[normalized_metric_value]
+
+    raise KeyError(metric_value)
 
 
 def _slugify_label(value):
@@ -248,6 +385,37 @@ def _write_parquet(frame, output_path, columns):
     frame = frame.reindex(columns=columns)
     frame.to_parquet(output_path, index=False)
     return output_path
+
+
+def _complete_panel(frame, category_columns, category_frame, metric_names):
+    municipality_frame = (
+        frame[["municipality_code", "municipality_name"]]
+        .drop_duplicates()
+        .sort_values(["municipality_code", "municipality_name"], ignore_index=True)
+    )
+    year_source_frame = (
+        frame[["year", "source_system"]]
+        .drop_duplicates()
+        .sort_values(["year", "source_system"], ignore_index=True)
+    )
+    metric_frame = pd.DataFrame({"metric_name": metric_names})
+    complete_index = municipality_frame.merge(year_source_frame, how="cross")
+    complete_index = complete_index.merge(category_frame, how="cross")
+    complete_index = complete_index.merge(metric_frame, how="cross")
+    completed = complete_index.merge(
+        frame,
+        on=[
+            "municipality_code",
+            "municipality_name",
+            "year",
+            "source_system",
+            *category_columns,
+            "metric_name",
+        ],
+        how="left",
+    )
+    completed["metric_value"] = completed["metric_value"].fillna(0)
+    return completed
 
 
 def _preprocess_sih_total_request(raw_path, output_path):
@@ -307,11 +475,14 @@ def _preprocess_sih_total_request(raw_path, output_path):
         long_frame = long_frame.dropna(subset=["metric_value"]).copy()
         long_frame["source_system"] = long_frame["source_key"]
         long_frame["year"] = long_frame["export_year"].astype(int)
-        long_frame["metric_name"] = long_frame["metric_key"].map(_metric_name)
-        long_frame["raw_metric_name_normalized"] = long_frame["raw_metric_name"].map(_metric_name)
-        long_frame = long_frame[
-            long_frame["metric_name"].eq(long_frame["raw_metric_name_normalized"])
-        ].copy()
+        if long_frame["metric_key"].eq(SIH_ALL_METRICS_KEY).all():
+            long_frame["metric_name"] = long_frame["raw_metric_name"].map(_metric_name)
+        else:
+            long_frame["metric_name"] = long_frame["metric_key"].map(_metric_name)
+            long_frame["raw_metric_name_normalized"] = long_frame["raw_metric_name"].map(_metric_name)
+            long_frame = long_frame[
+                long_frame["metric_name"].eq(long_frame["raw_metric_name_normalized"])
+            ].copy()
         long_frame = long_frame[
             [
                 "municipality_code",
@@ -406,7 +577,22 @@ def _preprocess_sih_icd10_chapter_request(raw_path, output_path):
             "metric_name",
             "metric_value",
         ]
-    ].sort_values(
+    ]
+    category_frame = pd.DataFrame(
+        [
+            {
+                "icd10_chapter_code": code,
+                "icd10_chapter_name": name,
+            }
+            for code, name in ICD10_CHAPTER_LABELS.values()
+        ]
+    )
+    tidy_frame = _complete_panel(
+        tidy_frame,
+        ["icd10_chapter_code", "icd10_chapter_name"],
+        category_frame,
+        [_metric_name(metric_name) for metric_name in SIH_CHANNEL_METRICS],
+    ).sort_values(
         ["municipality_code", "year", "icd10_chapter_code", "metric_name"],
         ignore_index=True,
     )
@@ -534,7 +720,41 @@ def _preprocess_sih_morbidity_request(raw_path, output_path):
             "metric_name",
             "metric_value",
         ]
-    ].dropna(subset=["metric_value", "metric_name"]).sort_values(
+    ].dropna(subset=["metric_value", "metric_name"])
+    category_columns = [
+        "morbidity_channel",
+        "morbidity_list_value",
+        "morbidity_list_slug",
+        "morbidity_list_name",
+    ]
+    category_frame = tidy_frame[category_columns].drop_duplicates().sort_values(
+        category_columns,
+        ignore_index=True,
+    )
+    is_channel_level_frame = (
+        not category_frame.empty
+        and category_frame["morbidity_channel"].eq(category_frame["morbidity_list_value"]).all()
+        and category_frame["morbidity_channel"].eq(category_frame["morbidity_list_slug"]).all()
+        and category_frame["morbidity_channel"].eq(category_frame["morbidity_list_name"]).all()
+    )
+    if is_channel_level_frame:
+        category_frame = pd.DataFrame(
+            [
+                {
+                    "morbidity_channel": channel,
+                    "morbidity_list_value": channel,
+                    "morbidity_list_slug": channel,
+                    "morbidity_list_name": channel,
+                }
+                for channel in SIH_SELECTED_MORBIDITY_CHANNELS
+            ]
+        )
+    tidy_frame = _complete_panel(
+        tidy_frame,
+        category_columns,
+        category_frame,
+        [_metric_name(metric_name) for metric_name in SIH_CHANNEL_METRICS],
+    ).sort_values(
         ["municipality_code", "year", "morbidity_channel", "morbidity_list_value", "metric_name"],
         ignore_index=True,
     )

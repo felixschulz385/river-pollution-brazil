@@ -1,7 +1,11 @@
 import csv
 import io
 import logging
+import os
+import shutil
+import tempfile
 import time
+from pathlib import Path
 
 import pandas as pd
 from selenium.common.exceptions import NoSuchElementException
@@ -33,7 +37,9 @@ class DatasusTabnetForm:
         form_ready_timeout_seconds=FORM_READY_TIMEOUT_SECONDS,
         form_open_retries=FORM_OPEN_RETRIES,
     ):
-        self.driver = create_chrome_driver(headless=headless, download_dir=download_dir)
+        self._owns_download_dir = download_dir is None
+        self.download_dir = download_dir or tempfile.mkdtemp(prefix="datasus_download_")
+        self.driver = create_chrome_driver(headless=headless, download_dir=self.download_dir)
         self.page_load_wait = page_load_wait
         self.reset_wait = reset_wait
         self.result_wait_seconds = result_wait_seconds
@@ -258,27 +264,66 @@ class DatasusTabnetForm:
             EC.element_to_be_clickable((By.XPATH, "//input[@name='formato' and @value='prn']"))
         ).click()
 
+    def select_output_format_table(self):
+        WebDriverWait(self.driver, 20).until(
+            EC.element_to_be_clickable((By.XPATH, "//input[@name='formato' and @value='table']"))
+        ).click()
+
     def submit_query(self):
         WebDriverWait(self.driver, 20).until(
             EC.element_to_be_clickable((By.XPATH, "//input[@class='mostra']"))
         ).click()
         self.driver.switch_to.window(self.driver.window_handles[-1])
 
-    def read_result_table(self):
+    def wait_for_result_page(self):
         WebDriverWait(self.driver, self.result_wait_seconds).until(
             lambda driver: driver.find_elements(By.XPATH, "//pre")
             or driver.find_elements(By.XPATH, "//h2")
+            or driver.find_elements(By.XPATH, "//a[contains(@href, '.csv')]")
         )
         message_elements = self.driver.find_elements(By.XPATH, "//h2")
         if message_elements:
             message_text = " ".join(element.text.strip() for element in message_elements if element.text.strip())
             if "Nenhum registro selecionado" in message_text:
                 raise RuntimeError(f"DATASUS returned no selected records: {message_text}")
+
+    def read_result_table(self):
+        self.wait_for_result_page()
         raw_text = self.driver.find_element(By.XPATH, "//pre").text
         try:
             return pd.read_csv(io.StringIO(raw_text), sep=";", encoding="latin1")
         except pd.errors.ParserError:
             return self._parse_result_table_with_csv_reader(raw_text)
+
+    def download_result_csv(self, destination_path):
+        self.wait_for_result_page()
+        download_dir = Path(self.download_dir)
+        before_files = {path.name for path in download_dir.glob("*.csv")}
+        csv_link = WebDriverWait(self.driver, 20).until(
+            EC.element_to_be_clickable((By.XPATH, "//a[contains(@href, '.csv') and contains(., 'CSV')]"))
+        )
+        csv_link.click()
+        downloaded_path = self._wait_for_downloaded_csv(before_files)
+        destination = Path(destination_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(downloaded_path), destination)
+        return str(destination)
+
+    def _wait_for_downloaded_csv(self, before_files):
+        download_dir = Path(self.download_dir)
+        deadline = time.time() + self.result_wait_seconds
+        while time.time() < deadline:
+            if list(download_dir.glob("*.crdownload")):
+                time.sleep(0.5)
+                continue
+
+            new_files = sorted(
+                path for path in download_dir.glob("*.csv") if path.name not in before_files
+            )
+            if new_files:
+                return new_files[-1]
+            time.sleep(0.5)
+        raise TimeoutException("Timed out waiting for DATASUS CSV download.")
 
     def _parse_result_table_with_csv_reader(self, raw_text):
         rows = list(csv.reader(io.StringIO(raw_text), delimiter=";", quotechar='"'))
@@ -304,3 +349,5 @@ class DatasusTabnetForm:
 
     def close(self):
         self.driver.quit()
+        if self._owns_download_dir:
+            shutil.rmtree(self.download_dir, ignore_errors=True)

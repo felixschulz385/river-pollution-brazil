@@ -14,6 +14,7 @@ Usage:
 Modules:
   health          Process health data
   water-quality   Process water quality data
+  population      Process population data
   river-network   Process river network data
   download        Download datasets
 
@@ -39,6 +40,8 @@ Examples:
   python cli.py water-quality fetch
   python cli.py water-quality preprocess
   python cli.py water-quality assemble
+  python cli.py population fetch
+  python cli.py population preprocess
   python cli.py land-cover assemble
   python cli.py river-network generate --gpkg-path /path/to/bho_2017.gpkg --output-dir ./river_data
   python cli.py river-network generate --gpkg-path /path/to/bho_2017.gpkg --output-dir ./river_data --min-lon -55 --min-lat -4 --max-lon -47 --max-lat 3
@@ -75,7 +78,7 @@ class DataSourceFactory:
         Create a data source instance based on the module name.
         
         Parameters:
-        module (str): Name of the data module ('health', 'water-quality', 'download', 'river-network')
+        module (str): Name of the data module ('health', 'water-quality', 'population', 'download', 'river-network')
         **kwargs: Additional arguments to pass to the data source constructor
         
         Returns:
@@ -113,6 +116,12 @@ class DataSourceFactory:
         elif module == "land-cover":
             from land_cover import LandCover
             return LandCover()
+        elif module == "population":
+            from population import population
+            return population(
+                root_dir=kwargs.get("root_dir", "."),
+                billing_project=kwargs.get("billing_project", "river-pollution-499210"),
+            )
         elif module == "download":
             from download import download_agent
             return download_agent(
@@ -141,6 +150,8 @@ def main():
         python cli.py health preprocess
         python cli.py water-quality fetch
         python cli.py water-quality preprocess
+        python cli.py population fetch
+        python cli.py population preprocess
         python cli.py land-cover fetch
         python cli.py land-cover preprocess --n_jobs 16 --output results.feather
         python cli.py land-cover preprocess --n_jobs 16 --output results.feather --river-network-path /path/to/network/
@@ -331,6 +342,24 @@ def main():
         default="data/sensor_data/stations_rivers.parquet",
         help="Station-to-river parquet path for assemble"
     )
+
+    # Population module
+    population_parser = subparsers.add_parser("population", help="Process population data")
+    population_parser.add_argument(
+        "action",
+        choices=["fetch", "preprocess"],
+        help="Action to perform",
+    )
+    population_parser.add_argument(
+        "--root-dir",
+        default=".",
+        help="Project root directory containing the data folder (default: current working directory)",
+    )
+    population_parser.add_argument(
+        "--billing-project",
+        default="river-pollution-499210",
+        help="Google Cloud billing project used for the BigQuery extract",
+    )
     
     # Download module
     download_parser = subparsers.add_parser("download", help="Download datasets")
@@ -430,12 +459,13 @@ def main():
                 area=args.area,
                 year=args.year
             )
-        elif args.module in ["health", "water-quality"]:
+        elif args.module in ["health", "water-quality", "population"]:
             agent = DataSourceFactory.create(
                 args.module,
                 root_dir=args.root_dir,
-                download_dir=args.download_dir,
-                headless=args.headless,
+                download_dir=getattr(args, "download_dir", None),
+                headless=getattr(args, "headless", False),
+                billing_project=getattr(args, "billing_project", "river-pollution-499210"),
             )
             if args.module == "water-quality":
                 agent.brazil_boundary_path = args.brazil_boundary_path
@@ -451,7 +481,7 @@ def main():
             agent = DataSourceFactory.create(args.module)
         
         # Execute the requested action
-        if args.module in ["health", "water-quality"]:
+        if args.module in ["health", "water-quality", "population"]:
             action = args.action
             logger.info(f"Running {args.module} module: {action}")
             

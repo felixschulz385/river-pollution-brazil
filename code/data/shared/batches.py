@@ -27,8 +27,14 @@ def manifest_path(root_dir: str, dataset_name: str, table_name: str) -> str:
     return os.path.join(batch_table_dir(root_dir, dataset_name, table_name), "manifest.jsonl")
 
 
-def batch_output_path(root_dir: str, dataset_name: str, table_name: str, batch_id: str) -> str:
-    return os.path.join(batch_output_dir(root_dir, dataset_name, table_name), f"{batch_id}.parquet")
+def batch_output_path(
+    root_dir: str,
+    dataset_name: str,
+    table_name: str,
+    batch_id: str,
+    suffix: str = ".parquet",
+) -> str:
+    return os.path.join(batch_output_dir(root_dir, dataset_name, table_name), f"{batch_id}{suffix}")
 
 
 def load_manifest(root_dir: str, dataset_name: str, table_name: str) -> list[dict]:

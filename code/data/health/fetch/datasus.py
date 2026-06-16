@@ -161,7 +161,7 @@ def _batch_id(
 
 
 def _batch_output_path(root_dir, request_id, batch_id):
-    return batch_output_path(root_dir, HEALTH_DATASET_NAME, request_id, batch_id)
+    return batch_output_path(root_dir, HEALTH_DATASET_NAME, request_id, batch_id, suffix=".csv")
 
 
 def _build_sih_manifest_entry(
@@ -375,11 +375,9 @@ def _run_sih_residence_query(
     elif morbidity_filter_text is not None:
         form.select_filter_option_text(SIH_MORBIDITY_LIST_FILTER_SELECT, morbidity_filter_text, exact=True)
 
-    form.select_output_format_prn()
+    form.select_output_format_table()
     form.submit_query()
-    table = form.read_result_table()
-    form.reset_query()
-    return table
+    return
 
 
 def _execute_sih_manifest_entries(
@@ -450,7 +448,7 @@ def _execute_sih_manifest_entries(
             entry["metric_key"],
         )
         try:
-            table = _run_sih_residence_query(
+            _run_sih_residence_query(
                 form,
                 source_url=SIH_RESIDENCE_SOURCES[entry["source_key"]]["url"],
                 source_key=entry["source_key"],
@@ -473,23 +471,7 @@ def _execute_sih_manifest_entries(
                 morbidity_filter_text=entry["morbidity_filter_text"],
                 select_all_content=entry.get("select_all_content", False),
             )
-            table.insert(0, "request_id", entry["request_id"])
-            table.insert(1, "source_key", entry["source_key"])
-            table.insert(2, "export_year", entry["export_year"])
-            table.insert(3, "metric_key", entry["metric_key"])
-            insert_at = 4
-            if entry.get("morbidity_channel") is not None:
-                table.insert(insert_at, "morbidity_channel", entry["morbidity_channel"])
-                insert_at += 1
-            if entry.get("morbidity_filter_values") is not None:
-                table.insert(insert_at, "morbidity_filter_values", ",".join(entry["morbidity_filter_values"]))
-                insert_at += 1
-            if entry.get("morbidity_filter_value") is not None:
-                table.insert(insert_at, "morbidity_list_cid10_value", entry["morbidity_filter_value"])
-                insert_at += 1
-            if entry["morbidity_filter_text"] is not None:
-                table.insert(insert_at, "morbidity_list_cid10", entry["morbidity_filter_text"])
-            _save_raw_table(table, raw_path)
+            form.download_result_csv(raw_path)
             update_manifest_entry(
                 root_dir,
                 HEALTH_DATASET_NAME,
@@ -501,10 +483,9 @@ def _execute_sih_manifest_entries(
                 error=None,
             )
             logger.debug(
-                "Completed SIH batch: request_id=%s, batch_id=%s, rows=%s, raw_path=%s",
+                "Completed SIH batch: request_id=%s, batch_id=%s, raw_path=%s",
                 request_id,
                 entry["batch_id"],
-                len(table),
                 raw_path,
             )
             results.append(raw_path)
@@ -544,6 +525,9 @@ def _execute_sih_manifest_entries(
                 exc,
             )
             raise
+        finally:
+            if len(form.driver.window_handles) > 1:
+                form.reset_query()
     return {
         "table_dir": batch_table_dir(root_dir, HEALTH_DATASET_NAME, table_name),
         "manifest_path": manifest_path(root_dir, HEALTH_DATASET_NAME, table_name),
@@ -607,16 +591,16 @@ def fetch_sih_residence_total_municipality_year(
         for source_key in SIH_RESIDENCE_SOURCES:
             years, _ = _list_source_years(form, source_key)
             for year in years:
-                for metric_key in SIH_TOTAL_METRICS:
-                    planned_entries.append(
-                        _build_sih_manifest_entry(
-                            root_dir,
-                            SIH_TOTAL_REQUEST_ID,
-                            source_key,
-                            year,
-                            metric_key,
-                        )
+                planned_entries.append(
+                    _build_sih_manifest_entry(
+                        root_dir,
+                        SIH_TOTAL_REQUEST_ID,
+                        source_key,
+                        year,
+                        SIH_ALL_METRICS_KEY,
+                        select_all_content=True,
                     )
+                )
         manifest_entries = _initialize_sih_manifest(root_dir, SIH_TOTAL_REQUEST_ID, planned_entries)
         return _execute_sih_manifest_entries(root_dir, form, SIH_TOTAL_REQUEST_ID, manifest_entries)
     finally:
