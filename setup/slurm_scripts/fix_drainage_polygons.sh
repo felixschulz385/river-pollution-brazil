@@ -7,8 +7,9 @@
 #SBATCH --job-name=fix_drainage_polygons
 #SBATCH --mail-type=END
 #SBATCH --output=fix_drainage_polygons.log
+#SBATCH --error=fix_drainage_polygons-error.log
 
-eval "$(/home/tu/tu_tu/tu_zxobe27/miniforge3/bin/conda shell.bash hook)"
-conda activate thesis
+eval "$(/scicore/home/meiera/schulz0022/miniforge-pypy3/bin/conda shell.bash hook)"
+conda activate 311
 
 python /pfs/work7/workspace/scratch/tu_zxobe27-master_thesis/code/main/02_00_fix_drainage_polygons.py

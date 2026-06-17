@@ -91,6 +91,16 @@ Builds `self.trench_adm2_table` as an exploded relation table with columns:
 - `trench_id`
 - `adm2`
 
+### `build_adm2_dominant_system_table()`
+
+Builds `self.adm2_dominant_system_table` with columns:
+
+- `adm2`
+- `system_id`
+
+`system_id` is chosen per ADM2 as the river system with the largest summed
+intersecting trench distance.
+
 ### `annotate_drainage_areas_with_country_membership(...)`
 
 Adds the `within_brazil` flag to `self.drainage_areas`.
@@ -101,9 +111,15 @@ Adds the `within_brazil` flag to `self.drainage_areas`.
 
 One row per (`trench_id`, `year`) with `land_cover_class_*` columns.
 
-### `land_cover_river_aggregated.feather`
+### `land_cover_sensor_upstream.parquet`
 
-One row per (`adm2_id`, `year`) produced by upstream aggregation.
+One row per (`station_code`, `year`) produced by the `land-cover assemble --variant sensor`
+pipeline.
+
+### `land_cover_adm2_upstream.parquet`
+
+One row per (`adm2_id`, `year`) produced by the `land-cover assemble --variant adm2`
+pipeline.
 
 Semantics:
 
@@ -112,6 +128,9 @@ Semantics:
   them.
 - Matrix lookup uses `system_id` and `trench_index` from
   `river_trenches.parquet`.
+- Both assembled outputs use the same bucketed upstream columns, such as
+  `lc_0_10km_tot`, `lc_0_10km_n`, `lc_0_10km_c41_cnt`, and
+  `lc_0_10km_c41_shr`.
 
 ## Population Outputs
 

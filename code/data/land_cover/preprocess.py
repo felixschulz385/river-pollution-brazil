@@ -1,5 +1,4 @@
 import logging
-import os
 from multiprocessing import cpu_count
 from pathlib import Path
 
@@ -9,6 +8,7 @@ import pandas as pd
 import rioxarray as rxr
 from joblib import Parallel, delayed
 from odc.geo.geom import Geometry
+from odc.geo.xr import ODCExtensionDa
 
 from .constants import (
     LAND_COVER_CLASS_PREFIX,
@@ -16,7 +16,7 @@ from .constants import (
     TRENCH_ID_COLUMN,
     YEAR_COLUMN,
 )
-from .river_network_import import rn_module
+from .. import river_network as rn_module
 from .schema import subclass_summary_id
 
 
@@ -43,22 +43,9 @@ def _trench_ids(drainage_polygons):
     return drainage_polygons[TRENCH_ID_COLUMN].to_numpy()
 
 
-def _build_year_multiindex(drainage_polygons, year):
-    """Build the standard output index for one processed year."""
-    return pd.MultiIndex.from_product(
-        [_trench_ids(drainage_polygons), [year]],
-        names=[TRENCH_ID_COLUMN, YEAR_COLUMN],
-    )
-
-
 def _class_column_name(class_id):
     """Return the canonical output column name for a land-cover class."""
     return f"{LAND_COVER_CLASS_PREFIX}{int(class_id)}"
-
-
-def _class_column_names(class_ids):
-    """Map numeric class identifiers to canonical output column names."""
-    return [_class_column_name(class_id) for class_id in class_ids]
 
 
 def _mapped_classes_and_weights(values, counts, mapper):
@@ -80,7 +67,7 @@ def deduplicate_drainage_polygons(drainage_polygons):
         subset=[TRENCH_ID_COLUMN],
         keep="first",
     )
-    return drainage_polygons.set_index(TRENCH_ID_COLUMN, drop=False)
+    return drainage_polygons.reset_index(drop=True)
 
 
 def add_crs(geom, crs=4326):
@@ -89,7 +76,7 @@ def add_crs(geom, crs=4326):
 
 def create_mappers(legend_path):
     """Create vectorized mappers from legend file."""
-    legend = pd.read_excel(legend_path)
+    legend = pd.read_excel(Path(legend_path))
     legend_class_dict = legend.set_index("ID").Class.to_dict()
     legend_subclass_dict = (
         legend.assign(
@@ -102,116 +89,218 @@ def create_mappers(legend_path):
         .to_dict()
     )
 
-    legend_class_dict_mapper = np.vectorize(lambda x: legend_class_dict.get(x, np.nan))
+    legend_class_dict_mapper = np.vectorize(
+        lambda x: legend_class_dict.get(x, np.nan),
+        otypes=[float],
+    )
     legend_subclass_dict_mapper = np.vectorize(
         lambda x: (
             np.nan
             if (subclass_value := legend_subclass_dict.get(x, np.nan)) is None
             else subclass_value
-        )
+        ),
+        otypes=[float],
     )
 
     return legend_class_dict_mapper, legend_subclass_dict_mapper
 
 
 def get_files(datadir):
-    """Get sorted file list with year index."""
-    files = pd.Series(os.listdir(datadir)).sort_values()
-    years = files.str.extract(r"(\d{4,})").iloc[:, 0].astype("int")
-    return files.set_axis(years)
+    """Return raster files keyed by year for the configured land-cover directory."""
+    datadir = Path(datadir)
+    files = sorted(path for path in datadir.iterdir() if path.suffix.lower() == ".tif")
+    if not files:
+        raise FileNotFoundError(f"No GeoTIFF files found in land-cover directory: {datadir}")
+
+    file_series = pd.Series(files, dtype=object)
+    extracted_years = file_series.astype(str).str.extract(r"_(\d{4})").iloc[:, 0]
+    missing_years = file_series[extracted_years.isna()]
+    if not missing_years.empty:
+        raise ValueError(
+            "Land-cover raster filenames must contain a four-digit year. "
+            f"Invalid files: {[path.name for path in missing_years.tolist()[:10]]}"
+        )
+
+    years = extracted_years.astype(int)
+    return file_series.set_axis(years).sort_index()
 
 
-def process_year(year, file, datadir, drainage_polygons, legend_path, output_columns, log_level=None):
+def _empty_year_frame(trench_ids, year, output_columns):
+    """Build the default all-zero result frame for one year."""
+    data = np.zeros((len(trench_ids), len(output_columns)), dtype=np.int64)
+    year_df = pd.DataFrame(data, columns=output_columns)
+    year_df.insert(0, TRENCH_ID_COLUMN, trench_ids)
+    year_df.insert(1, YEAR_COLUMN, year)
+    return year_df
+
+
+def _year_output_data(trench_ids, output_columns):
+    """Allocate a writable dense output array for one processed year."""
+    return np.zeros((len(trench_ids), len(output_columns)), dtype=np.int64)
+
+
+def _extract_value_counts(lc, geometry):
+    """Extract finite raster values and counts for one polygon crop."""
+    cropped = lc.odc.crop(add_crs(geometry))
+    arr = np.asarray(cropped).reshape(-1)
+    arr = arr[np.isfinite(arr)]
+
+    if arr.size == 0:
+        empty = np.array([], dtype=np.int64)
+        return empty, empty
+
+    values, counts = np.unique(arr.astype(np.int64, copy=False), return_counts=True)
+    return values, counts
+
+
+def _accumulate_mapped_counts(
+    row_data,
+    values,
+    counts,
+    legend_mappers,
+    column_positions,
+):
+    """Populate one output row from raw value counts."""
+    if len(values) == 0:
+        return
+
+    row_data[column_positions[LAND_COVER_TOTAL_COLUMN]] = int(np.sum(counts))
+
+    for mapper in legend_mappers:
+        classes, weights = _mapped_classes_and_weights(values, counts, mapper)
+        if len(classes) == 0:
+            continue
+
+        uniq, inv = np.unique(classes, return_inverse=True)
+        agg = np.bincount(inv, weights=weights).astype(np.int64, copy=False)
+
+        for class_id, count in zip(uniq, agg, strict=False):
+            column_name = _class_column_name(class_id)
+            if column_name in column_positions:
+                row_data[column_positions[column_name]] = count
+
+
+def _build_row_data(lc, geometry, legend_mappers, column_positions, n_columns):
+    """Build one dense output row for a polygon."""
+    row_data = np.zeros(n_columns, dtype=np.int64)
+    values, counts = _extract_value_counts(lc, geometry)
+    _accumulate_mapped_counts(
+        row_data,
+        values,
+        counts,
+        legend_mappers,
+        column_positions,
+    )
+    return row_data
+
+
+def _read_drainage_polygons(path):
+    """Read drainage polygons from parquet or feather based on suffix."""
+    path = Path(path)
+    if path.suffix == ".parquet":
+        return gpd.read_parquet(path)
+    if path.suffix == ".feather":
+        return gpd.read_feather(path)
+    raise ValueError(
+        f"Unsupported drainage polygon format: {path}. Expected .parquet or .feather."
+    )
+
+
+def process_year(
+    year,
+    file,
+    polygon_items,
+    output_columns,
+    legend_mappers,
+    log_level=None,
+):
     """Process all polygons for a single year."""
     if log_level is not None:
         configure_logging(log_level)
     logger.info("Processing year %s", year)
 
+    trench_ids = np.asarray([int(trench_id) for trench_id, _ in polygon_items], dtype=np.int64)
+    output_data = _year_output_data(trench_ids, output_columns)
+    column_positions = {column: idx for idx, column in enumerate(output_columns)}
+
     try:
-        legend_class_mapper, legend_subclass_mapper = create_mappers(legend_path)
-        lc = rxr.open_rasterio(datadir + file, chunks=None)
-    except Exception as e:
-        logger.error("Failed to load raster for year %s: %s", year, e)
-        mi = _build_year_multiindex(drainage_polygons, year)
-        return pd.DataFrame(0, index=mi, columns=output_columns).reset_index()
+        raster_path = Path(file)
+        with rxr.open_rasterio(raster_path, chunks=None) as raster:
+            lc = raster.squeeze(drop=True)
 
-    mi = _build_year_multiindex(drainage_polygons, year)
-    year_df = pd.DataFrame(0, index=mi, columns=output_columns)
+            n_polygons = len(polygon_items)
+            n_success = 0
+            n_no_overlap = 0
+            n_errors = 0
 
-    n_polygons = len(drainage_polygons)
-    n_success = 0
-    n_no_overlap = 0
-    n_errors = 0
-
-    for idx, j in enumerate(drainage_polygons.index):
-        try:
-            geometry = drainage_polygons.loc[j, "geometry"]
-            if geometry is None or geometry.is_empty:
-                n_errors += 1
-                continue
-
-            try:
-                cropped = lc.odc.crop(add_crs(geometry))
-                values, counts = np.unique(cropped, return_counts=True)
-                n_success += 1
-            except (ValueError, RuntimeError, Exception) as e:
-                error_msg = str(e)
-                if "overlap" in error_msg.lower() or "extent" in error_msg.lower():
-                    n_no_overlap += 1
-                    if n_no_overlap <= 10:
-                        logger.debug("Polygon %s does not overlap raster extent", j)
-                else:
-                    n_errors += 1
-                    logger.warning("Error cropping polygon %s: %s", j, e)
-                values, counts = np.array([]), np.array([])
-
-            if len(values) > 0:
-                year_df.loc[(j, year), LAND_COVER_TOTAL_COLUMN] = int(np.sum(counts))
-                for mapper in (legend_class_mapper, legend_subclass_mapper):
-                    classes, weights = _mapped_classes_and_weights(values, counts, mapper)
-                    if len(classes) == 0:
+            for idx, (trench_id, geometry) in enumerate(polygon_items):
+                try:
+                    if geometry is None or geometry.is_empty:
+                        n_errors += 1
                         continue
 
-                    uniq, inv = np.unique(classes, return_inverse=True)
-                    agg = np.bincount(inv, weights=weights)
-                    year_df.loc[(j, year), _class_column_names(uniq)] = agg
+                    try:
+                        output_data[idx] = _build_row_data(
+                            lc,
+                            geometry,
+                            legend_mappers,
+                            column_positions,
+                            len(output_columns),
+                        )
+                        n_success += 1
+                    except (ValueError, RuntimeError, Exception) as e:
+                        error_msg = str(e)
+                        if "overlap" in error_msg.lower() or "extent" in error_msg.lower():
+                            n_no_overlap += 1
+                            if n_no_overlap <= 10:
+                                logger.debug(
+                                    "Polygon %s does not overlap raster extent",
+                                    trench_id,
+                                )
+                        else:
+                            n_errors += 1
+                            logger.warning("Error cropping polygon %s: %s", trench_id, e)
+                        values, counts = np.array([]), np.array([])
 
-            if (idx + 1) % 100000 == 0:
-                logger.info(
-                    "Year %s: processed %s/%s polygons (success: %s, no_overlap: %s, errors: %s)",
-                    year,
-                    idx + 1,
-                    n_polygons,
-                    n_success,
-                    n_no_overlap,
-                    n_errors,
-                )
+                    if (idx + 1) % 100000 == 0:
+                        logger.info(
+                            "Year %s: processed %s/%s polygons (success: %s, no_overlap: %s, errors: %s)",
+                            year,
+                            idx + 1,
+                            n_polygons,
+                            n_success,
+                            n_no_overlap,
+                            n_errors,
+                        )
 
-        except Exception as e:
-            if "cannot convert float NaN to integer" in str(e):
-                continue
-            n_errors += 1
-            logger.error("Unexpected error processing polygon %s in year %s: %s", j, year, e)
+                except Exception as e:
+                    if "cannot convert float NaN to integer" in str(e):
+                        continue
+                    n_errors += 1
+                    logger.error(
+                        "Unexpected error processing polygon %s in year %s: %s",
+                        trench_id,
+                        year,
+                        e,
+                    )
 
-    logger.info(
-        "Completed year %s: %s successful, %s no overlap, %s errors",
-        year,
-        n_success,
-        n_no_overlap,
-        n_errors,
-    )
-    return year_df.reset_index()
+            logger.info(
+                "Completed year %s: %s successful, %s no overlap, %s errors",
+                year,
+                n_success,
+                n_no_overlap,
+                n_errors,
+            )
+    except Exception as e:
+        logger.error("Failed to load raster for year %s from %s: %s", year, file, e)
+    year_df = pd.DataFrame(output_data, columns=output_columns)
+    year_df.insert(0, TRENCH_ID_COLUMN, trench_ids)
+    year_df.insert(1, YEAR_COLUMN, year)
+    return year_df
 
 
-def preprocess_land_cover(self, n_jobs=None, river_network_path=None, output_path="data/land_cover_results.feather", log_level=None):
-    """Preprocess land cover data by extracting values for drainage polygons."""
-    if n_jobs is None:
-        n_jobs = cpu_count()
-    if log_level is not None:
-        configure_logging(log_level)
-
-    logger.info("Starting preprocessing with n_jobs=%s", n_jobs)
-
+def _load_drainage_polygons(self, river_network_path):
+    """Load and normalize preprocessing polygons from the selected source."""
     if river_network_path:
         logger.info("Loading river network from %s", river_network_path)
         network = rn_module.RiverNetwork()
@@ -236,12 +325,26 @@ def preprocess_land_cover(self, n_jobs=None, river_network_path=None, output_pat
             len(drainage_polygons),
             n_before,
         )
-    else:
-        logger.info("Loading drainage polygons from %s", self.drainage_path)
-        drainage_polygons = deduplicate_drainage_polygons(
-            gpd.read_feather(self.drainage_path)
-        )
-        logger.info("Loaded %d drainage polygons", len(drainage_polygons))
+        return drainage_polygons
+
+    logger.info("Loading drainage polygons from %s", self.drainage_path)
+    drainage_polygons = deduplicate_drainage_polygons(
+        _read_drainage_polygons(self.drainage_path)
+    )
+    logger.info("Loaded %d drainage polygons", len(drainage_polygons))
+    return drainage_polygons
+
+
+def preprocess_land_cover(self, n_jobs=None, river_network_path=None, output_path="data/land_cover_results.feather", log_level=None):
+    """Preprocess land cover data by extracting values for drainage polygons."""
+    if n_jobs is None:
+        n_jobs = cpu_count()
+    if log_level is not None:
+        configure_logging(log_level)
+
+    logger.info("Starting preprocessing with n_jobs=%s", n_jobs)
+
+    drainage_polygons = _load_drainage_polygons(self, river_network_path)
 
     files = get_files(self.datadir)
     logger.info(
@@ -250,15 +353,22 @@ def preprocess_land_cover(self, n_jobs=None, river_network_path=None, output_pat
         files.index.min(),
         files.index.max(),
     )
+    polygon_items = list(
+        zip(
+            _trench_ids(drainage_polygons).tolist(),
+            drainage_polygons.geometry.to_numpy(),
+            strict=False,
+        )
+    )
+    legend_mappers = create_mappers(self.legend_path)
 
     results = Parallel(n_jobs=n_jobs, verbose=10)(
         delayed(process_year)(
             year,
             file,
-            self.datadir,
-            drainage_polygons,
-            self.legend_path,
+            polygon_items,
             self.output_columns,
+            legend_mappers,
             log_level,
         )
         for year, file in files.items()

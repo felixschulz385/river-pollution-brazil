@@ -7,9 +7,10 @@
 #SBATCH --mem=64000mb
 #SBATCH --job-name=compute_reachability_graph
 #SBATCH --output=./log/compute_reachability_graph/slurm-%j.log
+#SBATCH --error=./log/compute_reachability_graph/slurm-error-%j.log
 
 eval "$(/scicore/home/meiera/schulz0022/miniforge-pypy3/bin/conda shell.bash hook)"
-conda activate rpb
+conda activate 311
 
 cd /scicore/home/meiera/schulz0022/projects/river-pollution-brazil
 

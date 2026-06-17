@@ -29,7 +29,7 @@ def _land_cover_column(
     subclass: str,
     settings: SensorAnalysisSettings,
 ) -> str:
-    return f"lc_{bucket}_{subclass}_{settings.land_cover_statistic}"
+    return settings.land_cover_column(bucket, subclass)
 
 
 def build_model_specs(
@@ -66,7 +66,7 @@ def build_model_specs(
         bucket_limit = min(bucket_limit, max_distance_step)
 
     control_terms = [control.scaled_column for control in settings.controls]
-    fixed_effects = " + ".join(settings.fixed_effects)
+    fixed_effects = " + ".join(settings.resolved_fixed_effects())
     specs: list[ModelSpec] = []
     for pollutant in pollutants:
         outcome_column = f"{pollutant}__transformed"

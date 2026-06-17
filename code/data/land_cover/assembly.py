@@ -8,18 +8,27 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 
 from .constants import (
+    ADM2_ASSEMBLY_VARIANT,
+    ADJUSTED_DISTANCE_COLUMN,
+    ASSEMBLY_VARIANTS,
+    BUCKET_COUNT_COLUMN,
+    BUCKET_REACHABLE_COUNT_COLUMN,
+    BUCKET_SHARE_COLUMN,
     DATE_COLUMN,
     DATETIME_COLUMN,
+    DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH,
+    DEFAULT_ASSEMBLY_LAND_COVER_PATH,
     DEFAULT_RIVER_NETWORK_PATH,
-    DEFAULT_SENSOR_LAND_COVER_PATH,
     DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH,
     DEFAULT_STATIONS_RIVERS_PATH,
     DEFAULT_WATER_QUALITY_PATH,
     DISTANCE_BUCKET_COLUMN,
+    LAND_COVER_CLASS_COLUMN,
     LAND_COVER_CLASS_PREFIX,
     LAND_COVER_TOTAL_COLUMN,
+    LEGACY_SENSOR_UPSTREAM_DISTANCE_BUCKETS_VARIANT,
+    SENSOR_ASSEMBLY_VARIANT,
     SENSOR_DISTANCE_BUCKETS,
-    SENSOR_UPSTREAM_DISTANCE_BUCKETS_VARIANT,
     STATION_CODE_COLUMN,
     TRENCH_ID_COLUMN,
     UPSTREAM_DISTANCE_COLUMN,
@@ -30,6 +39,32 @@ from .schema import land_cover_assembly_columns, validate_required_columns
 
 
 logger = logging.getLogger(__name__)
+
+ASSEMBLY_VARIANT_ALIASES = {
+    SENSOR_ASSEMBLY_VARIANT: SENSOR_ASSEMBLY_VARIANT,
+    LEGACY_SENSOR_UPSTREAM_DISTANCE_BUCKETS_VARIANT: SENSOR_ASSEMBLY_VARIANT,
+    ADM2_ASSEMBLY_VARIANT: ADM2_ASSEMBLY_VARIANT,
+}
+
+
+def _normalize_assembly_variant(variant):
+    """Map legacy variant names to the canonical public interface."""
+    normalized = ASSEMBLY_VARIANT_ALIASES.get(variant)
+    if normalized is None:
+        raise ValueError(
+            f"Unknown land-cover assembly variant: {variant}. "
+            f"Available variants: {list(ASSEMBLY_VARIANTS)}"
+        )
+    return normalized
+
+
+def _default_output_path_for_variant(variant):
+    """Return the standard output path for one assembly variant."""
+    if variant == SENSOR_ASSEMBLY_VARIANT:
+        return DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH
+    if variant == ADM2_ASSEMBLY_VARIANT:
+        return DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH
+    raise ValueError(f"Unknown normalized variant: {variant}")
 
 
 def _derive_water_quality_years(water_quality_df):
@@ -54,8 +89,8 @@ def _derive_water_quality_years(water_quality_df):
     return water_quality
 
 
-def _build_sensor_trench_year_targets(water_quality_df, stations_rivers_df):
-    """Return unique trench-year pairs observed in cleaned water quality."""
+def _build_sensor_targets(water_quality_df, stations_rivers_df):
+    """Return unique station-year targets and a deduplicated station-trench map."""
     validate_required_columns(
         water_quality_df,
         {STATION_CODE_COLUMN},
@@ -70,29 +105,34 @@ def _build_sensor_trench_year_targets(water_quality_df, stations_rivers_df):
     water_quality = _derive_water_quality_years(water_quality_df)
     water_quality[STATION_CODE_COLUMN] = water_quality[STATION_CODE_COLUMN].astype(str)
 
-    stations_rivers = stations_rivers_df[
+    station_trenches = stations_rivers_df[
         [STATION_CODE_COLUMN, TRENCH_ID_COLUMN]
     ].dropna().copy()
-    stations_rivers[STATION_CODE_COLUMN] = stations_rivers[STATION_CODE_COLUMN].astype(str)
-    stations_rivers = stations_rivers.drop_duplicates(
+    station_trenches[STATION_CODE_COLUMN] = station_trenches[
+        STATION_CODE_COLUMN
+    ].astype(str)
+    station_trenches[TRENCH_ID_COLUMN] = station_trenches[TRENCH_ID_COLUMN].astype(
+        np.int64
+    )
+    station_trenches = station_trenches.drop_duplicates(
         subset=[STATION_CODE_COLUMN, TRENCH_ID_COLUMN],
         keep="first",
     )
 
-    targets = water_quality[[STATION_CODE_COLUMN, YEAR_COLUMN]].merge(
-        stations_rivers,
-        on=STATION_CODE_COLUMN,
-        how="inner",
-        validate="many_to_many",
-    )
-    targets = targets.dropna(subset=[TRENCH_ID_COLUMN])
-    targets[TRENCH_ID_COLUMN] = targets[TRENCH_ID_COLUMN].astype(np.int64)
-    return (
-        targets[[TRENCH_ID_COLUMN, YEAR_COLUMN]]
+    station_year_targets = (
+        water_quality[[STATION_CODE_COLUMN, YEAR_COLUMN]]
         .drop_duplicates()
-        .sort_values([TRENCH_ID_COLUMN, YEAR_COLUMN])
+        .sort_values([STATION_CODE_COLUMN, YEAR_COLUMN])
         .reset_index(drop=True)
     )
+    return station_year_targets, station_trenches
+
+
+def _normalize_network_frame(frame):
+    """Return a copy with a simple RangeIndex to avoid index/column ambiguity."""
+    if frame is None:
+        return None
+    return frame.reset_index(drop=True).copy()
 
 
 def _validate_river_network_for_trench_aggregation(network):
@@ -106,13 +146,32 @@ def _validate_river_network_for_trench_aggregation(network):
 
     validate_required_columns(
         network.trenches,
-        {TRENCH_ID_COLUMN, rn_module.SYSTEM_ID_KEY, rn_module.TRENCH_INDEX_COLUMN},
+        {
+            TRENCH_ID_COLUMN,
+            rn_module.SYSTEM_ID_KEY,
+            rn_module.TRENCH_INDEX_COLUMN,
+            "distance",
+        },
         "River trench data",
     )
 
 
+def _load_network(river_network_path):
+    """Load the river network and normalize core tables."""
+    logger.info("Loading river network from %s", river_network_path)
+    network = rn_module.RiverNetwork()
+    network.load(str(river_network_path))
+    _validate_river_network_for_trench_aggregation(network)
+    network.trenches = _normalize_network_frame(network.trenches)
+    if network.drainage_areas is not None:
+        network.drainage_areas = _normalize_network_frame(network.drainage_areas)
+    if getattr(network, "trench_adm2_table", None) is not None:
+        network.trench_adm2_table = _normalize_network_frame(network.trench_adm2_table)
+    return network
+
+
 def _build_system_trench_lookup(rivers):
-    """Build per-system trench id arrays and target-position lookups."""
+    """Build per-system trench id arrays, positions, and valid indices."""
     system_trench_tables = {
         int(system_id): system_trenches[
             [TRENCH_ID_COLUMN, rn_module.TRENCH_INDEX_COLUMN]
@@ -134,7 +193,41 @@ def _build_system_trench_lookup(rivers):
         )
         for system_id, system_trenches in system_trench_tables.items()
     }
-    return system_trench_id_arrays, system_trench_positions
+    system_valid_positions = {
+        system_id: set(positions.values())
+        for system_id, positions in system_trench_positions.items()
+    }
+    return system_trench_id_arrays, system_trench_positions, system_valid_positions
+
+
+def _build_trench_system_position_lookup(rivers):
+    """Build an O(1) lookup from trench id to system id and trench index."""
+    trench_rows = rivers[
+        [TRENCH_ID_COLUMN, rn_module.SYSTEM_ID_KEY, rn_module.TRENCH_INDEX_COLUMN]
+    ].drop_duplicates()
+    duplicated = trench_rows[TRENCH_ID_COLUMN].duplicated(keep=False)
+    if duplicated.any():
+        duplicate_ids = trench_rows.loc[duplicated, TRENCH_ID_COLUMN].unique()[:10]
+        raise ValueError(
+            "Expected one river-network row per trench id. "
+            f"Found duplicate trench ids, e.g. {duplicate_ids}."
+        )
+    return {
+        int(trench_id): (int(system_id), int(trench_index))
+        for trench_id, system_id, trench_index in trench_rows.itertuples(
+            index=False,
+            name=None,
+        )
+    }
+
+
+def _build_trench_length_lookup(rivers):
+    """Return trench lengths keyed by trench id."""
+    return (
+        rivers[[TRENCH_ID_COLUMN, "distance"]]
+        .drop_duplicates(subset=[TRENCH_ID_COLUMN], keep="first")
+        .rename(columns={"distance": "trench_length_km"})
+    )
 
 
 def _sparse_row(matrix, row_idx):
@@ -148,20 +241,15 @@ def _resolve_upstream_trench_distances(
     trench_id,
     network,
     system_trench_id_arrays,
-    system_trench_positions,
+    system_valid_positions,
+    trench_system_position_lookup,
 ):
-    """Return upstream trench ids and distances for one target trench."""
-    trench_row = network.trenches.loc[
-        network.trenches[TRENCH_ID_COLUMN] == trench_id,
-        [rn_module.SYSTEM_ID_KEY, rn_module.TRENCH_INDEX_COLUMN],
-    ].drop_duplicates()
-    if len(trench_row) == 0:
-        raise KeyError(f"Unknown trench_id in river network: {trench_id}")
-    if len(trench_row) > 1:
-        raise ValueError(f"Expected one trench row for trench_id {trench_id}.")
+    """Return production upstream trench ids and distances for one target trench."""
+    try:
+        system_id, target_position = trench_system_position_lookup[int(trench_id)]
+    except KeyError as exc:
+        raise KeyError(f"Unknown trench_id in river network: {trench_id}") from exc
 
-    system_id = int(trench_row.iloc[0][rn_module.SYSTEM_ID_KEY])
-    target_position = int(trench_row.iloc[0][rn_module.TRENCH_INDEX_COLUMN])
     system_trench_ids = system_trench_id_arrays.get(
         system_id,
         np.asarray([], dtype=np.int64),
@@ -169,7 +257,7 @@ def _resolve_upstream_trench_distances(
     if len(system_trench_ids) == 0:
         return pd.DataFrame(columns=[TRENCH_ID_COLUMN, UPSTREAM_DISTANCE_COLUMN])
 
-    if target_position not in set(system_trench_positions[system_id].values()):
+    if target_position not in system_valid_positions[system_id]:
         raise ValueError(
             f"Trench index {target_position} for trench_id {trench_id} is invalid."
         )
@@ -182,198 +270,297 @@ def _resolve_upstream_trench_distances(
         network.trench_distance_matrices[system_id],
         target_position,
     )
-    distance_lookup = dict(zip(dist_row.indices.tolist(), dist_row.data.tolist()))
 
-    upstream_records = [
-        {
-            TRENCH_ID_COLUMN: int(system_trench_ids[col_idx]),
-            UPSTREAM_DISTANCE_COLUMN: float(distance_lookup.get(col_idx, 0.0)),
-        }
-        for col_idx in reach_row.indices.tolist()
-    ]
-    if trench_id not in [record[TRENCH_ID_COLUMN] for record in upstream_records]:
-        upstream_records.append(
+    reach_indices = reach_row.indices.astype(np.int64, copy=False)
+    if len(reach_indices) == 0:
+        return pd.DataFrame(
             {
-                TRENCH_ID_COLUMN: int(trench_id),
-                UPSTREAM_DISTANCE_COLUMN: 0.0,
+                TRENCH_ID_COLUMN: [int(trench_id)],
+                UPSTREAM_DISTANCE_COLUMN: [0.0],
             }
         )
 
-    return pd.DataFrame(upstream_records).sort_values(
+    distance_lookup = dict(
+        zip(
+            dist_row.indices.astype(np.int64, copy=False).tolist(),
+            dist_row.data.astype(float, copy=False).tolist(),
+        )
+    )
+    upstream = pd.DataFrame(
+        {
+            TRENCH_ID_COLUMN: system_trench_id_arrays[system_id][reach_indices].astype(
+                np.int64,
+                copy=False,
+            ),
+            UPSTREAM_DISTANCE_COLUMN: np.asarray(
+                [float(distance_lookup.get(int(col_idx), 0.0)) for col_idx in reach_indices],
+                dtype=float,
+            ),
+        }
+    )
+    if int(trench_id) not in set(upstream[TRENCH_ID_COLUMN].tolist()):
+        upstream = pd.concat(
+            [
+                upstream,
+                pd.DataFrame(
+                    {
+                        TRENCH_ID_COLUMN: [int(trench_id)],
+                        UPSTREAM_DISTANCE_COLUMN: [0.0],
+                    }
+                ),
+            ],
+            ignore_index=True,
+        )
+    return upstream.sort_values(
         [UPSTREAM_DISTANCE_COLUMN, TRENCH_ID_COLUMN]
     ).reset_index(drop=True)
 
 
+def _shift_upstream_distances(upstream_distances, trench_lengths):
+    """Shift production distances so zero is the upstream end of the seed trench."""
+    if upstream_distances.empty:
+        return pd.DataFrame(
+            columns=[
+                TRENCH_ID_COLUMN,
+                UPSTREAM_DISTANCE_COLUMN,
+                "trench_length_km",
+                ADJUSTED_DISTANCE_COLUMN,
+            ]
+        )
+
+    shifted = upstream_distances.merge(
+        trench_lengths,
+        on=TRENCH_ID_COLUMN,
+        how="left",
+        validate="one_to_one",
+    )
+    if shifted["trench_length_km"].isna().any():
+        missing_ids = shifted.loc[
+            shifted["trench_length_km"].isna(),
+            TRENCH_ID_COLUMN,
+        ].tolist()
+        raise ValueError(
+            "Missing trench length(s) for shifted upstream-distance calculation: "
+            f"{missing_ids[:10]}"
+        )
+    shifted[ADJUSTED_DISTANCE_COLUMN] = (
+        shifted[UPSTREAM_DISTANCE_COLUMN] - shifted["trench_length_km"]
+    )
+    return shifted
+
+
+def _combine_station_upstream_distances(station_trench_ids, upstream_distance_cache):
+    """Merge all trench-level upstream tables for one station into one min-distance table."""
+    distance_frames = [
+        upstream_distance_cache[int(trench_id)]
+        for trench_id in station_trench_ids
+        if int(trench_id) in upstream_distance_cache
+    ]
+    if not distance_frames:
+        return pd.DataFrame(
+            columns=[
+                TRENCH_ID_COLUMN,
+                UPSTREAM_DISTANCE_COLUMN,
+                "trench_length_km",
+                ADJUSTED_DISTANCE_COLUMN,
+            ]
+        )
+
+    combined = pd.concat(distance_frames, ignore_index=True)
+    return (
+        combined.sort_values(
+            [ADJUSTED_DISTANCE_COLUMN, UPSTREAM_DISTANCE_COLUMN, TRENCH_ID_COLUMN]
+        )
+        .drop_duplicates(subset=[TRENCH_ID_COLUMN], keep="first")
+        .reset_index(drop=True)
+    )
+
+
+def _bucket_label(lower_bound_km):
+    """Return the integer lower bound used to index one bucket."""
+    return int(lower_bound_km)
+
+
 def _assign_sensor_distance_buckets(distances):
-    """Assign upstream distances to the configured sensor buckets."""
+    """Assign shifted upstream distances to lower-bound-indexed 25 km buckets."""
     distances = pd.Series(distances, copy=False)
-    bucket_values = pd.Series(pd.NA, index=distances.index, dtype="object")
-    for bucket_name, lower_bound, upper_bound in SENSOR_DISTANCE_BUCKETS:
-        if lower_bound == 0:
-            mask = distances.ge(lower_bound) & distances.le(upper_bound)
-        elif np.isinf(upper_bound):
-            mask = distances.gt(lower_bound)
+    bucket_values = pd.Series(pd.NA, index=distances.index, dtype="Int64")
+    for lower_bound, upper_bound in SENSOR_DISTANCE_BUCKETS:
+        if np.isinf(upper_bound):
+            mask = distances.ge(lower_bound)
         else:
-            mask = distances.gt(lower_bound) & distances.le(upper_bound)
-        bucket_values.loc[mask] = bucket_name
+            mask = distances.ge(lower_bound) & distances.lt(upper_bound)
+        bucket_values.loc[mask] = _bucket_label(lower_bound)
     return bucket_values
 
 
-def _sensor_bucket_total_column(bucket_name):
-    return f"lc_{bucket_name}_tot"
-
-
-def _sensor_bucket_reachable_column(bucket_name):
-    return f"lc_{bucket_name}_n"
-
-
 def _land_cover_feature_stem(lc_column):
-    """Return a compact output stem for a preprocessed land-cover class column."""
+    """Return the integer-coded land-cover class id used in long outputs."""
+    if lc_column == LAND_COVER_TOTAL_COLUMN:
+        return -1
     if lc_column.startswith(LAND_COVER_CLASS_PREFIX):
-        return f"c{lc_column.removeprefix(LAND_COVER_CLASS_PREFIX)}"
-    return lc_column
+        return int(lc_column.removeprefix(LAND_COVER_CLASS_PREFIX))
+    raise ValueError(f"Unsupported land-cover column for long output: {lc_column}")
 
 
-def _sensor_bucket_class_column(bucket_name, lc_column, statistic):
-    return f"lc_{bucket_name}_{_land_cover_feature_stem(lc_column)}_{statistic}"
-
-
-def _empty_sensor_bucket_result(lc_columns):
-    """Return zero/NA-filled output columns for one target row."""
-    result = {}
-    for bucket_name, _, _ in SENSOR_DISTANCE_BUCKETS:
-        result[_sensor_bucket_total_column(bucket_name)] = 0.0
-        result[_sensor_bucket_reachable_column(bucket_name)] = 0
+def _empty_sensor_bucket_rows(target_key, lc_columns):
+    """Return zero/NA-filled long-format bucket rows for one target row."""
+    station_code, year = target_key
+    rows = []
+    for lower_bound, _ in SENSOR_DISTANCE_BUCKETS:
+        bucket_value = _bucket_label(lower_bound)
         for lc_column in lc_columns:
-            result[_sensor_bucket_class_column(bucket_name, lc_column, "cnt")] = 0.0
-            result[_sensor_bucket_class_column(bucket_name, lc_column, "shr")] = np.nan
-    return result
+            rows.append(
+                {
+                    STATION_CODE_COLUMN: station_code,
+                    YEAR_COLUMN: year,
+                    DISTANCE_BUCKET_COLUMN: bucket_value,
+                    LAND_COVER_CLASS_COLUMN: _land_cover_feature_stem(lc_column),
+                    BUCKET_REACHABLE_COUNT_COLUMN: 0,
+                    BUCKET_COUNT_COLUMN: 0.0,
+                    BUCKET_SHARE_COLUMN: np.nan,
+                }
+            )
+    return rows
 
 
-def _aggregate_sensor_trench_year(
+def _aggregate_sensor_station_year(
+    target_key,
     upstream_distances,
-    target_year,
-    land_cover_by_trench_year,
+    year_land_cover,
     lc_columns,
 ):
-    """Aggregate one target trench-year into distance-bucket counts and shares."""
-    result = _empty_sensor_bucket_result(lc_columns)
-    if upstream_distances.empty:
-        return result
-
-    available_years = land_cover_by_trench_year.index.get_level_values(YEAR_COLUMN)
-    year_land_cover = (
-        land_cover_by_trench_year.xs(
-            target_year,
-            level=YEAR_COLUMN,
-            drop_level=False,
-        )
-        if target_year in available_years
-        else None
-    )
-    if year_land_cover is None or year_land_cover.empty:
-        return result
+    """Aggregate one station-year into long-format distance-bucket rows."""
+    empty_rows = _empty_sensor_bucket_rows(target_key, lc_columns)
+    if upstream_distances.empty or year_land_cover is None or year_land_cover.empty:
+        return empty_rows
 
     upstream = upstream_distances.copy()
     upstream[DISTANCE_BUCKET_COLUMN] = _assign_sensor_distance_buckets(
-        upstream[UPSTREAM_DISTANCE_COLUMN]
+        upstream[ADJUSTED_DISTANCE_COLUMN]
     )
     upstream = upstream.dropna(subset=[DISTANCE_BUCKET_COLUMN])
     if upstream.empty:
-        return result
+        return empty_rows
 
     matched = upstream.merge(
-        year_land_cover.reset_index(),
+        year_land_cover,
         on=TRENCH_ID_COLUMN,
         how="left",
     )
     fill_columns = [LAND_COVER_TOTAL_COLUMN, *lc_columns]
-    matched[fill_columns] = matched[fill_columns].fillna(0)
+    matched[fill_columns] = matched[fill_columns].fillna(0.0)
 
-    for bucket_name, _, _ in SENSOR_DISTANCE_BUCKETS:
-        bucket = matched.loc[matched[DISTANCE_BUCKET_COLUMN] == bucket_name]
+    bucket_summaries = {}
+    for lower_bound, _ in SENSOR_DISTANCE_BUCKETS:
+        bucket_value = _bucket_label(lower_bound)
+        bucket = matched.loc[matched[DISTANCE_BUCKET_COLUMN] == bucket_value]
         if bucket.empty:
+            bucket_summaries[bucket_value] = {
+                BUCKET_REACHABLE_COUNT_COLUMN: 0,
+                "total": 0.0,
+                "counts": {},
+            }
             continue
 
         bucket_total = float(bucket[LAND_COVER_TOTAL_COLUMN].sum())
-        result[_sensor_bucket_total_column(bucket_name)] = bucket_total
-        result[_sensor_bucket_reachable_column(bucket_name)] = int(
-            bucket[TRENCH_ID_COLUMN].nunique()
-        )
-        bucket_sums = bucket[lc_columns].sum()
+        bucket_counts = {
+            _land_cover_feature_stem(lc_column): float(bucket[lc_column].sum())
+            for lc_column in lc_columns
+        }
+        bucket_summaries[bucket_value] = {
+            BUCKET_REACHABLE_COUNT_COLUMN: int(bucket[TRENCH_ID_COLUMN].nunique()),
+            "total": bucket_total,
+            "counts": bucket_counts,
+        }
+
+    station_code, year = target_key
+    rows = []
+    for lower_bound, _ in SENSOR_DISTANCE_BUCKETS:
+        bucket_value = _bucket_label(lower_bound)
+        summary = bucket_summaries[bucket_value]
+        bucket_total = summary["total"]
         for lc_column in lc_columns:
-            count_value = float(bucket_sums[lc_column])
-            result[_sensor_bucket_class_column(bucket_name, lc_column, "cnt")] = count_value
-            if bucket_total > 0:
-                result[_sensor_bucket_class_column(bucket_name, lc_column, "shr")] = (
-                    count_value / bucket_total
-                )
-    return result
+            class_name = _land_cover_feature_stem(lc_column)
+            count_value = float(summary["counts"].get(class_name, 0.0))
+            rows.append(
+                {
+                    STATION_CODE_COLUMN: station_code,
+                    YEAR_COLUMN: year,
+                    DISTANCE_BUCKET_COLUMN: bucket_value,
+                    LAND_COVER_CLASS_COLUMN: class_name,
+                    BUCKET_REACHABLE_COUNT_COLUMN: summary[
+                        BUCKET_REACHABLE_COUNT_COLUMN
+                    ],
+                    BUCKET_COUNT_COLUMN: count_value,
+                    BUCKET_SHARE_COLUMN: (
+                        count_value / bucket_total if bucket_total > 0 else np.nan
+                    ),
+                }
+            )
+    return rows
 
 
-def assemble_land_cover(
-    self,
-    variant=SENSOR_UPSTREAM_DISTANCE_BUCKETS_VARIANT,
-    land_cover_path=DEFAULT_SENSOR_LAND_COVER_PATH,
-    water_quality_path=DEFAULT_WATER_QUALITY_PATH,
-    stations_rivers_path=DEFAULT_STATIONS_RIVERS_PATH,
-    river_network_path=DEFAULT_RIVER_NETWORK_PATH,
-    output_path=DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH,
-    n_jobs=None,
+def _assemble_sensor_land_cover(
+    land_cover_path,
+    water_quality_path,
+    stations_rivers_path,
+    river_network_path,
+    output_path,
+    n_jobs,
 ):
-    """Assemble analysis-ready land-cover datasets."""
-    if variant != SENSOR_UPSTREAM_DISTANCE_BUCKETS_VARIANT:
-        raise ValueError(
-            f"Unknown land-cover assembly variant: {variant}. "
-            f"Available variants: {[SENSOR_UPSTREAM_DISTANCE_BUCKETS_VARIANT]}"
-        )
-    if n_jobs is None:
-        n_jobs = cpu_count()
-
+    """Assemble long-format sensor upstream land-cover buckets."""
     logger.info("Loading cleaned water-quality data from %s", water_quality_path)
     water_quality_df = pd.read_parquet(water_quality_path)
     logger.info("Loading station-river matches from %s", stations_rivers_path)
     stations_rivers_df = pd.read_parquet(stations_rivers_path)
-    targets = _build_sensor_trench_year_targets(water_quality_df, stations_rivers_df)
+    targets, station_trenches = _build_sensor_targets(
+        water_quality_df,
+        stations_rivers_df,
+    )
     logger.info(
-        "Found %d observed trench-year target(s) for sensor-matched assembly.",
+        "Found %d observed station-year target(s) for sensor-matched assembly.",
         len(targets),
     )
 
     logger.info("Loading land-cover data from %s", land_cover_path)
     land_cover_df = pd.read_feather(land_cover_path)
     lc_columns = land_cover_assembly_columns(land_cover_df)
-    land_cover_class_columns = [
-        column for column in lc_columns if column != LAND_COVER_TOTAL_COLUMN
-    ]
-    land_cover_by_trench_year = land_cover_df.groupby(
-        [TRENCH_ID_COLUMN, YEAR_COLUMN],
-    )[lc_columns].sum().sort_index()
+    land_cover_by_year = {
+        int(year): year_frame.drop(columns=[YEAR_COLUMN]).reset_index(drop=True)
+        for year, year_frame in land_cover_df.groupby(YEAR_COLUMN, sort=False)
+    }
 
-    logger.info("Loading river network from %s", river_network_path)
-    network = rn_module.RiverNetwork()
-    network.load(str(river_network_path))
-    _validate_river_network_for_trench_aggregation(network)
-    system_trench_id_arrays, system_trench_positions = _build_system_trench_lookup(
-        network.trenches,
+    network = _load_network(river_network_path)
+    rivers = network.trenches
+    (
+        system_trench_id_arrays,
+        system_trench_positions,
+        system_valid_positions,
+    ) = _build_system_trench_lookup(rivers)
+    trench_system_position_lookup = _build_trench_system_position_lookup(rivers)
+    trench_lengths = _build_trench_length_lookup(rivers)
+
+    target_trench_ids = (
+        station_trenches[TRENCH_ID_COLUMN].drop_duplicates().astype(np.int64).tolist()
     )
-
-    target_trench_ids = targets[TRENCH_ID_COLUMN].drop_duplicates().astype(np.int64).tolist()
     logger.info(
-        "Resolving upstream distances for %d target trench(es) with %s thread(s).",
+        "Resolving shifted upstream distances for %d target trench(es) with %s thread(s).",
         len(target_trench_ids),
         n_jobs,
     )
 
     def resolve_target_trench(trench_id):
+        upstream_distances = _resolve_upstream_trench_distances(
+            int(trench_id),
+            network,
+            system_trench_id_arrays,
+            system_valid_positions,
+            trench_system_position_lookup,
+        )
         return (
             int(trench_id),
-            _resolve_upstream_trench_distances(
-                int(trench_id),
-                network,
-                system_trench_id_arrays,
-                system_trench_positions,
-            ),
+            _shift_upstream_distances(upstream_distances, trench_lengths),
         )
 
     if n_jobs == 1:
@@ -388,53 +575,118 @@ def assemble_land_cover(
         )
     upstream_distance_cache = dict(upstream_distance_items)
 
+    station_upstream_distance_cache = {
+        str(station_code): _combine_station_upstream_distances(
+            station_rows[TRENCH_ID_COLUMN].astype(np.int64).tolist(),
+            upstream_distance_cache,
+        )
+        for station_code, station_rows in station_trenches.groupby(STATION_CODE_COLUMN)
+    }
+
     logger.info(
-        "Aggregating %d sensor trench-year target(s) with %s thread(s).",
+        "Aggregating %d station-year target(s) into long-format 25 km buckets with %s thread(s).",
         len(targets),
         n_jobs,
     )
 
     def aggregate_target(target):
-        trench_id = int(getattr(target, TRENCH_ID_COLUMN))
+        station_code = str(getattr(target, STATION_CODE_COLUMN))
         year = int(getattr(target, YEAR_COLUMN))
-        result = {TRENCH_ID_COLUMN: trench_id, YEAR_COLUMN: year}
-        result.update(
-            _aggregate_sensor_trench_year(
-                upstream_distance_cache[trench_id],
-                year,
-                land_cover_by_trench_year,
-                land_cover_class_columns,
-            )
+        return _aggregate_sensor_station_year(
+            (station_code, year),
+            station_upstream_distance_cache.get(
+                station_code,
+                pd.DataFrame(
+                    columns=[
+                        TRENCH_ID_COLUMN,
+                        UPSTREAM_DISTANCE_COLUMN,
+                        "trench_length_km",
+                        ADJUSTED_DISTANCE_COLUMN,
+                    ]
+                ),
+            ),
+            land_cover_by_year.get(year),
+            lc_columns,
         )
-        return result
 
     target_records = list(targets.itertuples(index=False))
     if n_jobs == 1:
-        records = [
+        nested_records = [
             aggregate_target(target)
-            for target in tqdm(target_records, desc="Sensor trench-years")
+            for target in tqdm(target_records, desc="Sensor station-years")
         ]
     else:
-        records = Parallel(n_jobs=n_jobs, backend="threading")(
+        nested_records = Parallel(n_jobs=n_jobs, backend="threading")(
             delayed(aggregate_target)(target)
-            for target in tqdm(target_records, desc="Sensor trench-years")
+            for target in tqdm(target_records, desc="Sensor station-years")
         )
 
-    if records:
-        result_df = pd.DataFrame(records).sort_values([TRENCH_ID_COLUMN, YEAR_COLUMN])
-    else:
-        result_df = pd.DataFrame(
-            columns=[
-                TRENCH_ID_COLUMN,
+    records = [record for target_rows in nested_records for record in target_rows]
+    result_columns = [
+        STATION_CODE_COLUMN,
+        YEAR_COLUMN,
+        DISTANCE_BUCKET_COLUMN,
+        LAND_COVER_CLASS_COLUMN,
+        BUCKET_REACHABLE_COUNT_COLUMN,
+        BUCKET_COUNT_COLUMN,
+        BUCKET_SHARE_COLUMN,
+    ]
+    result_df = pd.DataFrame.from_records(records, columns=result_columns)
+    if not result_df.empty:
+        result_df = result_df.sort_values(
+            [
+                STATION_CODE_COLUMN,
                 YEAR_COLUMN,
-                *_empty_sensor_bucket_result(land_cover_class_columns).keys(),
+                DISTANCE_BUCKET_COLUMN,
+                LAND_COVER_CLASS_COLUMN,
             ]
-        )
+        ).reset_index(drop=True)
 
-    result_df = result_df.set_index([TRENCH_ID_COLUMN, YEAR_COLUMN])
+    indexed_result_df = result_df.set_index(
+        [STATION_CODE_COLUMN, YEAR_COLUMN],
+        drop=False,
+    )
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    result_df.reset_index().to_parquet(output_path, index=False)
+    indexed_result_df.to_parquet(output_path)
     logger.info("Saved sensor-matched upstream land cover to %s", output_path)
-    logger.info("Output shape: %s", result_df.shape)
-    return result_df
+    logger.info("Output shape: %s", indexed_result_df.shape)
+    return indexed_result_df
+
+
+def assemble_land_cover(
+    self,
+    variant=SENSOR_ASSEMBLY_VARIANT,
+    land_cover_path=DEFAULT_ASSEMBLY_LAND_COVER_PATH,
+    water_quality_path=DEFAULT_WATER_QUALITY_PATH,
+    stations_rivers_path=DEFAULT_STATIONS_RIVERS_PATH,
+    river_network_path=DEFAULT_RIVER_NETWORK_PATH,
+    output_path=None,
+    n_jobs=None,
+):
+    """Assemble analysis-ready land-cover outputs for the requested variant."""
+    variant = _normalize_assembly_variant(variant)
+    output_path = output_path or _default_output_path_for_variant(variant)
+    if n_jobs is None:
+        n_jobs = cpu_count()
+
+    if variant == ADM2_ASSEMBLY_VARIANT:
+        from .aggregation import aggregate_along_rivers
+
+        return aggregate_along_rivers(
+            self,
+            land_cover_path=land_cover_path,
+            river_network_path=river_network_path,
+            drainage_polygons_path=None,
+            n_jobs=n_jobs,
+            output_path=output_path,
+        )
+
+    return _assemble_sensor_land_cover(
+        land_cover_path=land_cover_path,
+        water_quality_path=water_quality_path,
+        stations_rivers_path=stations_rivers_path,
+        river_network_path=river_network_path,
+        output_path=output_path,
+        n_jobs=n_jobs,
+    )

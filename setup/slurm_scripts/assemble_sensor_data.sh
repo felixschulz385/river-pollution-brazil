@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=assemble_sensor_data
 #SBATCH --output=./log/assemble_sensor_data/slurm-%j.log
-#SBATCH --error=./log/assemble_sensor_data-slurm/error-%j.err
+#SBATCH --error=./log/assemble_sensor_data/slurm-error-%j.log
 #SBATCH --partition=scicore
 #SBATCH --time=0-06:00:00
 #SBATCH --qos=6hours
@@ -11,12 +11,12 @@
 set -euo pipefail
 
 eval "$(/scicore/home/meiera/schulz0022/miniforge-pypy3/bin/conda shell.bash hook)"
-conda activate rpb
+conda activate 311
 
 cd /scicore/home/meiera/schulz0022/projects/river-pollution-brazil
-mkdir -p log
+mkdir -p log/assemble_sensor_data
 
-PYTHONPATH=code/data python code/data/cli.py water-quality assemble \
+python code/cli.py data water-quality assemble \
   --root-dir . \
   --river-network-path data/river_network \
   --water-quality-path data/sensor_data/water_quality.parquet \
