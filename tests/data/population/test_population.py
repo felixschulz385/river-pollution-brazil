@@ -5,6 +5,7 @@ import pandas as pd
 import code
 
 from code.data.population.preprocess import (
+    normalize_age_group,
     normalize_text,
     preprocess_population_data,
     transform_population_frame,
@@ -15,15 +16,23 @@ def test_normalize_text_removes_accents_and_punctuation() -> None:
     assert normalize_text("  São José-Do Rio! ") == "sao_jose_do_rio"
 
 
+def test_normalize_age_group_zero_pads_numeric_ranges() -> None:
+    assert normalize_age_group("5 a 9 anos") == "05_09"
+    assert normalize_age_group("0_4") == "00_04"
+    assert normalize_age_group("20 a 24 anos") == "20_24"
+    assert normalize_age_group("70_74") == "70_74"
+    assert normalize_age_group("80-mais") == "80_plus"
+
+
 def test_transform_population_frame_matches_notebook_logic() -> None:
     raw = pd.DataFrame(
         {
-            "ano": ["2020", "2021"],
-            "id_municipio": ["1234567", "7654321"],
-            "id_municipio_nome": ["Foo", "Bar"],
-            "sexo": ["Feminino", "Masculino"],
-            "grupo_idade": ["20 a 24 anos", "80-mais"],
-            "populacao": ["15", "31"],
+            "ano": ["2021", "2020", "2020"],
+            "id_municipio": ["7654321", "1234567", "1234567"],
+            "id_municipio_nome": ["Bar", "Foo", "Foo"],
+            "sexo": ["Masculino", "Masculino", "Feminino"],
+            "grupo_idade": ["80-mais", "5 a 9 anos", "20 a 24 anos"],
+            "populacao": ["31", "8", "15"],
         }
     )
 
@@ -34,8 +43,15 @@ def test_transform_population_frame_matches_notebook_logic() -> None:
         {
             "mun_id": "123456",
             "year": 2020,
+            "sex": "male",
+            "age_group": "05_09",
+            "population": 8,
+        },
+        {
+            "mun_id": "123456",
+            "year": 2020,
             "sex": "female",
-            "age_group": "20_a_24",
+            "age_group": "20_24",
             "population": 15,
         },
         {
@@ -74,7 +90,7 @@ def test_preprocess_population_data_writes_expected_output(tmp_path) -> None:
             "mun_id": "110001",
             "year": 2022,
             "sex": "total",
-            "age_group": "70_a_79",
+            "age_group": "70_79",
             "population": 1234,
         }
     ]

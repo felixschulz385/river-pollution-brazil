@@ -1,4 +1,5 @@
 __all__ = [
+    "normalize_age_group",
     "normalize_text",
     "preprocess_population_data",
     "transform_population_frame",
@@ -6,6 +7,10 @@ __all__ = [
 
 
 def __getattr__(name):
+    if name == "normalize_age_group":
+        from .preprocess import normalize_age_group as _normalize_age_group
+
+        return _normalize_age_group
     if name == "normalize_text":
         from .preprocess import normalize_text as _normalize_text
 

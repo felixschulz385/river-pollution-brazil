@@ -32,6 +32,27 @@ def normalize_text(value: str) -> str:
     return re.sub(r"_+", "_", normalized).strip("_")
 
 
+def normalize_age_group(value: str) -> str:
+    if pd.isna(value):
+        return value
+
+    normalized = (
+        str(value)
+        .replace(" anos", "")
+        .replace("80-mais", "80_plus")
+    )
+    normalized = normalize_text(normalized)
+    if pd.isna(normalized):
+        return normalized
+
+    match = re.fullmatch(r"(\d{1,2})(?:_a)?_(\d{1,2})", normalized)
+    if match:
+        start, end = match.groups()
+        return f"{int(start):02d}_{int(end):02d}"
+
+    return normalized
+
+
 def transform_population_frame(frame: pd.DataFrame) -> pd.DataFrame:
     """Apply the notebook cleaning rules to the raw population extract."""
 
@@ -57,15 +78,14 @@ def transform_population_frame(frame: pd.DataFrame) -> pd.DataFrame:
             age_group=lambda d: (
                 d["age_group"]
                 .astype(str)
-                .str.replace(" anos", "", regex=False)
-                .str.replace("80-mais", "80_plus", regex=False)
-                .map(normalize_text)
+                .map(normalize_age_group)
             ),
             population=lambda d: pd.to_numeric(d["population"], errors="coerce"),
             year=lambda d: pd.to_numeric(d["year"], errors="coerce").astype("Int64"),
         )
         .drop(columns=["mun_name"])
         .loc[:, ["mun_id", "year", "sex", "age_group", "population"]]
+        .sort_values(["mun_id", "year", "age_group", "sex"], ignore_index=True)
     )
 
 
