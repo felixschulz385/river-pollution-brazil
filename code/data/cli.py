@@ -13,6 +13,7 @@ Usage:
 
 Modules:
   health          Process health data
+  climate         Process climate data
   water-quality   Process water quality data
   river-network   Process river network data
   download        Download datasets
@@ -36,6 +37,10 @@ Examples:
   python cli.py health fetch --subtype birth
   python cli.py health fetch --subtype all
   python cli.py health preprocess
+  python cli.py climate fetch --subtype cloud_cover
+  python cli.py climate fetch --subtype era5_land_hourly
+  python cli.py climate fetch --subtype era5_land_daily
+  python cli.py climate preprocess --root-dir .
   python cli.py water-quality fetch
   python cli.py water-quality preprocess
   python cli.py water-quality assemble
@@ -75,7 +80,7 @@ class DataSourceFactory:
         Create a data source instance based on the module name.
         
         Parameters:
-        module (str): Name of the data module ('health', 'water-quality', 'download', 'river-network')
+        module (str): Name of the data module ('health', 'climate', 'water-quality', 'download', 'river-network')
         **kwargs: Additional arguments to pass to the data source constructor
         
         Returns:
@@ -87,6 +92,9 @@ class DataSourceFactory:
         if module == "health":
             from health import health
             return health()
+        elif module == "climate":
+            from climate import climate
+            return climate(root_dir=kwargs.get("root_dir", "."))
         elif module == "water-quality":
             from sensor_data.sensor_data import sensor_data
             return sensor_data(
@@ -121,7 +129,7 @@ class DataSourceFactory:
             raise ValueError(f"Unknown module: {module}")
 
 
-def main():
+def main(argv=None):
     """
     Main CLI entrypoint for data processing scripts.
     """
@@ -135,6 +143,10 @@ def main():
         python cli.py health fetch --subtype birth
         python cli.py health fetch --subtype all
         python cli.py health preprocess
+        python cli.py climate fetch --subtype cloud_cover
+        python cli.py climate fetch --subtype era5_land_hourly
+        python cli.py climate fetch --subtype era5_land_daily
+        python cli.py climate preprocess --root-dir .
         python cli.py water-quality fetch
         python cli.py water-quality preprocess
         python cli.py land-cover fetch
@@ -164,6 +176,25 @@ def main():
         choices=["all", "mortality", "hospitalization", "birth"],
         default="all",
         help="Type of health data to fetch (default: all)"
+    )
+
+    # Climate module
+    climate_parser = subparsers.add_parser("climate", help="Process climate data")
+    climate_parser.add_argument(
+        "action",
+        choices=["fetch", "preprocess"],
+        help="Action to perform"
+    )
+    climate_parser.add_argument(
+        "--root-dir",
+        default=".",
+        help="Project root directory containing the data folder (default: current working directory)",
+    )
+    climate_parser.add_argument(
+        "--subtype",
+        default="cloud_cover",
+        choices=["cloud_cover", "era5_land_hourly", "era5_land_daily"],
+        help="Climate fetch subtype (default: cloud_cover)",
     )
 
     # Water quality module
@@ -394,12 +425,12 @@ def main():
         help="GADM layer name for ADM2 matches (default: ADM_ADM_2)"
     )
     
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     configure_logging(args.log_level)
     
     if args.module is None:
         parser.print_help()
-        sys.exit(1)
+        return 1
     
     try:
         # Use factory to create the appropriate data source instance
@@ -411,27 +442,27 @@ def main():
                 area=args.area,
                 year=args.year
             )
-        elif args.module == "water-quality":
+        elif args.module in ["climate", "water-quality"]:
             agent = DataSourceFactory.create(
                 args.module,
                 root_dir=args.root_dir,
-                brazil_boundary_path=args.brazil_boundary_path,
-                river_network_dir=args.river_network_dir,
-                download_dir=args.download_dir,
-                headless=args.headless,
-                keep_browser_on_error=args.keep_browser_on_error,
-                single_station=args.single_station,
-                fetch_mode=args.fetch_mode,
-                preprocess_workers=args.preprocess_workers,
-                source_tables=args.source_tables,
-                preprocess_backend=args.preprocess_backend,
-                log_every_tables=args.log_every_tables,
+                brazil_boundary_path=getattr(args, "brazil_boundary_path", None),
+                river_network_dir=getattr(args, "river_network_dir", None),
+                download_dir=getattr(args, "download_dir", None),
+                headless=getattr(args, "headless", False),
+                keep_browser_on_error=getattr(args, "keep_browser_on_error", False),
+                single_station=getattr(args, "single_station", None),
+                fetch_mode=getattr(args, "fetch_mode", "default"),
+                preprocess_workers=getattr(args, "preprocess_workers", None),
+                source_tables=getattr(args, "source_tables", None),
+                preprocess_backend=getattr(args, "preprocess_backend", "thread"),
+                log_every_tables=getattr(args, "log_every_tables", None),
             )
         else:
             agent = DataSourceFactory.create(args.module)
-        
+
         # Execute the requested action
-        if args.module in ["health", "water-quality"]:
+        if args.module in ["health", "climate", "water-quality"]:
             action = args.action
             logger.info(f"Running {args.module} module: {action}")
             
@@ -439,10 +470,17 @@ def main():
                 if args.module == "health":
                     logger.info(f"Fetching health data (subtype: {args.subtype})")
                     agent.fetch(subtype=args.subtype)
+                elif args.module == "climate":
+                    logger.info(f"Fetching climate data (subtype: {args.subtype})")
+                    agent.fetch(subtype=args.subtype)
                 else:
                     agent.fetch()
             elif action == "preprocess":
-                agent.preprocess()
+                if args.module == "climate":
+                    logger.info(f"Preprocessing climate data (subtype: {args.subtype})")
+                    agent.preprocess(subtype=args.subtype)
+                else:
+                    agent.preprocess()
             elif action == "assemble":
                 agent.assemble(
                     water_quality_path=args.water_quality_path,
@@ -569,12 +607,13 @@ def main():
             agent.fetch(dataset)
         
         logger.info(f"✓ {args.module} module completed successfully")
-        
+        return 0
+
     except Exception as e:
         logger.error(f"✗ Error running {args.module} module: {str(e)}")
         logger.debug("Traceback:", exc_info=True)
-        sys.exit(1)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
