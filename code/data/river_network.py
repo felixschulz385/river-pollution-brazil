@@ -77,6 +77,13 @@ ADM2_COLUMN = "adm2"
 logger = logging.getLogger(__name__)
 
 
+def _sparse_row(matrix, row_idx):
+    """Return one sparse row for both csr_matrix and csr_array objects."""
+    if hasattr(matrix, "getrow"):
+        return matrix.getrow(row_idx)
+    return matrix[row_idx : row_idx + 1, :]
+
+
 class RiverNetwork:
     """
     Container for river network data with disk storage utilities.
@@ -545,8 +552,14 @@ class RiverNetwork:
         target_position = int(trench_row.iloc[0][TRENCH_INDEX_COLUMN])
         system_trenches = self._ordered_trenches_for_system(target_system_id)
         trench_ids_arr = system_trenches[TRENCH_ID_COLUMN].to_numpy(dtype=np.int64)
-        reach_row = self.trench_reachability_matrices[target_system_id].getrow(target_position)
-        dist_row = self.trench_distance_matrices[target_system_id].getrow(target_position)
+        reach_row = _sparse_row(
+            self.trench_reachability_matrices[target_system_id],
+            target_position,
+        )
+        dist_row = _sparse_row(
+            self.trench_distance_matrices[target_system_id],
+            target_position,
+        )
 
         dist_lookup = dict(zip(dist_row.indices.tolist(), dist_row.data.tolist()))
         upstream_records = [

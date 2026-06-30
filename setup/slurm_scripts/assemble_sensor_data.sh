@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=assemble_sensor_data
 #SBATCH --output=./log/assemble_sensor_data/slurm-%j.log
-#SBATCH --error=./log/assemble_sensor_data-slurm/error-%j.err
 #SBATCH --partition=scicore
 #SBATCH --time=0-06:00:00
 #SBATCH --qos=6hours

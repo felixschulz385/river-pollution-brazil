@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -12,8 +13,22 @@ import tempfile
 import dask.array as da
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
+import rioxarray  # noqa: F401
 import xarray as xr
+from odc.geo.geom import Geometry
+from odc.geo.xr import rasterize, xr_zeros
 
+from ..constants import (
+    DATE_COLUMN,
+    DEFAULT_ERA5_LAND_STORE_PATH,
+    DEFAULT_ERA5_LAND_TRENCH_DAY_PATH,
+    DEFAULT_RIVER_NETWORK_PATH,
+    ERA5_LAND_PREPROCESS_STAGES,
+    ERA5_LAND_PREPROCESS_SUBTYPES,
+    TRENCH_ID_COLUMN,
+)
 from ..fetch.common import (
     _timestamp,
     _worker_wait,
@@ -24,6 +39,8 @@ from ..fetch.common import (
     _wait_for_lock_release,
     write_download_manifest,
 )
+from land_cover.preprocess import deduplicate_drainage_polygons
+from river_network import RiverNetwork
 
 
 logger = logging.getLogger(__name__)
@@ -35,11 +52,12 @@ ERA5_OUTPUT_FREQ = "1D"
 ERA5_OUTPUT_TIME_INDEX = pd.date_range(ERA5_OUTPUT_START, ERA5_OUTPUT_END, freq=ERA5_OUTPUT_FREQ)
 ERA5_OUTPUT_DIMS = ("time", "latitude", "longitude")
 ERA5_OUTPUT_CHUNKS = (365, -1, -1)
-SUPPORTED_ERA5_PREPROCESS_SUBTYPES = {"era5_land_hourly", "era5_land_daily"}
+SUPPORTED_ERA5_PREPROCESS_SUBTYPES = ERA5_LAND_PREPROCESS_SUBTYPES
 GEObOX_FILENAME = "geobox.pickle"
 ERA5_FILENAME_PATTERN = re.compile(r"era5_land_(hourly|daily)_(?P<year>\d{4})_(?P<month>\d{2})\.grib$")
 EARTHKIT_TEMP_DIR_PREFIX = "tmp"
 EARTHKIT_TEMP_RETENTION_SECONDS = 6 * 3600
+ERA5_TABULAR_TIME_CHUNK_DAYS = 7
 ERA5_DAILY_VARIABLE_NAME_MAP = {
     "2m_dewpoint_temperature": "2d",
     "2m_temperature": "2t",
@@ -171,12 +189,24 @@ def _era5_processed_dir(root_dir=".") -> Path:
     return _root(root_dir) / "data" / "climate" / "processed" / "era5_land"
 
 
+def _era5_cache_dir(root_dir=".") -> Path:
+    return _root(root_dir) / "data" / "climate" / "processed" / "cache_nobackup"
+
+
 def _era5_store_path(root_dir=".") -> Path:
-    return _era5_processed_dir(root_dir) / "era5_land.zarr"
+    return _root(root_dir) / DEFAULT_ERA5_LAND_STORE_PATH
+
+
+def _era5_trench_day_path(root_dir=".") -> Path:
+    return _root(root_dir) / DEFAULT_ERA5_LAND_TRENCH_DAY_PATH
 
 
 def _era5_geobox_path(root_dir=".") -> Path:
     return _era5_raw_dir(root_dir, "era5_land_hourly") / GEObOX_FILENAME
+
+
+def _river_network_path(root_dir=".") -> Path:
+    return _root(root_dir) / DEFAULT_RIVER_NETWORK_PATH
 
 
 def _dataset_name_for_subtype(subtype: str) -> str:
@@ -217,6 +247,256 @@ def _expected_output_var_attrs() -> dict[str, dict]:
                 "offset_applied": agg.get("offset", 0.0),
             }
     return expected
+
+
+def _available_era5_output_variables(dataset: xr.Dataset) -> list[str]:
+    expected = set(_expected_output_var_attrs())
+    return [var_name for var_name in dataset.data_vars if var_name in expected]
+
+
+def _load_drainage_polygons(root_dir="."):
+    network_path = _river_network_path(root_dir)
+    logger.info("Loading river network drainage areas from %s", network_path)
+    network = RiverNetwork()
+    network.load(str(network_path))
+    if network.drainage_areas is None:
+        raise ValueError("River network must include drainage_areas for climate tabularization.")
+
+    drainage_polygons = network.drainage_areas.to_crs(4326)
+    if "within_brazil" not in drainage_polygons.columns:
+        raise ValueError(
+            "Drainage areas missing 'within_brazil' column. "
+            "Run river-network generate with --gadm-path to annotate this column."
+        )
+
+    drainage_polygons = drainage_polygons[drainage_polygons["within_brazil"]]
+    drainage_polygons = deduplicate_drainage_polygons(drainage_polygons)
+    return drainage_polygons[[TRENCH_ID_COLUMN, "geometry"]].copy()
+
+
+def _trench_mask_cache_path(root_dir, drainage_polygons, geobox) -> Path:
+    signature = hashlib.sha256(
+        "|".join(
+            [
+                TRENCH_ID_COLUMN,
+                str(tuple(drainage_polygons[TRENCH_ID_COLUMN].tolist())),
+                str(getattr(geobox, "shape", "")),
+                str(getattr(geobox, "transform", "")),
+                str(getattr(geobox, "crs", "")),
+            ]
+        ).encode("utf-8")
+    ).hexdigest()[:16]
+    return _era5_cache_dir(root_dir) / f"trench_mask_{signature}.zarr"
+
+
+def _load_or_build_trench_mask(root_dir, drainage_polygons, geobox):
+    cache_path = _trench_mask_cache_path(root_dir, drainage_polygons, geobox)
+    if cache_path.exists():
+        logger.info("Loading cached trench raster mask from %s", cache_path)
+        cached = xr.open_zarr(str(cache_path), consolidated=False)
+        try:
+            cached_mask = cached[TRENCH_ID_COLUMN]
+            expected_dims = tuple(geobox.dimensions)
+            expected_shape = tuple(geobox.shape)
+            if cached_mask.dims == expected_dims and cached_mask.shape == expected_shape:
+                return cached_mask.compute()
+            logger.warning(
+                "Cached trench mask at %s is stale (dims=%s shape=%s, expected dims=%s shape=%s); rebuilding",
+                cache_path,
+                cached_mask.dims,
+                cached_mask.shape,
+                expected_dims,
+                expected_shape,
+            )
+        finally:
+            close = getattr(cached, "close", None)
+            if callable(close):
+                close()
+
+    logger.info("Building trench raster mask for %d drainage polygon(s)", len(drainage_polygons))
+    mask = xr_zeros(geobox, dtype="int64", name=TRENCH_ID_COLUMN)
+    for row in drainage_polygons.itertuples(index=False):
+        geometry = getattr(row, "geometry", None)
+        if geometry is None or geometry.is_empty:
+            continue
+        trench_id = int(getattr(row, TRENCH_ID_COLUMN))
+        mask = mask + rasterize(
+            Geometry(geometry, crs="EPSG:4326"),
+            geobox,
+            all_touched=True,
+        ).astype("int64") * trench_id
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("Caching trench raster mask at %s", cache_path)
+    mask.to_dataset(name=TRENCH_ID_COLUMN).to_zarr(
+        str(cache_path),
+        mode="w",
+        consolidated=False,
+    )
+    return mask
+
+
+def _spatial_dataset_for_tabularization(dataset: xr.Dataset) -> xr.Dataset:
+    dataset = dataset.rio.write_crs("EPSG:4326")
+    dataset = dataset.rio.set_spatial_dims(x_dim="longitude", y_dim="latitude")
+    dataset.rio.write_coordinate_system(inplace=True)
+    return dataset
+
+
+def _flatten_trench_grid(trench_grid: xr.DataArray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    flat = trench_grid.to_numpy().reshape(-1)
+    valid_pixels = flat > 0
+    active_trench_ids, inverse = np.unique(flat[valid_pixels].astype(np.int64), return_inverse=True)
+    return active_trench_ids, inverse.astype(np.int32, copy=False), valid_pixels
+
+
+def _nanmean_by_group(
+    values: np.ndarray,
+    *,
+    inverse: np.ndarray,
+    n_groups: int,
+) -> np.ndarray:
+    means = np.full((values.shape[0], n_groups), np.nan, dtype=np.float64)
+    for offset in range(values.shape[0]):
+        row = values[offset]
+        finite = np.isfinite(row)
+        if not np.any(finite):
+            continue
+        sums = np.bincount(
+            inverse[finite],
+            weights=row[finite],
+            minlength=n_groups,
+        ).astype(np.float64, copy=False)
+        counts = np.bincount(inverse[finite], minlength=n_groups)
+        np.divide(sums, counts, out=means[offset], where=counts > 0)
+    return means
+
+
+def _aggregate_time_chunk(
+    chunk: xr.Dataset,
+    *,
+    climate_columns: list[str],
+    active_trench_ids: np.ndarray,
+    inverse: np.ndarray,
+    valid_pixels: np.ndarray,
+) -> pd.DataFrame:
+    loaded = chunk.transpose("time", "latitude", "longitude").load()
+    n_times = loaded.sizes["time"]
+    n_groups = len(active_trench_ids)
+    dates = pd.to_datetime(loaded["time"].values, errors="coerce").normalize()
+
+    payload: dict[str, np.ndarray] = {
+        TRENCH_ID_COLUMN: np.tile(active_trench_ids, n_times),
+        DATE_COLUMN: np.repeat(dates, n_groups),
+    }
+    for variable in climate_columns:
+        values = loaded[variable].to_numpy().reshape(n_times, -1)[:, valid_pixels]
+        payload[variable] = _nanmean_by_group(
+            values,
+            inverse=inverse,
+            n_groups=n_groups,
+        ).reshape(-1)
+
+    frame = pd.DataFrame(payload)
+    frame[TRENCH_ID_COLUMN] = frame[TRENCH_ID_COLUMN].astype(np.int64, copy=False)
+    return frame
+
+
+def _write_chunked_trench_day_table(
+    dataset: xr.Dataset,
+    *,
+    climate_columns: list[str],
+    active_trench_ids: np.ndarray,
+    inverse: np.ndarray,
+    valid_pixels: np.ndarray,
+    output_path: Path,
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = output_path.with_suffix(output_path.suffix + ".tmp")
+    if temp_path.exists():
+        temp_path.unlink()
+
+    writer = None
+    try:
+        total_time = dataset.sizes["time"]
+        for start in range(0, total_time, ERA5_TABULAR_TIME_CHUNK_DAYS):
+            stop = min(start + ERA5_TABULAR_TIME_CHUNK_DAYS, total_time)
+            logger.info("Tabularizing ERA5-Land days %s:%s of %s", start, stop, total_time)
+            frame = _aggregate_time_chunk(
+                dataset.isel(time=slice(start, stop)),
+                climate_columns=climate_columns,
+                active_trench_ids=active_trench_ids,
+                inverse=inverse,
+                valid_pixels=valid_pixels,
+            )
+            table = pa.Table.from_pandas(frame, preserve_index=False)
+            if writer is None:
+                writer = pq.ParquetWriter(temp_path, table.schema)
+            writer.write_table(table)
+            del frame, table
+            gc.collect()
+
+        if writer is None:
+            empty = pd.DataFrame(columns=[TRENCH_ID_COLUMN, DATE_COLUMN, *climate_columns])
+            writer = pq.ParquetWriter(
+                temp_path,
+                pa.Table.from_pandas(empty, preserve_index=False).schema,
+            )
+    finally:
+        if writer is not None:
+            writer.close()
+
+    temp_path.replace(output_path)
+
+
+def tabularize_era5_land_by_trench(root_dir=".") -> Path:
+    store_path = _era5_store_path(root_dir)
+    if not store_path.exists():
+        raise FileNotFoundError(f"Processed ERA5-Land store not found at {store_path}.")
+
+    drainage_polygons = _load_drainage_polygons(root_dir)
+    logger.info("Opening processed ERA5-Land store for trench/day tabularization: %s", store_path)
+    dataset = xr.open_zarr(
+        store_path,
+        consolidated=False,
+        chunks={"time": ERA5_TABULAR_TIME_CHUNK_DAYS},
+    )
+    try:
+        climate_columns = _available_era5_output_variables(dataset)
+        if not climate_columns:
+            raise ValueError("Processed ERA5-Land store does not contain any supported variables.")
+
+        spatial_dataset = _spatial_dataset_for_tabularization(dataset[climate_columns])
+        geobox = spatial_dataset[climate_columns[0]].isel(time=0, drop=True).odc.geobox
+        trench_grid = _load_or_build_trench_mask(
+            root_dir,
+            drainage_polygons[[TRENCH_ID_COLUMN, "geometry"]],
+            geobox,
+        )
+        active_trench_ids, inverse, valid_pixels = _flatten_trench_grid(trench_grid)
+        missing_overlap = len(drainage_polygons) - len(active_trench_ids)
+        logger.info(
+            "Trench raster covers %s/%s drainage polygons; omitting %s no-overlap trench(es) from trench/day output",
+            len(active_trench_ids),
+            len(drainage_polygons),
+            missing_overlap,
+        )
+        output_path = _era5_trench_day_path(root_dir)
+        _write_chunked_trench_day_table(
+            spatial_dataset,
+            climate_columns=climate_columns,
+            active_trench_ids=active_trench_ids,
+            inverse=inverse,
+            valid_pixels=valid_pixels,
+            output_path=output_path,
+        )
+    finally:
+        close = getattr(dataset, "close", None)
+        if callable(close):
+            close()
+
+    logger.info("Saved ERA5-Land trench/day table to %s", output_path)
+    return output_path
 
 
 def _time_index() -> pd.DatetimeIndex:
@@ -821,23 +1101,45 @@ def process_era5_input_file(path: Path, *, root_dir=".", subtype="era5_land_hour
         return store_path
 
 
-def preprocess_era5_land(root_dir=".", subtype="era5_land_hourly") -> Path:
+def preprocess_era5_land(root_dir=".", subtype="era5_land_hourly", stage="all") -> Path:
     if subtype not in SUPPORTED_ERA5_PREPROCESS_SUBTYPES:
         raise ValueError(f"Unsupported ERA5 preprocess subtype: {subtype}")
+    if stage not in ERA5_LAND_PREPROCESS_STAGES:
+        raise ValueError(
+            f"Unsupported ERA5 preprocess stage: {stage}. "
+            f"Available stages: {sorted(ERA5_LAND_PREPROCESS_STAGES)}"
+        )
 
-    input_files = discover_era5_input_files(root_dir=root_dir, subtype=subtype)
-    if not input_files:
-        raise FileNotFoundError(f"No ERA5 GRIB files found for subtype {subtype!r}.")
+    if stage in {"all", "zarr"}:
+        input_files = discover_era5_input_files(root_dir=root_dir, subtype=subtype)
+        if not input_files:
+            raise FileNotFoundError(f"No ERA5 GRIB files found for subtype {subtype!r}.")
 
-    store_path = bootstrap_era5_store(root_dir=root_dir, sample_path=input_files[0])
-    for input_file in input_files:
-        store_path = process_era5_input_file(input_file, root_dir=root_dir, subtype=subtype)
-    return store_path
+        store_path = bootstrap_era5_store(root_dir=root_dir, sample_path=input_files[0])
+        for input_file in input_files:
+            store_path = process_era5_input_file(input_file, root_dir=root_dir, subtype=subtype)
+    else:
+        store_path = _era5_store_path(root_dir)
+
+    if stage == "zarr":
+        return store_path
+
+    if not store_path.exists():
+        raise FileNotFoundError(f"Processed ERA5-Land store not found at {store_path}.")
+    return tabularize_era5_land_by_trench(root_dir=root_dir)
 
 
-def preprocess_era5_land_worker(root_dir=".", subtype="era5_land_hourly", poll_seconds=120) -> Path:
+def preprocess_era5_land_worker(root_dir=".", subtype="era5_land_hourly", poll_seconds=120, stage="all") -> Path:
     if subtype not in SUPPORTED_ERA5_PREPROCESS_SUBTYPES:
         raise ValueError(f"Unsupported ERA5 preprocess subtype: {subtype}")
+    if stage not in ERA5_LAND_PREPROCESS_STAGES:
+        raise ValueError(
+            f"Unsupported ERA5 preprocess stage: {stage}. "
+            f"Available stages: {sorted(ERA5_LAND_PREPROCESS_STAGES)}"
+        )
+
+    if stage == "parquet":
+        return tabularize_era5_land_by_trench(root_dir=root_dir)
 
     last_store_path = _era5_store_path(root_dir)
     while True:
@@ -856,7 +1158,9 @@ def preprocess_era5_land_worker(root_dir=".", subtype="era5_land_hourly", poll_s
 
         if not _active_download_requests_exist(root_dir=root_dir, subtype=subtype):
             if last_store_path.exists():
-                return last_store_path
+                if stage == "zarr":
+                    return last_store_path
+                return tabularize_era5_land_by_trench(root_dir=root_dir)
             raise FileNotFoundError(
                 f"No downloaded or active ERA5 files found for subtype {subtype!r}."
             )

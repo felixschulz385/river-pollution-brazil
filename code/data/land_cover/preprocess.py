@@ -8,7 +8,6 @@ import numpy as np
 import pandas as pd
 import rioxarray as rxr
 from joblib import Parallel, delayed
-from odc.geo.geom import Geometry
 
 from .constants import (
     LAND_COVER_CLASS_PREFIX,
@@ -18,6 +17,7 @@ from .constants import (
 )
 from .river_network_import import rn_module
 from .schema import subclass_summary_id
+from shared.spatial_tabular import is_no_overlap_error, masked_unique_counts
 
 
 logger = logging.getLogger(__name__)
@@ -81,10 +81,6 @@ def deduplicate_drainage_polygons(drainage_polygons):
         keep="first",
     )
     return drainage_polygons.set_index(TRENCH_ID_COLUMN, drop=False)
-
-
-def add_crs(geom, crs=4326):
-    return Geometry(geom, crs)
 
 
 def create_mappers(legend_path):
@@ -151,12 +147,10 @@ def process_year(year, file, datadir, drainage_polygons, legend_path, output_col
                 continue
 
             try:
-                cropped = lc.odc.crop(add_crs(geometry))
-                values, counts = np.unique(cropped, return_counts=True)
+                values, counts = masked_unique_counts(lc, geometry)
                 n_success += 1
             except (ValueError, RuntimeError, Exception) as e:
-                error_msg = str(e)
-                if "overlap" in error_msg.lower() or "extent" in error_msg.lower():
+                if is_no_overlap_error(e):
                     n_no_overlap += 1
                     if n_no_overlap <= 10:
                         logger.debug("Polygon %s does not overlap raster extent", j)
