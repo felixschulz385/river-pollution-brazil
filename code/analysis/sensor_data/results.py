@@ -10,6 +10,7 @@ import pandas as pd
 
 from .catalog import PollutantDefinition
 from .specs import ModelSpec
+from ..settings import DEFAULT_SETTINGS, SensorAnalysisSettings
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,98 @@ class SensorAnalysisRun:
     manifest: pd.DataFrame
     summary: dict[str, object]
     output_dir: Path
+
+
+def _pollutant_label(name: str) -> str:
+    return name.replace("_", " ").title()
+
+
+def _term_label(term: str, settings: SensorAnalysisSettings) -> str:
+    if "__x__" in term:
+        left, right = term.split("__x__", 1)
+        return f"{_term_label(left, settings)} x {_term_label(right, settings)}"
+    for subclass, label in settings.subclass_labels.items():
+        for bucket in settings.distance_buckets:
+            if term == settings.land_cover_column(bucket, subclass):
+                return f"{label}, {settings.distance_bucket_label(bucket)}"
+    for variable in settings.controls:
+        if term == variable.scaled_column:
+            return variable.source_column.replace("_", " ").title()
+    for variable in settings.climate_variables:
+        if term == variable.scaled_column:
+            return variable.source_column.replace("_", " ").title()
+    return term.replace("_", " ").replace("__", " ").title()
+
+
+def build_readable_results_table(
+    results: pd.DataFrame,
+    settings: SensorAnalysisSettings = DEFAULT_SETTINGS,
+) -> pd.DataFrame:
+    """Return a human-readable result table for export."""
+    if results.empty:
+        return results.copy()
+    frame = results.copy()
+    frame["model"] = frame["model_family"].map(settings.model_family_label)
+    frame["pollutant_label"] = frame["pollutant"].map(_pollutant_label)
+    frame["land_cover_label"] = frame["land_cover_subclass"].map(
+        lambda value: settings.subclass_labels.get(value, value)
+    )
+    frame["distance_label"] = frame["distance_step_name"].map(settings.distance_bucket_label)
+    frame["term_label"] = frame["term"].map(lambda value: _term_label(value, settings))
+    if {"Estimate", "2.5%", "97.5%"}.issubset(frame.columns):
+        frame["estimate_ci"] = frame.apply(
+            lambda row: f"{row['Estimate']:.3f} [{row['2.5%']:.3f}, {row['97.5%']:.3f}]",
+            axis=1,
+        )
+    preferred = [
+        "model",
+        "pollutant_label",
+        "land_cover_label",
+        "distance_label",
+        "term_label",
+        "estimate_ci",
+        "Estimate",
+        "Std. Error",
+        "t value",
+        "Pr(>|t|)",
+        "nobs",
+        "selected_by_lasso",
+        "lasso_selected_count",
+        "map_converged",
+    ]
+    ordered = [column for column in preferred if column in frame.columns]
+    remainder = [column for column in frame.columns if column not in ordered]
+    return frame.loc[:, [*ordered, *remainder]]
+
+
+def build_readable_manifest_table(
+    manifest: pd.DataFrame,
+    settings: SensorAnalysisSettings = DEFAULT_SETTINGS,
+) -> pd.DataFrame:
+    """Return a human-readable manifest table for export."""
+    if manifest.empty:
+        return manifest.copy()
+    frame = manifest.copy()
+    frame["model"] = frame["model_family"].map(settings.model_family_label)
+    frame["pollutant_label"] = frame["pollutant"].map(_pollutant_label)
+    frame["land_cover_label"] = frame["land_cover_subclass"].map(
+        lambda value: settings.subclass_labels.get(value, value)
+    )
+    frame["distance_label"] = frame["distance_step_name"].map(settings.distance_bucket_label)
+    preferred = [
+        "status",
+        "model",
+        "pollutant_label",
+        "land_cover_label",
+        "distance_label",
+        "nobs",
+        "lasso_selected_count",
+        "map_converged",
+        "error",
+    ]
+    ordered = [column for column in preferred if column in frame.columns]
+    remainder = [column for column in frame.columns if column not in ordered]
+    return frame.loc[:, [*ordered, *remainder]]
 
 
 def pollutant_lookup(
@@ -115,12 +208,25 @@ def manifest_record(
 def save_run(
     run: SensorAnalysisRun,
     *,
+    settings: SensorAnalysisSettings = DEFAULT_SETTINGS,
     settings_payload: dict[str, object] | None = None,
 ) -> None:
     """Persist run artifacts under the configured output directory."""
     run.output_dir.mkdir(parents=True, exist_ok=True)
     run.results.to_parquet(run.output_dir / "results.parquet", index=False)
     run.manifest.to_parquet(run.output_dir / "manifest.parquet", index=False)
+    readable_results = build_readable_results_table(run.results, settings)
+    readable_manifest = build_readable_manifest_table(run.manifest, settings)
+    readable_results.to_csv(run.output_dir / "results_readable.csv", index=False)
+    readable_manifest.to_csv(run.output_dir / "manifest_readable.csv", index=False)
+    (run.output_dir / "results_readable.md").write_text(
+        readable_results.to_markdown(index=False),
+        encoding="utf-8",
+    )
+    (run.output_dir / "manifest_readable.md").write_text(
+        readable_manifest.to_markdown(index=False),
+        encoding="utf-8",
+    )
     (run.output_dir / "summary.json").write_text(
         json.dumps(run.summary, indent=2, default=str),
         encoding="utf-8",
@@ -134,6 +240,8 @@ def save_run(
 
 __all__ = [
     "SensorAnalysisRun",
+    "build_readable_manifest_table",
+    "build_readable_results_table",
     "manifest_record",
     "pollutant_lookup",
     "save_run",

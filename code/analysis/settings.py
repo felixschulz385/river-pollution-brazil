@@ -226,6 +226,22 @@ class SensorAnalysisSettings:
             "c5": "Water",
         }
     )
+    distance_bucket_labels: dict[str, str] = field(
+        default_factory=lambda: {
+            "0_10km": "0-10 km",
+            "10_50km": "10-50 km",
+            "50_100km": "50-100 km",
+            "100_250km": "100-250 km",
+            "250_500km": "250-500 km",
+            "500km_plus": "500+ km",
+        }
+    )
+    model_family_labels: dict[str, str] = field(
+        default_factory=lambda: {
+            "crude_twfe": "Crude TWFE",
+            "post_lasso": "Post-LASSO",
+        }
+    )
 
     def land_cover_source_column(self, bucket: str, subclass: str) -> str:
         """Return the raw input column name for a land-cover regressor."""
@@ -241,6 +257,14 @@ class SensorAnalysisSettings:
     def interaction_column(self, land_cover_column: str, climate_column: str) -> str:
         """Return the analysis column name for a land-cover and climate interaction."""
         return f"{land_cover_column}__x__{climate_column}"
+
+    def distance_bucket_label(self, bucket: str) -> str:
+        """Return a human-readable distance-bucket label."""
+        return self.distance_bucket_labels.get(bucket, bucket.replace("_", " "))
+
+    def model_family_label(self, family: str) -> str:
+        """Return a human-readable model-family label."""
+        return self.model_family_labels.get(family, family.replace("_", " ").title())
 
     def resolve_fixed_effect_name(self, effect: FixedEffectSpec) -> str:
         """Return the materialized column name for a fixed effect."""

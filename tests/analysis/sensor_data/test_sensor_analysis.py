@@ -17,6 +17,7 @@ sys.modules.pop("code", None)
 import code
 
 from code.analysis.cli import main as analysis_main
+from code.analysis.sensor_data import faceted_distance_coefplot
 from code.analysis.sensor_data.catalog import build_pollutant_catalog
 from code.analysis.sensor_data.groups import select_pollutants
 from code.analysis.sensor_data.prepare import build_analysis_data
@@ -438,6 +439,35 @@ def test_run_suite_produces_crude_and_post_lasso_results(
     assert run.output_dir.name == "pollutant_ph"
 
 
+def test_faceted_distance_coefplot_uses_readable_labels(
+    synthetic_settings: SensorAnalysisSettings,
+) -> None:
+    run = run_suite(
+        synthetic_settings,
+        pollutants=["ph"],
+        land_cover_subclasses=["c41"],
+        max_distance_step=1,
+        min_observations=1,
+        model_families=["crude_twfe"],
+        save_outputs=False,
+    )
+
+    fig, plot_data = faceted_distance_coefplot(
+        run.results,
+        pollutants=["ph"],
+        land_cover_subclasses=["c41"],
+        settings=synthetic_settings,
+    )
+    assert not plot_data.empty
+    assert "distance_bucket_label" in plot_data.columns
+    assert "pollutant_label" in plot_data.columns
+    assert "land_cover_label" in plot_data.columns
+    assert plot_data["distance_bucket_label"].iloc[0] == "0-10 km"
+    assert plot_data["land_cover_label"].iloc[0] == "Mining"
+    assert plot_data["pollutant_label"].iloc[0] == "Ph"
+    fig.clf()
+
+
 def test_cli_list_groups_outputs_json(
     synthetic_settings: SensorAnalysisSettings,
     capsys: pytest.CaptureFixture[str],
@@ -529,3 +559,8 @@ def test_cli_run_writes_to_model_subdirectory(
 
     assert exit_code == 0
     assert (synthetic_settings.output_dir / "pollutant_ph" / "manifest.parquet").exists()
+    assert (synthetic_settings.output_dir / "pollutant_ph" / "results_readable.csv").exists()
+    assert (synthetic_settings.output_dir / "pollutant_ph" / "manifest_readable.csv").exists()
+    assert (synthetic_settings.output_dir / "pollutant_ph" / "results_readable.md").exists()
+    readable = pd.read_csv(synthetic_settings.output_dir / "pollutant_ph" / "results_readable.csv")
+    assert {"model", "pollutant_label", "land_cover_label", "distance_label", "term_label"}.issubset(readable.columns)

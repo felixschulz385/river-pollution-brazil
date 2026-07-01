@@ -336,7 +336,7 @@ def run_suite(
         output_dir=effective_settings.output_dir,
     )
     if save_outputs:
-        save_run(run, settings_payload=asdict(effective_settings))
+        save_run(run, settings=effective_settings, settings_payload=asdict(effective_settings))
     return run
 
 

@@ -15,6 +15,10 @@ def _pollutant_label(name: str) -> str:
     return name.replace("_", " ").title()
 
 
+def _distance_bucket_label(bucket: str, settings: SensorAnalysisSettings) -> str:
+    return settings.distance_bucket_label(bucket)
+
+
 def _distance_term_lookup(
     subclasses: Sequence[str],
     settings: SensorAnalysisSettings,
@@ -88,16 +92,29 @@ def faceted_distance_coefplot(
         categories=list(settings.distance_buckets),
         ordered=True,
     )
+    plot_data["distance_bucket_label"] = plot_data["distance_bucket"].map(
+        lambda value: _distance_bucket_label(str(value), settings)
+    )
     plot_data["pollutant"] = pd.Categorical(
         plot_data["pollutant"],
         categories=pollutant_order,
         ordered=True,
+    )
+    plot_data["pollutant_label"] = plot_data["pollutant"].map(
+        lambda value: _pollutant_label(str(value))
     )
     plot_data["land_cover_subclass"] = pd.Categorical(
         plot_data["land_cover_subclass"],
         categories=subclass_order,
         ordered=True,
     )
+    plot_data["land_cover_label"] = plot_data["land_cover_subclass"].map(
+        lambda value: settings.subclass_labels.get(str(value), str(value))
+    )
+    if "model_family" in plot_data.columns:
+        plot_data["model_family_label"] = plot_data["model_family"].map(
+            settings.model_family_label
+        )
     plot_data = plot_data.sort_values(
         ["land_cover_subclass", "pollutant", "distance_bucket"]
     )
@@ -128,7 +145,7 @@ def faceted_distance_coefplot(
 
             ax.errorbar(
                 subset[estimate_column],
-                subset["distance_bucket"].astype(str),
+                subset["distance_bucket_label"],
                 xerr=[
                     subset[estimate_column] - subset[lower_column],
                     subset[upper_column] - subset[estimate_column],
@@ -143,7 +160,15 @@ def faceted_distance_coefplot(
             ax.axvline(0, color="black", linestyle="--", linewidth=1)
 
             if row_index == 0:
-                ax.set_title(_pollutant_label(pollutant))
+                title = _pollutant_label(pollutant)
+                families = (
+                    subset["model_family_label"].dropna().drop_duplicates().tolist()
+                    if "model_family_label" in subset.columns
+                    else []
+                )
+                if len(families) == 1:
+                    title = f"{title}\n{families[0]}"
+                ax.set_title(title)
             if col_index == 0:
                 ax.set_ylabel(
                     settings.subclass_labels.get(subclass, subclass),
