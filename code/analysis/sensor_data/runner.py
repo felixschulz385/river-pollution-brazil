@@ -9,10 +9,13 @@ import warnings
 from dataclasses import asdict, replace
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+from sklearn.linear_model import LassoCV
 
 from .groups import select_pollutants
 from .prepare import build_analysis_data
+from .residualize import residualize_with_map
 from .results import SensorAnalysisRun, manifest_record, pollutant_lookup, save_run, tidy_to_records
 from .specs import build_model_specs
 from ..settings import DEFAULT_SETTINGS, SensorAnalysisSettings
@@ -82,15 +85,19 @@ def _resolve_model_name(
 def _analysis_columns(settings: SensorAnalysisSettings, spec) -> list[str]:
     columns = [
         spec.outcome_column,
-        *spec.coefficient_columns,
-        *(control.scaled_column for control in settings.controls),
+        *spec.forced_regressor_columns,
+        *spec.candidate_regressor_columns,
         *settings.resolved_fixed_effects(),
         settings.cluster_variable,
     ]
     return list(dict.fromkeys(columns))
 
 
-def _run_model(settings: SensorAnalysisSettings, frame: pd.DataFrame, spec) -> tuple[pd.DataFrame, int]:
+def _ols_formula(outcome_column: str, regressors: tuple[str, ...]) -> str:
+    return f"{outcome_column} ~ {' + '.join(regressors)} - 1"
+
+
+def _prepare_sample(settings: SensorAnalysisSettings, frame: pd.DataFrame, spec) -> pd.DataFrame:
     sample = frame.loc[:, _analysis_columns(settings, spec)].dropna().copy()
     if sample.empty:
         raise ValueError("No complete observations remain after dropping missing values.")
@@ -98,6 +105,16 @@ def _run_model(settings: SensorAnalysisSettings, frame: pd.DataFrame, spec) -> t
         raise ValueError("Outcome has no variation after filtering.")
     if all(sample[column].nunique(dropna=True) < 2 for column in spec.coefficient_columns):
         raise ValueError("All land-cover regressors are constant after filtering.")
+    return sample
+
+
+def _run_ols(
+    settings: SensorAnalysisSettings,
+    sample: pd.DataFrame,
+    spec,
+    regressors: tuple[str, ...],
+):
+    formula = _ols_formula(spec.outcome_column, regressors)
     with warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore",
@@ -110,11 +127,83 @@ def _run_model(settings: SensorAnalysisSettings, frame: pd.DataFrame, spec) -> t
             category=UserWarning,
         )
         fit = pf.feols(
-            spec.formula,
+            formula,
             vcov={settings.vcov_type: settings.cluster_variable},
-            data=sample,
+            data=sample.loc[:, [spec.outcome_column, *regressors, settings.cluster_variable]],
         )
-    return fit.tidy(), int(sample.shape[0])
+    return fit.tidy(), formula
+
+
+def _standardize_candidates(candidate_frame: pd.DataFrame) -> tuple[np.ndarray, list[str]]:
+    valid_columns: list[str] = []
+    standardized_arrays: list[np.ndarray] = []
+    for column in candidate_frame.columns:
+        values = candidate_frame[column].to_numpy(dtype=float)
+        std = float(np.std(values))
+        if not np.isfinite(std) or std <= 0:
+            continue
+        centered = values - float(np.mean(values))
+        standardized_arrays.append(centered / std)
+        valid_columns.append(column)
+    if not standardized_arrays:
+        return np.empty((candidate_frame.shape[0], 0)), []
+    return np.column_stack(standardized_arrays), valid_columns
+
+
+def _run_model(settings: SensorAnalysisSettings, frame: pd.DataFrame, spec) -> tuple[pd.DataFrame, int, dict[str, object]]:
+    sample = _prepare_sample(settings, frame, spec)
+    regressors = tuple(spec.forced_regressor_columns)
+    residualized = residualize_with_map(
+        sample,
+        outcome_column=spec.outcome_column,
+        feature_columns=[*spec.forced_regressor_columns, *spec.candidate_regressor_columns],
+        fixed_effect_columns=settings.resolved_fixed_effects(),
+        tolerance=settings.map_tolerance,
+        max_iterations=settings.map_max_iterations,
+    )
+    demeaned = residualized.frame.copy()
+    demeaned[settings.cluster_variable] = sample[settings.cluster_variable].to_numpy()
+
+    selected_terms: tuple[str, ...] = ()
+    lasso_alpha: float | None = None
+    lasso_selected_count: int | None = None
+
+    if spec.model_family == "post_lasso" and spec.candidate_regressor_columns:
+        candidate_frame = demeaned.loc[:, list(spec.candidate_regressor_columns)]
+        candidate_matrix, valid_columns = _standardize_candidates(candidate_frame)
+        if valid_columns:
+            lasso = LassoCV(
+                cv=settings.lasso_settings.cv,
+                alphas=settings.lasso_settings.alphas,
+                eps=settings.lasso_settings.eps,
+                random_state=settings.lasso_settings.random_state,
+                max_iter=settings.lasso_settings.max_iter,
+                fit_intercept=False,
+            )
+            lasso.fit(candidate_matrix, demeaned[spec.outcome_column].to_numpy(dtype=float))
+            selected_terms = tuple(
+                column
+                for column, coefficient in zip(valid_columns, lasso.coef_, strict=True)
+                if not np.isclose(coefficient, 0.0)
+            )
+            lasso_alpha = float(lasso.alpha_)
+            lasso_selected_count = int(len(selected_terms))
+            regressors = tuple([*spec.forced_regressor_columns, *selected_terms])
+        else:
+            lasso_selected_count = 0
+
+    tidy, formula = _run_ols(settings, demeaned, spec, regressors)
+    metadata = {
+        "formula": formula,
+        "selected_terms": selected_terms,
+        "lasso_alpha": lasso_alpha,
+        "lasso_selected_count": lasso_selected_count,
+        "map_iterations": residualized.iterations,
+        "map_converged": residualized.converged,
+        "map_max_change": residualized.max_change,
+        "regressors": regressors,
+    }
+    return tidy, int(sample.shape[0]), metadata
 
 
 def run_suite(
@@ -125,6 +214,7 @@ def run_suite(
     pollutants: list[str] | None = None,
     land_cover_subclasses: list[str] | None = None,
     max_distance_step: int | None = None,
+    model_families: list[str] | None = None,
     output_dir: str | Path | None = None,
     min_observations: int | None = None,
     save_outputs: bool = True,
@@ -154,6 +244,7 @@ def run_suite(
         pollutant_selection,
         subclass_selection=land_cover_subclasses,
         max_distance_step=max_distance_step,
+        model_families=model_families,
     )
     pollutant_meta = pollutant_lookup(prepared.pollutant_catalog)
 
@@ -163,23 +254,49 @@ def run_suite(
     logger.info("Running %d model specification(s).", len(specs))
     for index, spec in enumerate(specs, start=1):
         logger.info(
-            "Model %d/%d: pollutant=%s subclass=%s step=%s",
+            "Model %d/%d: family=%s pollutant=%s subclass=%s step=%s",
             index,
             len(specs),
+            spec.model_family,
             spec.pollutant,
             spec.land_cover_subclass,
             spec.distance_step_name,
         )
         meta = pollutant_meta[spec.pollutant]
         try:
-            tidy_frame, nobs = _run_model(effective_settings, prepared.data, spec)
-            result_frames.append(tidy_to_records(tidy_frame, spec, meta, nobs))
+            tidy_frame, nobs, model_meta = _run_model(effective_settings, prepared.data, spec)
+            result_frames.append(
+                tidy_to_records(
+                    tidy_frame,
+                    spec,
+                    meta,
+                    nobs,
+                    formula=model_meta["formula"],
+                    selected_terms=model_meta["selected_terms"],
+                    lasso_alpha=model_meta["lasso_alpha"],
+                    lasso_selected_count=model_meta["lasso_selected_count"],
+                    map_iterations=model_meta["map_iterations"],
+                    map_converged=model_meta["map_converged"],
+                )
+            )
             manifest_rows.append(
-                manifest_record(spec, meta, status="ok", nobs=nobs)
+                manifest_record(
+                    spec,
+                    meta,
+                    status="ok",
+                    nobs=nobs,
+                    formula=model_meta["formula"],
+                    selected_terms=model_meta["selected_terms"],
+                    lasso_alpha=model_meta["lasso_alpha"],
+                    lasso_selected_count=model_meta["lasso_selected_count"],
+                    map_iterations=model_meta["map_iterations"],
+                    map_converged=model_meta["map_converged"],
+                )
             )
         except Exception as exc:  # pragma: no cover - exercised in CLI/integration flows
             logger.warning(
-                "Model failed for pollutant=%s subclass=%s step=%s: %s",
+                "Model failed for family=%s pollutant=%s subclass=%s step=%s: %s",
+                spec.model_family,
                 spec.pollutant,
                 spec.land_cover_subclass,
                 spec.distance_step_name,
@@ -208,6 +325,7 @@ def run_suite(
         "model_name": model_name,
         "pollutants": list(pollutant_selection.pollutants),
         "land_cover_subclasses": land_cover_subclasses or list(effective_settings.land_cover_subclasses),
+        "model_families": model_families or list(effective_settings.model_families),
         "max_distance_step": max_distance_step or len(effective_settings.distance_buckets),
         "minimum_observations": effective_settings.minimum_observations,
     }

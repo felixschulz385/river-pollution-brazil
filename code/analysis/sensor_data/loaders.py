@@ -16,6 +16,7 @@ class AnalysisInputs:
 
     sensor_data: pd.DataFrame
     land_cover: pd.DataFrame
+    climate: pd.DataFrame
     trenches: pd.DataFrame
     transformations: dict[str, dict[str, object]]
 
@@ -36,7 +37,7 @@ def load_sensor_data(settings: SensorAnalysisSettings) -> pd.DataFrame:
     sensor_data = pd.read_parquet(settings.sensor_data_path).reset_index()
     validate_required_columns(
         sensor_data,
-        {"station_code", "datetime", "date", "trench_id"},
+        {settings.sensor_id_column, settings.date_column, "trench_id"},
         "sensor_data",
     )
     return sensor_data
@@ -51,6 +52,17 @@ def load_land_cover(settings: SensorAnalysisSettings) -> pd.DataFrame:
             required_columns.add(settings.land_cover_source_column(bucket, subclass))
     validate_required_columns(land_cover, required_columns, "land_cover")
     return land_cover
+
+
+def load_climate_data(settings: SensorAnalysisSettings) -> pd.DataFrame:
+    """Load upstream climate features joined at the sensor-date grain."""
+    climate = pd.read_parquet(settings.climate_data_path).reset_index(drop=True)
+    required_columns = set(settings.climate_join_keys)
+    required_columns.update(
+        variable.source_column for variable in settings.climate_variables
+    )
+    validate_required_columns(climate, required_columns, "climate_data")
+    return climate
 
 
 def load_trenches(settings: SensorAnalysisSettings) -> pd.DataFrame:
@@ -78,6 +90,7 @@ def load_analysis_inputs(settings: SensorAnalysisSettings) -> AnalysisInputs:
     return AnalysisInputs(
         sensor_data=load_sensor_data(settings),
         land_cover=load_land_cover(settings),
+        climate=load_climate_data(settings),
         trenches=load_trenches(settings),
         transformations=load_transformations(settings),
     )
@@ -86,6 +99,7 @@ def load_analysis_inputs(settings: SensorAnalysisSettings) -> AnalysisInputs:
 __all__ = [
     "AnalysisInputs",
     "load_analysis_inputs",
+    "load_climate_data",
     "load_land_cover",
     "load_sensor_data",
     "load_transformations",

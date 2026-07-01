@@ -20,6 +20,15 @@ class ControlVariable:
 
 
 @dataclass(frozen=True)
+class ClimateVariable:
+    """Definition of one upstream climate variable."""
+
+    source_column: str
+    scaled_column: str
+    scale: float = 1.0
+
+
+@dataclass(frozen=True)
 class ImportanceTier:
     """Coverage threshold for an importance tier."""
 
@@ -54,6 +63,18 @@ FixedEffectSpec: TypeAlias = str | tuple[str, ...] | list[str]
 
 
 @dataclass(frozen=True)
+class LassoSettings:
+    """Hyperparameters for Post-LASSO selection."""
+
+    cv: int = 5
+    alphas: int = 100
+    eps: float = 1e-3
+    random_state: int = 0
+    max_iter: int = 10_000
+    standardize: bool = True
+
+
+@dataclass(frozen=True)
 class SensorAnalysisSettings:
     """Default configuration for the sensor analysis suite."""
 
@@ -61,9 +82,13 @@ class SensorAnalysisSettings:
     project_root: Path = PROJECT_ROOT
     sensor_data_path: Path = PROJECT_ROOT / "data/sensor_data/water_quality_assembled.parquet"
     land_cover_path: Path = PROJECT_ROOT / "data/land_cover/land_cover_assembled_sensor.parquet"
+    climate_data_path: Path = PROJECT_ROOT / "data/climate/climate_sensor_upstream.parquet"
     transformations_path: Path = PROJECT_ROOT / "data/sensor_data/water_quality_transformations.json"
     trenches_path: Path = PROJECT_ROOT / "data/river_network/trenches.parquet"
     output_dir: Path = PROJECT_ROOT / "output/analysis/sensor_data"
+    sensor_id_column: str = "sensor_id"
+    date_column: str = "date"
+    climate_join_keys: tuple[str, str] = ("sensor_id", "date")
 
     # Land-cover regressors
     distance_buckets: tuple[str, ...] = (
@@ -101,13 +126,15 @@ class SensorAnalysisSettings:
         }
     )
     fixed_effects: tuple[FixedEffectSpec, ...] = (
-        "station_code",
+        "sensor_id",
         ("quarter", "system"),
         ("year", "system"),
     )
-    cluster_variable: str = "station_code"
+    cluster_variable: str = "sensor_id"
     vcov_type: str = "CRV1"
     minimum_observations: int = 5_000
+    map_tolerance: float = 1e-8
+    map_max_iterations: int = 1_000
 
     # Pollutant grouping
     importance_tiers: tuple[ImportanceTier, ...] = (
@@ -130,11 +157,24 @@ class SensorAnalysisSettings:
             scale=100.0,
         ),
     )
+    climate_variables: tuple[ClimateVariable, ...] = (
+        ClimateVariable(
+            source_column="upstream_temperature",
+            scaled_column="upstream_temperature_scaled",
+            scale=10.0,
+        ),
+        ClimateVariable(
+            source_column="upstream_precipitation",
+            scaled_column="upstream_precipitation_scaled",
+            scale=100.0,
+        ),
+    )
+    model_families: tuple[str, ...] = ("crude_twfe", "post_lasso")
+    lasso_settings: LassoSettings = field(default_factory=LassoSettings)
 
     # Pollutant catalog exclusions
     excluded_pollutant_columns: tuple[str, ...] = (
-        "station_code",
-        "datetime",
+        "sensor_id",
         "date",
         "trench_id",
         "year",
@@ -198,6 +238,10 @@ class SensorAnalysisSettings:
             f"{self.land_cover_transform.column_suffix()}"
         )
 
+    def interaction_column(self, land_cover_column: str, climate_column: str) -> str:
+        """Return the analysis column name for a land-cover and climate interaction."""
+        return f"{land_cover_column}__x__{climate_column}"
+
     def resolve_fixed_effect_name(self, effect: FixedEffectSpec) -> str:
         """Return the materialized column name for a fixed effect."""
         if isinstance(effect, str):
@@ -213,12 +257,14 @@ DEFAULT_SETTINGS = SensorAnalysisSettings()
 
 
 __all__ = [
+    "ClimateVariable",
     "ControlVariable",
     "DEFAULT_SETTINGS",
     "FixedEffectSpec",
     "FixedEffectVariable",
     "ImportanceTier",
     "LandCoverTransform",
+    "LassoSettings",
     "PROJECT_ROOT",
     "SensorAnalysisSettings",
 ]

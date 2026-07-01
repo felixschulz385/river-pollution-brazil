@@ -34,6 +34,13 @@ def tidy_to_records(
     spec: ModelSpec,
     pollutant_meta: PollutantDefinition,
     nobs: int,
+    *,
+    formula: str | None = None,
+    selected_terms: tuple[str, ...] = (),
+    lasso_alpha: float | None = None,
+    lasso_selected_count: int | None = None,
+    map_iterations: int | None = None,
+    map_converged: bool | None = None,
 ) -> pd.DataFrame:
     """Attach manifest metadata to a tidy pyfixest output frame."""
     frame = tidy_frame.reset_index().copy()
@@ -43,6 +50,7 @@ def tidy_to_records(
     frame["pollutant"] = spec.pollutant
     frame["pollutant_group_kind"] = spec.pollutant_group_kind
     frame["pollutant_group_name"] = spec.pollutant_group_name
+    frame["model_family"] = spec.model_family
     frame["pollutant_type"] = pollutant_meta.type_group
     frame["pollutant_importance"] = pollutant_meta.importance_group
     frame["transform"] = pollutant_meta.transform
@@ -50,8 +58,15 @@ def tidy_to_records(
     frame["distance_step_index"] = spec.distance_step_index
     frame["distance_step_name"] = spec.distance_step_name
     frame["included_buckets"] = ",".join(spec.included_buckets)
-    frame["formula"] = spec.formula
+    frame["forced_regressors"] = ",".join(spec.forced_regressor_columns)
+    frame["candidate_regressors"] = ",".join(spec.candidate_regressor_columns)
+    frame["formula"] = formula
     frame["nobs"] = nobs
+    frame["selected_by_lasso"] = frame["term"].isin(selected_terms)
+    frame["lasso_alpha"] = lasso_alpha
+    frame["lasso_selected_count"] = lasso_selected_count
+    frame["map_iterations"] = map_iterations
+    frame["map_converged"] = map_converged
     return frame
 
 
@@ -62,12 +77,19 @@ def manifest_record(
     status: str,
     nobs: int,
     error: str | None = None,
+    formula: str | None = None,
+    selected_terms: tuple[str, ...] = (),
+    lasso_alpha: float | None = None,
+    lasso_selected_count: int | None = None,
+    map_iterations: int | None = None,
+    map_converged: bool | None = None,
 ) -> dict[str, object]:
     """Create one manifest row."""
     return {
         "pollutant": spec.pollutant,
         "pollutant_group_kind": spec.pollutant_group_kind,
         "pollutant_group_name": spec.pollutant_group_name,
+        "model_family": spec.model_family,
         "pollutant_type": pollutant_meta.type_group,
         "pollutant_importance": pollutant_meta.importance_group,
         "transform": pollutant_meta.transform,
@@ -76,7 +98,14 @@ def manifest_record(
         "distance_step_name": spec.distance_step_name,
         "included_buckets": ",".join(spec.included_buckets),
         "outcome_column": spec.outcome_column,
-        "formula": spec.formula,
+        "forced_regressors": ",".join(spec.forced_regressor_columns),
+        "candidate_regressors": ",".join(spec.candidate_regressor_columns),
+        "formula": formula,
+        "selected_terms": ",".join(selected_terms),
+        "lasso_alpha": lasso_alpha,
+        "lasso_selected_count": lasso_selected_count,
+        "map_iterations": map_iterations,
+        "map_converged": map_converged,
         "nobs": nobs,
         "status": status,
         "error": error,

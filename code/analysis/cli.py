@@ -39,11 +39,15 @@ def _build_settings(args: argparse.Namespace) -> SensorAnalysisSettings:
         project_root=DEFAULT_SETTINGS.project_root,
         sensor_data_path=Path(args.sensor_data_path or DEFAULT_SETTINGS.sensor_data_path),
         land_cover_path=Path(args.land_cover_path or DEFAULT_SETTINGS.land_cover_path),
+        climate_data_path=Path(args.climate_data_path or DEFAULT_SETTINGS.climate_data_path),
         transformations_path=Path(
             args.transformations_path or DEFAULT_SETTINGS.transformations_path
         ),
         trenches_path=Path(args.trenches_path or DEFAULT_SETTINGS.trenches_path),
         output_dir=Path(args.output_dir or DEFAULT_SETTINGS.output_dir),
+        sensor_id_column=DEFAULT_SETTINGS.sensor_id_column,
+        date_column=DEFAULT_SETTINGS.date_column,
+        climate_join_keys=DEFAULT_SETTINGS.climate_join_keys,
         distance_buckets=DEFAULT_SETTINGS.distance_buckets,
         land_cover_subclasses=DEFAULT_SETTINGS.land_cover_subclasses,
         land_cover_statistic=DEFAULT_SETTINGS.land_cover_statistic,
@@ -53,8 +57,16 @@ def _build_settings(args: argparse.Namespace) -> SensorAnalysisSettings:
         cluster_variable=DEFAULT_SETTINGS.cluster_variable,
         vcov_type=DEFAULT_SETTINGS.vcov_type,
         minimum_observations=args.min_observations,
+        map_tolerance=DEFAULT_SETTINGS.map_tolerance,
+        map_max_iterations=DEFAULT_SETTINGS.map_max_iterations,
         importance_tiers=DEFAULT_SETTINGS.importance_tiers,
         controls=DEFAULT_SETTINGS.controls,
+        climate_variables=DEFAULT_SETTINGS.climate_variables,
+        model_families=tuple(
+            _csv_list(getattr(args, "model_families", None))
+            or DEFAULT_SETTINGS.model_families
+        ),
+        lasso_settings=DEFAULT_SETTINGS.lasso_settings,
         excluded_pollutant_columns=DEFAULT_SETTINGS.excluded_pollutant_columns,
         type_group_names=DEFAULT_SETTINGS.type_group_names,
         subclass_labels=DEFAULT_SETTINGS.subclass_labels,
@@ -79,6 +91,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--land-cover-path",
         default=None,
         help="Override the assembled land-cover parquet path.",
+    )
+    parser.add_argument(
+        "--climate-data-path",
+        default=None,
+        help="Override the assembled upstream-climate parquet path.",
     )
     parser.add_argument(
         "--transformations-path",
@@ -132,6 +149,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Maximum cumulative distance step to run.",
     )
+    run_parser.add_argument(
+        "--model-families",
+        default=None,
+        help="Comma-separated model families such as crude_twfe,post_lasso.",
+    )
 
     groups_parser = subparsers.add_parser("list-groups", help="List pollutant groups")
     groups_parser.add_argument(
@@ -172,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
             pollutants=_csv_list(args.pollutants),
             land_cover_subclasses=_csv_list(args.land_cover_subclasses),
             max_distance_step=args.max_distance_step,
+            model_families=_csv_list(args.model_families),
             output_dir=args.output_dir,
             min_observations=args.min_observations,
             save_outputs=True,

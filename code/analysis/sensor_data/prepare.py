@@ -24,6 +24,8 @@ class PreparedAnalysisData:
     pollutant_catalog: list[PollutantDefinition]
     land_cover_catalog: list
     transformations: dict[str, dict[str, object]]
+    climate_columns: tuple[str, ...]
+    interaction_columns: tuple[str, ...]
 
 
 def _apply_transform(series: pd.Series, transform_name: str) -> pd.Series:
@@ -77,11 +79,43 @@ def _build_land_cover_columns(
     transformed_series: dict[str, pd.Series] = {}
     for bucket in settings.distance_buckets:
         for subclass in settings.land_cover_subclasses:
-            transformed_series[settings.land_cover_column(bucket, subclass)] = _apply_land_cover_transform(
+            transformed_series[
+                settings.land_cover_column(bucket, subclass)
+            ] = _apply_land_cover_transform(
                 frame[settings.land_cover_source_column(bucket, subclass)],
                 settings,
             )
     return pd.DataFrame(transformed_series, index=frame.index)
+
+
+def _build_scaled_columns(frame: pd.DataFrame, variables) -> pd.DataFrame:
+    """Build scaled controls or climate columns in one batch."""
+    scaled_series: dict[str, pd.Series] = {}
+    for variable in variables:
+        scaled_series[variable.scaled_column] = (
+            frame[variable.source_column].astype(float) / variable.scale
+        )
+    return pd.DataFrame(scaled_series, index=frame.index)
+
+
+def _build_interaction_columns(
+    frame: pd.DataFrame,
+    settings: SensorAnalysisSettings,
+) -> pd.DataFrame:
+    """Build all configured land-cover and climate interaction candidates."""
+    interaction_series: dict[str, pd.Series] = {}
+    climate_columns = [variable.scaled_column for variable in settings.climate_variables]
+    for bucket in settings.distance_buckets:
+        for subclass in settings.land_cover_subclasses:
+            land_cover_column = settings.land_cover_column(bucket, subclass)
+            for climate_column in climate_columns:
+                interaction_series[
+                    settings.interaction_column(land_cover_column, climate_column)
+                ] = (
+                    frame[land_cover_column].astype(float)
+                    * frame[climate_column].astype(float)
+                )
+    return pd.DataFrame(interaction_series, index=frame.index)
 
 
 def _extract_fixed_effect_variable(
@@ -162,23 +196,34 @@ def build_analysis_data(
     """Build a merged regression-ready sensor analysis panel."""
     inputs = load_analysis_inputs(settings)
     sensor_data = inputs.sensor_data.copy()
-    sensor_data["station_code"] = sensor_data["station_code"].astype(str)
-    sensor_data["datetime"] = pd.to_datetime(sensor_data["datetime"], errors="coerce")
-    sensor_data["date"] = pd.to_datetime(sensor_data["date"], errors="coerce")
-    sensor_data["date"] = sensor_data["date"].fillna(sensor_data["datetime"])
-    missing_date_rows = sensor_data["date"].isna()
+    sensor_data[settings.sensor_id_column] = sensor_data[settings.sensor_id_column].astype(str)
+    sensor_data[settings.date_column] = pd.to_datetime(
+        sensor_data[settings.date_column],
+        errors="coerce",
+    )
+    missing_date_rows = sensor_data[settings.date_column].isna()
     if missing_date_rows.any():
         logger.warning(
-            "Dropping %d sensor rows with missing date/datetime values.",
+            "Dropping %d sensor rows with missing date values.",
             int(missing_date_rows.sum()),
         )
         sensor_data = sensor_data.loc[~missing_date_rows].copy()
-    sensor_data["year"] = sensor_data["date"].dt.year.astype(int)
-    sensor_data["quarter"] = sensor_data["date"].dt.quarter.astype(int)
+    sensor_data["year"] = sensor_data[settings.date_column].dt.year.astype(int)
+    sensor_data["quarter"] = sensor_data[settings.date_column].dt.quarter.astype(int)
+
+    climate = inputs.climate.copy()
+    climate_key_sensor, climate_key_date = settings.climate_join_keys
+    climate[climate_key_sensor] = climate[climate_key_sensor].astype(str)
+    climate[climate_key_date] = pd.to_datetime(climate[climate_key_date], errors="coerce")
 
     merged = sensor_data.merge(
         inputs.land_cover,
-        on=["station_code", "trench_id", "year"],
+        on=["trench_id", "year"],
+        how="left",
+        validate="many_to_one",
+    ).merge(
+        climate,
+        on=list(settings.climate_join_keys),
         how="left",
         validate="many_to_one",
     ).merge(
@@ -188,16 +233,37 @@ def build_analysis_data(
         validate="many_to_one",
     )
 
-    for control in settings.controls:
-        merged[control.scaled_column] = (
-            merged[control.source_column] / control.scale
-        )
-
     fixed_effect_columns = _build_fixed_effect_columns(merged, settings)
+    control_columns = _build_scaled_columns(merged, settings.controls)
+    climate_columns = _build_scaled_columns(merged, settings.climate_variables)
     land_cover_columns = _build_land_cover_columns(merged, settings)
-    replacement_columns = list(fixed_effect_columns.columns) + list(land_cover_columns.columns)
     merged = pd.concat(
-        [merged.drop(columns=replacement_columns, errors="ignore"), fixed_effect_columns, land_cover_columns],
+        [
+            merged,
+            control_columns,
+            climate_columns,
+            fixed_effect_columns,
+            land_cover_columns,
+        ],
+        axis=1,
+    )
+    interaction_columns = _build_interaction_columns(merged, settings)
+    replacement_columns = (
+        list(fixed_effect_columns.columns)
+        + list(control_columns.columns)
+        + list(climate_columns.columns)
+        + list(land_cover_columns.columns)
+        + list(interaction_columns.columns)
+    )
+    merged = pd.concat(
+        [
+            merged.drop(columns=replacement_columns, errors="ignore"),
+            control_columns,
+            climate_columns,
+            fixed_effect_columns,
+            land_cover_columns,
+            interaction_columns,
+        ],
         axis=1,
     )
 
@@ -214,6 +280,8 @@ def build_analysis_data(
         pollutant_catalog=pollutant_catalog,
         land_cover_catalog=build_land_cover_catalog(settings),
         transformations=inputs.transformations,
+        climate_columns=tuple(climate_columns.columns),
+        interaction_columns=tuple(interaction_columns.columns),
     )
 
 
