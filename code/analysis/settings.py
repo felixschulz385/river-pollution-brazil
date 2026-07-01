@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 from typing import TypeAlias
 
 
@@ -26,6 +27,9 @@ class ClimateVariable:
     source_column: str
     scaled_column: str
     scale: float = 1.0
+    distance_bucket: str | None = None
+    variable_name: str | None = None
+    window_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -81,14 +85,19 @@ class SensorAnalysisSettings:
     # Paths
     project_root: Path = PROJECT_ROOT
     sensor_data_path: Path = PROJECT_ROOT / "data/sensor_data/water_quality_assembled.parquet"
-    land_cover_path: Path = PROJECT_ROOT / "data/land_cover/land_cover_assembled_sensor.parquet"
-    climate_data_path: Path = PROJECT_ROOT / "data/climate/climate_sensor_upstream.parquet"
+    land_cover_path: Path = PROJECT_ROOT / "data/land_cover/land_cover_sensor_upstream.parquet"
+    climate_data_path: Path | None = None
     transformations_path: Path = PROJECT_ROOT / "data/sensor_data/water_quality_transformations.json"
     trenches_path: Path = PROJECT_ROOT / "data/river_network/trenches.parquet"
     output_dir: Path = PROJECT_ROOT / "output/analysis/sensor_data"
-    sensor_id_column: str = "sensor_id"
+    sensor_id_column: str = "station_code"
+    sensor_id_aliases: tuple[str, ...] = ("sensor_id", "station_code")
+    datetime_column: str = "datetime"
     date_column: str = "date"
-    climate_join_keys: tuple[str, str] = ("sensor_id", "date")
+    climate_join_keys: tuple[str, str] = ("station_code", "date")
+    climate_column_prefix: str = "cl_"
+    climate_count_suffix: str = "_n"
+    climate_interaction_mode: str = "same_bucket"
 
     # Land-cover regressors
     distance_buckets: tuple[str, ...] = (
@@ -126,11 +135,11 @@ class SensorAnalysisSettings:
         }
     )
     fixed_effects: tuple[FixedEffectSpec, ...] = (
-        "sensor_id",
+        "station_code",
         ("quarter", "system"),
         ("year", "system"),
     )
-    cluster_variable: str = "sensor_id"
+    cluster_variable: str = "station_code"
     vcov_type: str = "CRV1"
     minimum_observations: int = 5_000
     map_tolerance: float = 1e-8
@@ -157,24 +166,15 @@ class SensorAnalysisSettings:
             scale=100.0,
         ),
     )
-    climate_variables: tuple[ClimateVariable, ...] = (
-        ClimateVariable(
-            source_column="upstream_temperature",
-            scaled_column="upstream_temperature_scaled",
-            scale=10.0,
-        ),
-        ClimateVariable(
-            source_column="upstream_precipitation",
-            scaled_column="upstream_precipitation_scaled",
-            scale=100.0,
-        ),
-    )
+    climate_variables: tuple[ClimateVariable, ...] = ()
     model_families: tuple[str, ...] = ("crude_twfe", "post_lasso")
     lasso_settings: LassoSettings = field(default_factory=LassoSettings)
 
     # Pollutant catalog exclusions
     excluded_pollutant_columns: tuple[str, ...] = (
         "sensor_id",
+        "station_code",
+        "datetime",
         "date",
         "trench_id",
         "year",
@@ -257,6 +257,77 @@ class SensorAnalysisSettings:
     def interaction_column(self, land_cover_column: str, climate_column: str) -> str:
         """Return the analysis column name for a land-cover and climate interaction."""
         return f"{land_cover_column}__x__{climate_column}"
+
+    def climate_scaled_column(self, source_column: str) -> str:
+        """Return the analysis column name for a climate regressor."""
+        return f"{source_column}__scaled"
+
+    def climate_matches_bucket(
+        self,
+        climate_bucket: str | None,
+        land_cover_bucket: str,
+    ) -> bool:
+        """Return whether a climate regressor can interact with a land-cover bucket."""
+        if climate_bucket is None:
+            return True
+        if self.climate_interaction_mode == "all":
+            return True
+        if self.climate_interaction_mode == "same_bucket":
+            return climate_bucket == land_cover_bucket
+        if self.climate_interaction_mode == "cumulative":
+            try:
+                climate_index = self.distance_buckets.index(climate_bucket)
+                land_cover_index = self.distance_buckets.index(land_cover_bucket)
+            except ValueError:
+                return False
+            return climate_index <= land_cover_index
+        raise ValueError(
+            "Unsupported climate interaction mode "
+            f"`{self.climate_interaction_mode}`. Expected one of "
+            "`same_bucket`, `cumulative`, `all`."
+        )
+
+    def parse_climate_source_column(self, column: str) -> ClimateVariable | None:
+        """Parse a climate source column assembled on the sensor panel."""
+        pattern = (
+            rf"^{re.escape(self.climate_column_prefix)}"
+            rf"({'|'.join(re.escape(bucket) for bucket in self.distance_buckets)})"
+            rf"_(.+)$"
+        )
+        match = re.match(pattern, column)
+        if match is None:
+            return None
+        bucket = match.group(1)
+        suffix = match.group(2)
+        if suffix == self.climate_count_suffix.lstrip("_"):
+            return None
+        variable_name, _, window_name = suffix.rpartition("_")
+        if not variable_name:
+            variable_name = suffix
+            window_name = None
+        return ClimateVariable(
+            source_column=column,
+            scaled_column=self.climate_scaled_column(column),
+            scale=1.0,
+            distance_bucket=bucket,
+            variable_name=variable_name,
+            window_name=window_name or None,
+        )
+
+    def discover_climate_variables(
+        self,
+        columns: list[str] | tuple[str, ...],
+    ) -> tuple[ClimateVariable, ...]:
+        """Infer all available climate regressors from assembled columns."""
+        discovered: list[ClimateVariable] = []
+        seen: set[str] = set()
+        for column in columns:
+            parsed = self.parse_climate_source_column(column)
+            if parsed is None or parsed.source_column in seen:
+                continue
+            discovered.append(parsed)
+            seen.add(parsed.source_column)
+        return tuple(discovered)
 
     def distance_bucket_label(self, bucket: str) -> str:
         """Return a human-readable distance-bucket label."""

@@ -1,7 +1,6 @@
 """Sensor-data analysis API."""
 
 from .groups import list_groups
-from .plots import faceted_distance_coefplot
 from .prepare import build_analysis_data
 from .runner import run_suite
 from .specs import build_model_specs
@@ -13,3 +12,10 @@ __all__ = [
     "list_groups",
     "run_suite",
 ]
+
+
+def faceted_distance_coefplot(*args, **kwargs):
+    """Import plotting lazily so analysis code does not require matplotlib on import."""
+    from .plots import faceted_distance_coefplot as _faceted_distance_coefplot
+
+    return _faceted_distance_coefplot(*args, **kwargs)

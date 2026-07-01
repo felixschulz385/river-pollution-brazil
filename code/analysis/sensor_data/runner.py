@@ -245,6 +245,7 @@ def run_suite(
         subclass_selection=land_cover_subclasses,
         max_distance_step=max_distance_step,
         model_families=model_families,
+        climate_variables=prepared.climate_variables,
     )
     pollutant_meta = pollutant_lookup(prepared.pollutant_catalog)
 

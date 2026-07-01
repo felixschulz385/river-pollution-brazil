@@ -41,6 +41,7 @@ def build_model_specs(
     *,
     max_distance_step: int | None = None,
     model_families: list[str] | tuple[str, ...] | None = None,
+    climate_variables=None,
 ) -> list[ModelSpec]:
     """Construct cumulative distance-bucket model specifications."""
     if isinstance(pollutant_selection, PollutantSelection):
@@ -69,7 +70,11 @@ def build_model_specs(
         bucket_limit = min(bucket_limit, max_distance_step)
 
     control_terms = [control.scaled_column for control in settings.controls]
-    climate_terms = [variable.scaled_column for variable in settings.climate_variables]
+    resolved_climate_variables = (
+        tuple(climate_variables)
+        if climate_variables is not None
+        else settings.climate_variables
+    )
     families = tuple(model_families) if model_families is not None else settings.model_families
     specs: list[ModelSpec] = []
     for pollutant in pollutants:
@@ -81,11 +86,29 @@ def build_model_specs(
                     _land_cover_column(bucket, subclass, settings)
                     for bucket in included_buckets
                 )
-                interaction_terms = tuple(
-                    settings.interaction_column(land_cover_column, climate_column)
-                    for land_cover_column in coefficient_columns
-                    for climate_column in climate_terms
+                candidate_climate_variables = tuple(
+                    variable
+                    for variable in resolved_climate_variables
+                    if variable.distance_bucket is None
+                    or any(
+                        settings.climate_matches_bucket(variable.distance_bucket, bucket)
+                        for bucket in included_buckets
+                    )
                 )
+                climate_terms = tuple(
+                    variable.scaled_column for variable in candidate_climate_variables
+                )
+                interaction_terms = []
+                for bucket, land_cover_column in zip(included_buckets, coefficient_columns, strict=True):
+                    matching_climate_variables = [
+                        variable
+                        for variable in candidate_climate_variables
+                        if settings.climate_matches_bucket(variable.distance_bucket, bucket)
+                    ]
+                    interaction_terms.extend(
+                        settings.interaction_column(land_cover_column, variable.scaled_column)
+                        for variable in matching_climate_variables
+                    )
                 for model_family in families:
                     if model_family not in {"crude_twfe", "post_lasso"}:
                         raise ValueError(f"Unsupported model family `{model_family}`.")

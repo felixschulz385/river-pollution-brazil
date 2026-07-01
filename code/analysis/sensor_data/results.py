@@ -40,7 +40,25 @@ def _term_label(term: str, settings: SensorAnalysisSettings) -> str:
             return variable.source_column.replace("_", " ").title()
     for variable in settings.climate_variables:
         if term == variable.scaled_column:
-            return variable.source_column.replace("_", " ").title()
+            pieces = []
+            if variable.variable_name is not None:
+                pieces.append(variable.variable_name.replace("_", " ").title())
+            if variable.window_name is not None:
+                pieces.append(variable.window_name.replace("_", " "))
+            if variable.distance_bucket is not None:
+                pieces.append(settings.distance_bucket_label(variable.distance_bucket))
+            return ", ".join(pieces) if pieces else variable.source_column.replace("_", " ").title()
+    if term.endswith("__scaled"):
+        parsed = settings.parse_climate_source_column(term.removesuffix("__scaled"))
+        if parsed is not None:
+            pieces = []
+            if parsed.variable_name is not None:
+                pieces.append(parsed.variable_name.replace("_", " ").title())
+            if parsed.window_name is not None:
+                pieces.append(parsed.window_name.replace("_", " "))
+            if parsed.distance_bucket is not None:
+                pieces.append(settings.distance_bucket_label(parsed.distance_bucket))
+            return ", ".join(pieces)
     return term.replace("_", " ").replace("__", " ").title()
 
 
@@ -50,7 +68,24 @@ def build_readable_results_table(
 ) -> pd.DataFrame:
     """Return a human-readable result table for export."""
     if results.empty:
-        return results.copy()
+        return pd.DataFrame(
+            columns=[
+                "model",
+                "pollutant_label",
+                "land_cover_label",
+                "distance_label",
+                "term_label",
+                "estimate_ci",
+                "Estimate",
+                "Std. Error",
+                "t value",
+                "Pr(>|t|)",
+                "nobs",
+                "selected_by_lasso",
+                "lasso_selected_count",
+                "map_converged",
+            ]
+        )
     frame = results.copy()
     frame["model"] = frame["model_family"].map(settings.model_family_label)
     frame["pollutant_label"] = frame["pollutant"].map(_pollutant_label)
@@ -91,7 +126,19 @@ def build_readable_manifest_table(
 ) -> pd.DataFrame:
     """Return a human-readable manifest table for export."""
     if manifest.empty:
-        return manifest.copy()
+        return pd.DataFrame(
+            columns=[
+                "status",
+                "model",
+                "pollutant_label",
+                "land_cover_label",
+                "distance_label",
+                "nobs",
+                "lasso_selected_count",
+                "map_converged",
+                "error",
+            ]
+        )
     frame = manifest.copy()
     frame["model"] = frame["model_family"].map(settings.model_family_label)
     frame["pollutant_label"] = frame["pollutant"].map(_pollutant_label)

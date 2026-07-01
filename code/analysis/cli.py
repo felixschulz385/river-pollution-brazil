@@ -34,31 +34,66 @@ def _csv_list(value: str | None) -> list[str] | None:
     return values or None
 
 
+def _tuple_list(value: str | None) -> tuple[str, ...] | None:
+    values = _csv_list(value)
+    return tuple(values) if values is not None else None
+
+
 def _build_settings(args: argparse.Namespace) -> SensorAnalysisSettings:
+    sensor_id_column = args.sensor_id_column or DEFAULT_SETTINGS.sensor_id_column
+    climate_data_path = (
+        Path(args.climate_data_path)
+        if args.climate_data_path
+        else DEFAULT_SETTINGS.climate_data_path
+    )
+    default_climate_join_keys = DEFAULT_SETTINGS.climate_join_keys
+    if sensor_id_column != DEFAULT_SETTINGS.sensor_id_column:
+        default_climate_join_keys = (sensor_id_column, DEFAULT_SETTINGS.climate_join_keys[1])
+    climate_join_keys = _tuple_list(args.climate_join_keys) or default_climate_join_keys
+    if len(climate_join_keys) != 2:
+        raise ValueError(
+            "--climate-join-keys must provide exactly two comma-separated columns."
+        )
+    sensor_id_aliases = _tuple_list(args.sensor_id_aliases) or DEFAULT_SETTINGS.sensor_id_aliases
+    distance_buckets = _tuple_list(args.distance_buckets) or DEFAULT_SETTINGS.distance_buckets
+    land_cover_subclasses = (
+        _tuple_list(args.available_land_cover_subclasses)
+        or DEFAULT_SETTINGS.land_cover_subclasses
+    )
+    fixed_effects = tuple(
+        sensor_id_column if effect == DEFAULT_SETTINGS.sensor_id_column else effect
+        for effect in DEFAULT_SETTINGS.fixed_effects
+    )
+    cluster_variable = args.cluster_variable or sensor_id_column
     return SensorAnalysisSettings(
         project_root=DEFAULT_SETTINGS.project_root,
         sensor_data_path=Path(args.sensor_data_path or DEFAULT_SETTINGS.sensor_data_path),
         land_cover_path=Path(args.land_cover_path or DEFAULT_SETTINGS.land_cover_path),
-        climate_data_path=Path(args.climate_data_path or DEFAULT_SETTINGS.climate_data_path),
+        climate_data_path=climate_data_path,
         transformations_path=Path(
             args.transformations_path or DEFAULT_SETTINGS.transformations_path
         ),
         trenches_path=Path(args.trenches_path or DEFAULT_SETTINGS.trenches_path),
         output_dir=Path(args.output_dir or DEFAULT_SETTINGS.output_dir),
-        sensor_id_column=DEFAULT_SETTINGS.sensor_id_column,
-        date_column=DEFAULT_SETTINGS.date_column,
-        climate_join_keys=DEFAULT_SETTINGS.climate_join_keys,
-        distance_buckets=DEFAULT_SETTINGS.distance_buckets,
-        land_cover_subclasses=DEFAULT_SETTINGS.land_cover_subclasses,
-        land_cover_statistic=DEFAULT_SETTINGS.land_cover_statistic,
+        sensor_id_column=sensor_id_column,
+        sensor_id_aliases=sensor_id_aliases,
+        datetime_column=args.datetime_column or DEFAULT_SETTINGS.datetime_column,
+        date_column=args.date_column or DEFAULT_SETTINGS.date_column,
+        climate_join_keys=climate_join_keys,
+        climate_column_prefix=args.climate_column_prefix or DEFAULT_SETTINGS.climate_column_prefix,
+        climate_count_suffix=args.climate_count_suffix or DEFAULT_SETTINGS.climate_count_suffix,
+        climate_interaction_mode=args.climate_interaction_mode or DEFAULT_SETTINGS.climate_interaction_mode,
+        distance_buckets=distance_buckets,
+        land_cover_subclasses=land_cover_subclasses,
+        land_cover_statistic=args.land_cover_statistic or DEFAULT_SETTINGS.land_cover_statistic,
         land_cover_transform=DEFAULT_SETTINGS.land_cover_transform,
-        fixed_effects=DEFAULT_SETTINGS.fixed_effects,
+        fixed_effects=fixed_effects,
         fixed_effect_variables=DEFAULT_SETTINGS.fixed_effect_variables,
-        cluster_variable=DEFAULT_SETTINGS.cluster_variable,
+        cluster_variable=cluster_variable,
         vcov_type=DEFAULT_SETTINGS.vcov_type,
         minimum_observations=args.min_observations,
-        map_tolerance=DEFAULT_SETTINGS.map_tolerance,
-        map_max_iterations=DEFAULT_SETTINGS.map_max_iterations,
+        map_tolerance=args.map_tolerance,
+        map_max_iterations=args.map_max_iterations,
         importance_tiers=DEFAULT_SETTINGS.importance_tiers,
         controls=DEFAULT_SETTINGS.controls,
         climate_variables=DEFAULT_SETTINGS.climate_variables,
@@ -88,6 +123,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override the assembled sensor data parquet path.",
     )
     parser.add_argument(
+        "--sensor-id-column",
+        default=None,
+        help="Panel id column used for sensors/stations. Default: station_code.",
+    )
+    parser.add_argument(
+        "--sensor-id-aliases",
+        default=None,
+        help="Comma-separated fallback id aliases to normalize onto the sensor id column.",
+    )
+    parser.add_argument(
+        "--datetime-column",
+        default=None,
+        help="Datetime source column used when a date column must be materialized.",
+    )
+    parser.add_argument(
+        "--date-column",
+        default=None,
+        help="Date column used for panel joins and FE construction.",
+    )
+    parser.add_argument(
         "--land-cover-path",
         default=None,
         help="Override the assembled land-cover parquet path.",
@@ -96,6 +151,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--climate-data-path",
         default=None,
         help="Override the assembled upstream-climate parquet path.",
+    )
+    parser.add_argument(
+        "--climate-join-keys",
+        default=None,
+        help="Comma-separated join keys for the climate data. Default: station_code,date.",
+    )
+    parser.add_argument(
+        "--climate-column-prefix",
+        default=None,
+        help="Prefix used to auto-discover climate variables, e.g. cl_.",
+    )
+    parser.add_argument(
+        "--climate-count-suffix",
+        default=None,
+        help="Suffix identifying non-regression climate count columns, e.g. _n.",
+    )
+    parser.add_argument(
+        "--climate-interaction-mode",
+        default=DEFAULT_SETTINGS.climate_interaction_mode,
+        choices=["same_bucket", "cumulative", "all"],
+        help="How climate variables can interact with land-cover buckets.",
     )
     parser.add_argument(
         "--transformations-path",
@@ -117,6 +193,38 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_SETTINGS.minimum_observations,
         help="Minimum non-null observations required to include a pollutant.",
+    )
+    parser.add_argument(
+        "--distance-buckets",
+        default=None,
+        help="Comma-separated ordered distance buckets, e.g. 0_10km,10_50km,50_100km.",
+    )
+    parser.add_argument(
+        "--available-land-cover-subclasses",
+        default=None,
+        help="Comma-separated available land-cover subclasses in the input design.",
+    )
+    parser.add_argument(
+        "--land-cover-statistic",
+        default=None,
+        help="Land-cover statistic suffix to use from the input, e.g. cnt or shr.",
+    )
+    parser.add_argument(
+        "--cluster-variable",
+        default=None,
+        help="Override the clustering variable used for inference.",
+    )
+    parser.add_argument(
+        "--map-tolerance",
+        type=float,
+        default=DEFAULT_SETTINGS.map_tolerance,
+        help="Convergence tolerance for MAP demeaning.",
+    )
+    parser.add_argument(
+        "--map-max-iterations",
+        type=int,
+        default=DEFAULT_SETTINGS.map_max_iterations,
+        help="Maximum MAP iterations for fixed-effect absorption.",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)

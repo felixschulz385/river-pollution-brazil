@@ -35,6 +35,13 @@ def validate_required_columns(
 def load_sensor_data(settings: SensorAnalysisSettings) -> pd.DataFrame:
     """Load assembled sensor data and materialize index columns."""
     sensor_data = pd.read_parquet(settings.sensor_data_path).reset_index()
+    if settings.sensor_id_column not in sensor_data.columns:
+        for alias in settings.sensor_id_aliases:
+            if alias in sensor_data.columns:
+                sensor_data = sensor_data.rename(columns={alias: settings.sensor_id_column})
+                break
+    if settings.date_column not in sensor_data.columns and settings.datetime_column in sensor_data.columns:
+        sensor_data[settings.date_column] = sensor_data[settings.datetime_column]
     validate_required_columns(
         sensor_data,
         {settings.sensor_id_column, settings.date_column, "trench_id"},
@@ -46,6 +53,22 @@ def load_sensor_data(settings: SensorAnalysisSettings) -> pd.DataFrame:
 def load_land_cover(settings: SensorAnalysisSettings) -> pd.DataFrame:
     """Load upstream land-cover features."""
     land_cover = pd.read_parquet(settings.land_cover_path)
+    if settings.sensor_id_column not in land_cover.columns:
+        for alias in settings.sensor_id_aliases:
+            if alias in land_cover.columns:
+                land_cover = land_cover.rename(columns={alias: settings.sensor_id_column})
+                break
+    long_required = {
+        settings.sensor_id_column,
+        "year",
+        "bucket",
+        "land_cover_class",
+        "n",
+        "cnt",
+        "share",
+    }
+    if long_required.issubset(land_cover.columns):
+        return _reshape_long_land_cover(land_cover, settings)
     required_columns = {"trench_id", "year"}
     for bucket in settings.distance_buckets:
         for subclass in settings.land_cover_subclasses:
@@ -54,13 +77,114 @@ def load_land_cover(settings: SensorAnalysisSettings) -> pd.DataFrame:
     return land_cover
 
 
+def _bucket_name_from_distance(distance: float, settings: SensorAnalysisSettings) -> str:
+    if distance < 10:
+        return "0_10km"
+    if distance < 50:
+        return "10_50km"
+    if distance < 100:
+        return "50_100km"
+    if distance < 250:
+        return "100_250km"
+    if distance < 500:
+        return "250_500km"
+    return "500km_plus"
+
+
+def _reshape_long_land_cover(
+    land_cover: pd.DataFrame,
+    settings: SensorAnalysisSettings,
+) -> pd.DataFrame:
+    """Convert long station-year-bucket-class land cover into wide analysis columns."""
+    long_frame = land_cover.loc[
+        :,
+        [
+            settings.sensor_id_column,
+            "year",
+            "bucket",
+            "land_cover_class",
+            "n",
+            "cnt",
+            "share",
+        ],
+    ].copy()
+    long_frame[settings.sensor_id_column] = long_frame[settings.sensor_id_column].astype(str)
+    long_frame["distance_bucket_name"] = long_frame["bucket"].astype(float).map(
+        lambda value: _bucket_name_from_distance(value, settings)
+    )
+    long_frame = long_frame.loc[
+        long_frame["land_cover_class"].isin(settings.land_cover_subclasses)
+    ].copy()
+
+    totals = (
+        long_frame.groupby(
+            [settings.sensor_id_column, "year", "distance_bucket_name"],
+            as_index=False,
+        )
+        .agg(
+            lc_tot=("cnt", "sum"),
+            lc_n=("n", "max"),
+        )
+    )
+    totals_wide = (
+        totals.pivot(
+            index=[settings.sensor_id_column, "year"],
+            columns="distance_bucket_name",
+            values=["lc_tot", "lc_n"],
+        )
+        .sort_index(axis=1)
+    )
+    totals_wide.columns = [
+        f"lc_{bucket}_{'tot' if metric == 'lc_tot' else 'n'}"
+        for metric, bucket in totals_wide.columns
+    ]
+
+    values_wide = (
+        long_frame.pivot_table(
+            index=[settings.sensor_id_column, "year"],
+            columns=["distance_bucket_name", "land_cover_class"],
+            values=["cnt", "share"],
+            aggfunc="sum",
+            fill_value=0.0,
+        )
+        .sort_index(axis=1)
+    )
+    values_wide.columns = [
+        f"lc_{bucket}_{subclass}_{'cnt' if metric == 'cnt' else 'shr'}"
+        for metric, bucket, subclass in values_wide.columns
+    ]
+
+    wide = pd.concat([totals_wide, values_wide], axis=1).reset_index()
+    for bucket in settings.distance_buckets:
+        if f"lc_{bucket}_tot" not in wide.columns:
+            wide[f"lc_{bucket}_tot"] = 0.0
+        if f"lc_{bucket}_n" not in wide.columns:
+            wide[f"lc_{bucket}_n"] = 0
+        for subclass in settings.land_cover_subclasses:
+            for suffix, default in (("cnt", 0.0), ("shr", 0.0)):
+                column = f"lc_{bucket}_{subclass}_{suffix}"
+                if column not in wide.columns:
+                    wide[column] = default
+    return wide
+
+
 def load_climate_data(settings: SensorAnalysisSettings) -> pd.DataFrame:
     """Load upstream climate features joined at the sensor-date grain."""
+    if settings.climate_data_path is None or not settings.climate_data_path.exists():
+        return pd.DataFrame()
     climate = pd.read_parquet(settings.climate_data_path).reset_index(drop=True)
+    if settings.sensor_id_column not in climate.columns:
+        for alias in settings.sensor_id_aliases:
+            if alias in climate.columns:
+                climate = climate.rename(columns={alias: settings.sensor_id_column})
+                break
+    if settings.date_column not in climate.columns and settings.datetime_column in climate.columns:
+        climate[settings.date_column] = climate[settings.datetime_column]
     required_columns = set(settings.climate_join_keys)
-    required_columns.update(
-        variable.source_column for variable in settings.climate_variables
-    )
+    if settings.climate_variables:
+        required_columns.update(
+            variable.source_column for variable in settings.climate_variables
+        )
     validate_required_columns(climate, required_columns, "climate_data")
     return climate
 

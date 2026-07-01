@@ -313,6 +313,202 @@ def test_build_analysis_data_rejects_missing_climate_columns(
         build_analysis_data(synthetic_settings)
 
 
+def test_build_analysis_data_discovers_embedded_climate_and_matches_interactions_by_distance(
+    tmp_path: Path,
+) -> None:
+    sensor = pd.DataFrame(
+        {
+            "station_code": ["a", "a", "b", "b"],
+            "datetime": pd.to_datetime(["2020-01-10", "2021-01-10", "2020-01-11", "2021-01-11"]),
+            "date": pd.to_datetime(["2020-01-10", "2021-01-10", "2020-01-11", "2021-01-11"]),
+            "trench_id": [1, 1, 2, 2],
+            "ph": [7.0, 7.2, 7.1, 7.3],
+            "streamflow_discharge_day": [100.0, 110.0, 120.0, 130.0],
+            "streamflow_discharge_mean_7d": [90.0, 95.0, 100.0, 105.0],
+            "cl_0_10km_tp_mean_7d": [1.0, 1.2, 1.4, 1.6],
+            "cl_10_50km_tp_mean_7d": [2.0, 2.2, 2.4, 2.6],
+        }
+    ).set_index(["station_code", "datetime"])
+    sensor_path = tmp_path / "sensor.parquet"
+    sensor.to_parquet(sensor_path)
+
+    land_cover = pd.DataFrame(
+        {
+            "trench_id": [1, 1, 2, 2],
+            "year": [2020, 2021, 2020, 2021],
+            "lc_0_10km_c41_cnt": [0.2, 0.3, 0.4, 0.5],
+            "lc_10_50km_c41_cnt": [0.1, 0.2, 0.3, 0.4],
+        }
+    )
+    for subclass in DEFAULT_SETTINGS.land_cover_subclasses:
+        if subclass == "c41":
+            continue
+        land_cover[f"lc_0_10km_{subclass}_cnt"] = 0.0
+        land_cover[f"lc_10_50km_{subclass}_cnt"] = 0.0
+    land_cover_path = tmp_path / "land_cover.parquet"
+    land_cover.to_parquet(land_cover_path, index=False)
+
+    trenches_path = tmp_path / "trenches.parquet"
+    pd.DataFrame({"trench_id": [1, 2], "system_id": [1, 2]}).to_parquet(trenches_path, index=False)
+
+    transformations_path = tmp_path / "transformations.json"
+    transformations_path.write_text(
+        json.dumps(
+            {
+                "recommendations": {
+                    "ph": {
+                        "column": "ph",
+                        "recommended_transform": "identity",
+                        "expression": "x",
+                        "apply_to": "analysis",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings = SensorAnalysisSettings(
+        project_root=tmp_path,
+        sensor_data_path=sensor_path,
+        land_cover_path=land_cover_path,
+        climate_data_path=None,
+        transformations_path=transformations_path,
+        trenches_path=trenches_path,
+        output_dir=tmp_path / "output",
+        sensor_id_column="station_code",
+        sensor_id_aliases=("station_code",),
+        datetime_column="datetime",
+        date_column="date",
+        climate_join_keys=("station_code", "date"),
+        distance_buckets=("0_10km", "10_50km"),
+        land_cover_subclasses=DEFAULT_SETTINGS.land_cover_subclasses,
+        land_cover_statistic="cnt",
+        fixed_effects=("station_code", "year"),
+        cluster_variable="station_code",
+        controls=(
+            ControlVariable("streamflow_discharge_day", "streamflow_discharge_day_scaled", 100.0),
+            ControlVariable("streamflow_discharge_mean_7d", "streamflow_discharge_mean_7d_scaled", 100.0),
+        ),
+        climate_variables=(),
+        excluded_pollutant_columns=("station_code", "datetime", "date", "trench_id"),
+        minimum_observations=1,
+    )
+
+    prepared = build_analysis_data(settings)
+    assert {
+        "cl_0_10km_tp_mean_7d__scaled",
+        "cl_10_50km_tp_mean_7d__scaled",
+    }.issubset(prepared.data.columns)
+    assert "lc_0_10km_c41_cnt__log_0p01__x__cl_0_10km_tp_mean_7d__scaled" in prepared.data.columns
+    assert "lc_10_50km_c41_cnt__log_0p01__x__cl_10_50km_tp_mean_7d__scaled" in prepared.data.columns
+    assert "lc_0_10km_c41_cnt__log_0p01__x__cl_10_50km_tp_mean_7d__scaled" not in prepared.data.columns
+
+    specs = build_model_specs(
+        settings,
+        pollutant_selection=["ph"],
+        subclass_selection=["c41"],
+        max_distance_step=1,
+        model_families=["post_lasso"],
+        climate_variables=prepared.climate_variables,
+    )
+    assert specs[0].candidate_regressor_columns == (
+        "cl_0_10km_tp_mean_7d__scaled",
+        "lc_0_10km_c41_cnt__log_0p01__x__cl_0_10km_tp_mean_7d__scaled",
+    )
+
+
+def test_build_analysis_data_reshapes_long_sensor_land_cover(
+    tmp_path: Path,
+) -> None:
+    sensor = pd.DataFrame(
+        {
+            "station_code": ["101", "101", "202", "202"],
+            "datetime": pd.to_datetime(["2020-01-10", "2021-01-10", "2020-01-11", "2021-01-11"]),
+            "date": pd.to_datetime(["2020-01-10", "2021-01-10", "2020-01-11", "2021-01-11"]),
+            "trench_id": [1, 1, 2, 2],
+            "ph": [7.0, 7.2, 7.1, 7.3],
+            "streamflow_discharge_day": [100.0, 110.0, 120.0, 130.0],
+            "streamflow_discharge_mean_7d": [90.0, 95.0, 100.0, 105.0],
+            "cl_0_10km_tp_mean_7d": [1.0, 1.2, 1.4, 1.6],
+            "cl_10_50km_tp_mean_7d": [2.0, 2.2, 2.4, 2.6],
+        }
+    ).set_index(["station_code", "datetime"])
+    sensor_path = tmp_path / "sensor.parquet"
+    sensor.to_parquet(sensor_path)
+
+    land_cover = pd.DataFrame(
+        {
+            "station_code": ["101", "101", "101", "101", "202", "202", "202", "202"],
+            "year": [2020, 2020, 2021, 2021, 2020, 2020, 2021, 2021],
+            "bucket": [0, 25, 0, 25, 0, 25, 0, 25],
+            "land_cover_class": ["c41"] * 8,
+            "n": [10, 20, 10, 20, 10, 20, 10, 20],
+            "cnt": [2.0, 1.0, 3.0, 1.5, 4.0, 2.0, 5.0, 2.5],
+            "share": [0.2, 0.05, 0.3, 0.075, 0.4, 0.1, 0.5, 0.125],
+        }
+    )
+    land_cover_path = tmp_path / "land_cover_long.parquet"
+    land_cover.to_parquet(land_cover_path, index=False)
+
+    trenches_path = tmp_path / "trenches.parquet"
+    pd.DataFrame({"trench_id": [1, 2], "system_id": [1, 2]}).to_parquet(trenches_path, index=False)
+
+    transformations_path = tmp_path / "transformations.json"
+    transformations_path.write_text(
+        json.dumps(
+            {
+                "recommendations": {
+                    "ph": {
+                        "column": "ph",
+                        "recommended_transform": "identity",
+                        "expression": "x",
+                        "apply_to": "analysis",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings = SensorAnalysisSettings(
+        project_root=tmp_path,
+        sensor_data_path=sensor_path,
+        land_cover_path=land_cover_path,
+        climate_data_path=None,
+        transformations_path=transformations_path,
+        trenches_path=trenches_path,
+        output_dir=tmp_path / "output",
+        sensor_id_column="station_code",
+        sensor_id_aliases=("station_code",),
+        datetime_column="datetime",
+        date_column="date",
+        climate_join_keys=("station_code", "date"),
+        distance_buckets=("0_10km", "10_50km"),
+        land_cover_subclasses=("c41",),
+        land_cover_statistic="cnt",
+        fixed_effects=("station_code", "year"),
+        cluster_variable="station_code",
+        controls=(
+            ControlVariable("streamflow_discharge_day", "streamflow_discharge_day_scaled", 100.0),
+            ControlVariable("streamflow_discharge_mean_7d", "streamflow_discharge_mean_7d_scaled", 100.0),
+        ),
+        climate_variables=(),
+        excluded_pollutant_columns=("station_code", "datetime", "date", "trench_id"),
+        minimum_observations=1,
+    )
+
+    prepared = build_analysis_data(settings)
+    row = prepared.data.loc[
+        (prepared.data["station_code"] == "101") & (prepared.data["year"] == 2020)
+    ].iloc[0]
+    assert np.isclose(row["lc_0_10km_c41_cnt"], 2.0)
+    assert np.isclose(row["lc_10_50km_c41_cnt"], 1.0)
+    assert np.isclose(row["lc_0_10km_c41_cnt__log_0p01"], np.log(2.01))
+    assert "lc_0_10km_c41_cnt__log_0p01__x__cl_0_10km_tp_mean_7d__scaled" in prepared.data.columns
+    assert "lc_10_50km_c41_cnt__log_0p01__x__cl_10_50km_tp_mean_7d__scaled" in prepared.data.columns
+
+
 def test_map_residualization_removes_group_means() -> None:
     sample = pd.DataFrame(
         {
@@ -550,6 +746,8 @@ def test_cli_run_writes_to_model_subdirectory(
             "run",
             "--pollutants",
             "ph",
+            "--land-cover-subclasses",
+            "c41",
             "--max-distance-step",
             "1",
             "--model-families",
