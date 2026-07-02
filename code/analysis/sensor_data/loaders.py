@@ -96,6 +96,9 @@ def _reshape_long_land_cover(
     settings: SensorAnalysisSettings,
 ) -> pd.DataFrame:
     """Convert long station-year-bucket-class land cover into wide analysis columns."""
+    land_cover = land_cover.copy(deep=False)
+    land_cover.index = pd.RangeIndex(len(land_cover))
+    land_cover = land_cover.rename_axis(index=None)
     long_frame = land_cover.loc[
         :,
         [
@@ -107,7 +110,7 @@ def _reshape_long_land_cover(
             "cnt",
             "share",
         ],
-    ].copy()
+    ].copy().reset_index(drop=True)
     long_frame[settings.sensor_id_column] = long_frame[settings.sensor_id_column].astype(str)
     long_frame["distance_bucket_name"] = long_frame["bucket"].astype(float).map(
         lambda value: _bucket_name_from_distance(value, settings)
@@ -115,15 +118,27 @@ def _reshape_long_land_cover(
     long_frame = long_frame.loc[
         long_frame["land_cover_class"].isin(settings.land_cover_subclasses)
     ].copy()
+    long_frame.index = pd.RangeIndex(len(long_frame))
+    long_frame = long_frame.rename_axis(index=None)
+
+    keyed_frame = long_frame.assign(
+        _sensor_key=long_frame[settings.sensor_id_column].to_numpy(),
+        _year_key=long_frame["year"].to_numpy(),
+        _bucket_key=long_frame["distance_bucket_name"].to_numpy(),
+    )
 
     totals = (
-        long_frame.groupby(
-            [settings.sensor_id_column, "year", "distance_bucket_name"],
-            as_index=False,
-        )
+        keyed_frame.groupby(["_sensor_key", "_year_key", "_bucket_key"], as_index=False)
         .agg(
             lc_tot=("cnt", "sum"),
             lc_n=("n", "max"),
+        )
+        .rename(
+            columns={
+                "_sensor_key": settings.sensor_id_column,
+                "_year_key": "year",
+                "_bucket_key": "distance_bucket_name",
+            }
         )
     )
     totals_wide = (
@@ -140,9 +155,9 @@ def _reshape_long_land_cover(
     ]
 
     values_wide = (
-        long_frame.pivot_table(
-            index=[settings.sensor_id_column, "year"],
-            columns=["distance_bucket_name", "land_cover_class"],
+        keyed_frame.pivot_table(
+            index=["_sensor_key", "_year_key"],
+            columns=["_bucket_key", "land_cover_class"],
             values=["cnt", "share"],
             aggfunc="sum",
             fill_value=0.0,
@@ -154,7 +169,9 @@ def _reshape_long_land_cover(
         for metric, bucket, subclass in values_wide.columns
     ]
 
-    wide = pd.concat([totals_wide, values_wide], axis=1).reset_index()
+    wide = pd.concat([totals_wide, values_wide], axis=1)
+    wide.index = wide.index.set_names([settings.sensor_id_column, "year"])
+    wide = wide.reset_index()
     for bucket in settings.distance_buckets:
         if f"lc_{bucket}_tot" not in wide.columns:
             wide[f"lc_{bucket}_tot"] = 0.0

@@ -12,7 +12,7 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from code.analysis.sensor_data import list_groups, run_suite  # noqa: E402
+from code.analysis.sensor_data import list_groups, run_plotly_app, run_suite  # noqa: E402
 from code.analysis.settings import DEFAULT_SETTINGS, SensorAnalysisSettings  # noqa: E402
 
 
@@ -269,6 +269,48 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the group listing as JSON.",
     )
+    plotly_parser = subparsers.add_parser(
+        "plotly-app",
+        help="Serve an interactive Plotly app for saved regression outputs",
+    )
+    plotly_parser.add_argument(
+        "--results-dir",
+        default=None,
+        help="Base directory containing saved analysis run subdirectories.",
+    )
+    plotly_parser.add_argument(
+        "--run-name",
+        default=None,
+        help="Optional saved run name to select on app startup.",
+    )
+    plotly_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host interface for the Dash server.",
+    )
+    plotly_parser.add_argument(
+        "--port",
+        type=int,
+        default=8050,
+        help="Port for the Dash server.",
+    )
+    plotly_parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable Dash debug mode.",
+    )
+    plotly_parser.add_argument(
+        "--max-facets",
+        type=int,
+        default=12,
+        help="Maximum number of pollutant-subclass facets shown in land-cover panels.",
+    )
+    plotly_parser.add_argument(
+        "--top-terms",
+        type=int,
+        default=20,
+        help="Number of non-land-cover terms to show in ranking and forest plots.",
+    )
     return parser
 
 
@@ -308,6 +350,19 @@ def main(argv: list[str] | None = None) -> int:
             save_outputs=True,
         )
         print(run.output_dir)
+        return 0
+
+    if args.command == "plotly-app":
+        run_plotly_app(
+            results_dir=Path(args.results_dir or settings.output_dir),
+            run_name=args.run_name,
+            host=args.host,
+            port=args.port,
+            debug=args.debug,
+            settings=settings,
+            max_facets=args.max_facets,
+            top_terms=args.top_terms,
+        )
         return 0
 
     parser.error(f"Unknown command: {args.command}")
