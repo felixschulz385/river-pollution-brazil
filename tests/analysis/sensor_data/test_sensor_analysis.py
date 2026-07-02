@@ -302,6 +302,23 @@ def test_build_analysis_data_joins_climate_and_creates_interactions(
     assert prepared.data["upstream_temperature_scaled"].notna().all()
 
 
+def test_build_analysis_data_accepts_climate_with_trench_id_and_duplicate_keys(
+    synthetic_settings: SensorAnalysisSettings,
+) -> None:
+    climate = pd.read_parquet(synthetic_settings.climate_data_path)
+    climate["trench_id"] = [1 if sensor in {"s1", "s2"} else 2 for sensor in climate["sensor_id"]]
+    duplicate_row = climate.iloc[[0]].copy()
+    duplicate_row["date"] = pd.Timestamp(duplicate_row["date"].iloc[0])
+    climate = pd.concat([climate, duplicate_row], ignore_index=True)
+    climate.to_parquet(synthetic_settings.climate_data_path, index=False)
+
+    prepared = build_analysis_data(synthetic_settings)
+
+    assert "trench_id" in prepared.data.columns
+    assert "upstream_temperature_scaled" in prepared.data.columns
+    assert prepared.data["upstream_temperature_scaled"].notna().all()
+
+
 def test_build_analysis_data_rejects_missing_climate_columns(
     synthetic_settings: SensorAnalysisSettings,
 ) -> None:

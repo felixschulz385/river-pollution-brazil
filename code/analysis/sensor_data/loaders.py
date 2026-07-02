@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 
 import pandas as pd
 
 from ..settings import SensorAnalysisSettings
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -203,6 +207,38 @@ def load_climate_data(settings: SensorAnalysisSettings) -> pd.DataFrame:
             variable.source_column for variable in settings.climate_variables
         )
     validate_required_columns(climate, required_columns, "climate_data")
+    duplicate_mask = climate.duplicated(subset=list(settings.climate_join_keys), keep=False)
+    if duplicate_mask.any():
+        duplicate_rows = int(duplicate_mask.sum())
+        duplicate_keys = int(
+            climate.loc[duplicate_mask, list(settings.climate_join_keys)]
+            .drop_duplicates()
+            .shape[0]
+        )
+        logger.warning(
+            "Collapsing %d climate rows across %d duplicate join keys onto %s.",
+            duplicate_rows,
+            duplicate_keys,
+            ",".join(settings.climate_join_keys),
+        )
+        sort_columns = [
+            column
+            for column in (settings.datetime_column, *settings.climate_join_keys)
+            if column in climate.columns
+        ]
+        if sort_columns:
+            climate = climate.sort_values(sort_columns, kind="stable")
+        climate = climate.groupby(list(settings.climate_join_keys), as_index=False, sort=False).first()
+
+    overlapping_metadata = [
+        column
+        for column in ("trench_id", settings.datetime_column)
+        if column in climate.columns
+        and column not in settings.climate_join_keys
+        and column not in required_columns
+    ]
+    if overlapping_metadata:
+        climate = climate.drop(columns=overlapping_metadata)
     return climate
 
 
