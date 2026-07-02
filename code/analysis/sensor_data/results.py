@@ -179,6 +179,10 @@ def tidy_to_records(
     selected_terms: tuple[str, ...] = (),
     lasso_alpha: float | None = None,
     lasso_selected_count: int | None = None,
+    lasso_candidate_count: int | None = None,
+    lasso_valid_candidate_count: int | None = None,
+    lasso_selected_share: float | None = None,
+    lasso_min_cv_mse: float | None = None,
     map_iterations: int | None = None,
     map_converged: bool | None = None,
 ) -> pd.DataFrame:
@@ -205,6 +209,10 @@ def tidy_to_records(
     frame["selected_by_lasso"] = frame["term"].isin(selected_terms)
     frame["lasso_alpha"] = lasso_alpha
     frame["lasso_selected_count"] = lasso_selected_count
+    frame["lasso_candidate_count"] = lasso_candidate_count
+    frame["lasso_valid_candidate_count"] = lasso_valid_candidate_count
+    frame["lasso_selected_share"] = lasso_selected_share
+    frame["lasso_min_cv_mse"] = lasso_min_cv_mse
     frame["map_iterations"] = map_iterations
     frame["map_converged"] = map_converged
     return frame
@@ -221,6 +229,10 @@ def manifest_record(
     selected_terms: tuple[str, ...] = (),
     lasso_alpha: float | None = None,
     lasso_selected_count: int | None = None,
+    lasso_candidate_count: int | None = None,
+    lasso_valid_candidate_count: int | None = None,
+    lasso_selected_share: float | None = None,
+    lasso_min_cv_mse: float | None = None,
     map_iterations: int | None = None,
     map_converged: bool | None = None,
 ) -> dict[str, object]:
@@ -244,6 +256,10 @@ def manifest_record(
         "selected_terms": ",".join(selected_terms),
         "lasso_alpha": lasso_alpha,
         "lasso_selected_count": lasso_selected_count,
+        "lasso_candidate_count": lasso_candidate_count,
+        "lasso_valid_candidate_count": lasso_valid_candidate_count,
+        "lasso_selected_share": lasso_selected_share,
+        "lasso_min_cv_mse": lasso_min_cv_mse,
         "map_iterations": map_iterations,
         "map_converged": map_converged,
         "nobs": nobs,
@@ -262,27 +278,21 @@ def save_run(
     run.output_dir.mkdir(parents=True, exist_ok=True)
     run.results.to_parquet(run.output_dir / "results.parquet", index=False)
     run.manifest.to_parquet(run.output_dir / "manifest.parquet", index=False)
-    readable_results = build_readable_results_table(run.results, settings)
-    readable_manifest = build_readable_manifest_table(run.manifest, settings)
-    readable_results.to_csv(run.output_dir / "results_readable.csv", index=False)
-    readable_manifest.to_csv(run.output_dir / "manifest_readable.csv", index=False)
-    (run.output_dir / "results_readable.md").write_text(
-        readable_results.to_markdown(index=False),
-        encoding="utf-8",
+    summary_frame = pd.DataFrame(
+        {
+            "key": list(run.summary.keys()),
+            "value": [json.dumps(value, default=str) for value in run.summary.values()],
+        }
     )
-    (run.output_dir / "manifest_readable.md").write_text(
-        readable_manifest.to_markdown(index=False),
-        encoding="utf-8",
-    )
-    (run.output_dir / "summary.json").write_text(
-        json.dumps(run.summary, indent=2, default=str),
-        encoding="utf-8",
-    )
+    summary_frame.to_parquet(run.output_dir / "summary.parquet", index=False)
     if settings_payload is not None:
-        (run.output_dir / "settings.json").write_text(
-            json.dumps(settings_payload, indent=2, default=str),
-            encoding="utf-8",
+        settings_frame = pd.DataFrame(
+            {
+                "key": list(settings_payload.keys()),
+                "value": [json.dumps(value, default=str) for value in settings_payload.values()],
+            }
         )
+        settings_frame.to_parquet(run.output_dir / "settings.parquet", index=False)
 
 
 __all__ = [

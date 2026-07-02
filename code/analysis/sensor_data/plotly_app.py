@@ -48,6 +48,30 @@ def _pollutant_label(name: str) -> str:
     return name.replace("_", " ").title()
 
 
+def _term_label(term: str, settings: SensorAnalysisSettings) -> str:
+    if "__x__" in term:
+        left, right = term.split("__x__", 1)
+        return f"{_term_label(left, settings)} x {_term_label(right, settings)}"
+    for subclass, label in settings.subclass_labels.items():
+        for bucket in settings.distance_buckets:
+            if term == settings.land_cover_column(bucket, subclass):
+                return f"{label}, {settings.distance_bucket_label(bucket)}"
+    for variable in settings.controls:
+        if term == variable.scaled_column:
+            return variable.source_column.replace("_", " ").title()
+    for variable in settings.climate_variables:
+        if term == variable.scaled_column:
+            pieces = []
+            if variable.variable_name is not None:
+                pieces.append(variable.variable_name.replace("_", " ").title())
+            if variable.window_name is not None:
+                pieces.append(variable.window_name.replace("_", " "))
+            if variable.distance_bucket is not None:
+                pieces.append(settings.distance_bucket_label(variable.distance_bucket))
+            return ", ".join(pieces) if pieces else variable.source_column.replace("_", " ").title()
+    return term.replace("_", " ").replace("__", " ").title()
+
+
 def _term_group(term: str, settings: SensorAnalysisSettings) -> str:
     if "__x__" in term:
         return "interaction"
@@ -85,6 +109,7 @@ def _enrich_results_for_app(
         frame["pollutant_label"] = pd.Series(dtype="object")
         frame["land_cover_label"] = pd.Series(dtype="object")
         frame["distance_label"] = pd.Series(dtype="object")
+        frame["distance_step_label"] = pd.Series(dtype="object")
         frame["term_label"] = pd.Series(dtype="object")
         frame["model_family_label"] = pd.Series(dtype="object")
         frame["term_group"] = pd.Series(dtype="object")
@@ -92,6 +117,8 @@ def _enrich_results_for_app(
         frame["facet_label"] = pd.Series(dtype="object")
         frame["term_bucket"] = pd.Series(dtype="object")
         frame["term_subclass"] = pd.Series(dtype="object")
+        frame["term_bucket_label"] = pd.Series(dtype="object")
+        frame["profile_facet_label"] = pd.Series(dtype="object")
         return frame
 
     frame = build_readable_results_table(results, settings)
@@ -103,8 +130,9 @@ def _enrich_results_for_app(
         )
     if "distance_label" not in frame.columns:
         frame["distance_label"] = frame["distance_step_name"].map(settings.distance_bucket_label)
+    frame["distance_step_label"] = frame["distance_step_name"].map(settings.distance_bucket_label)
     if "term_label" not in frame.columns:
-        frame["term_label"] = frame["term"]
+        frame["term_label"] = frame["term"].map(lambda value: _term_label(str(value), settings))
     frame["model_family_label"] = frame["model_family"].map(settings.model_family_label)
     frame["term_group"] = frame["term"].map(lambda value: _term_group(str(value), settings))
     p_value_column = "Pr(>|t|)"
@@ -125,6 +153,12 @@ def _enrich_results_for_app(
     mapped = frame["term"].map(lookup)
     frame["term_bucket"] = mapped.map(lambda value: value[0] if isinstance(value, tuple) else None)
     frame["term_subclass"] = mapped.map(lambda value: value[1] if isinstance(value, tuple) else None)
+    frame["term_bucket_label"] = frame["term_bucket"].map(
+        lambda value: settings.distance_bucket_label(str(value)) if pd.notna(value) else None
+    )
+    frame["profile_facet_label"] = (
+        frame["facet_label"].astype(str) + " | through " + frame["distance_step_label"].astype(str)
+    )
     return frame
 
 
@@ -136,11 +170,13 @@ def _enrich_manifest_for_app(
         frame = build_readable_manifest_table(manifest, settings)
         frame["status_ok"] = pd.Series(dtype="bool")
         frame["model_family_label"] = pd.Series(dtype="object")
+        frame["distance_step_label"] = pd.Series(dtype="object")
         return frame
 
     frame = build_readable_manifest_table(manifest, settings)
     frame["model_family_label"] = frame["model_family"].map(settings.model_family_label)
     frame["status_ok"] = frame["status"].eq("ok")
+    frame["distance_step_label"] = frame["distance_step_name"].map(settings.distance_bucket_label)
     return frame
 
 
@@ -297,49 +333,55 @@ def make_status_heatmap(manifest: pd.DataFrame):
 
 
 def make_distance_profile(results: pd.DataFrame, *, max_facets: int = DEFAULT_MAX_FACETS):
-    """Plot cumulative land-cover coefficients by distance bucket."""
+    """Plot land-cover coefficients within cumulative distance-step specifications."""
     px, _ = _import_plotly()
-    subset = results.loc[
-        results["term_group"].eq("land_cover")
-        & results["term_subclass"].eq(results["land_cover_subclass"])
-    ].copy()
+    subset = _land_cover_results(results)
     if subset.empty:
         return _empty_figure("Land-cover coefficient profiles")
 
     subset, hidden_count = _limit_facets(
         subset,
-        facet_column="facet_label",
+        facet_column="profile_facet_label",
         max_facets=max_facets,
     )
-    subset["distance_label"] = pd.Categorical(
-        subset["distance_label"],
-        categories=list(dict.fromkeys(subset["distance_label"])),
+    subset["term_bucket_label"] = pd.Categorical(
+        subset["term_bucket_label"],
+        categories=[
+            settings_label
+            for settings_label in list(dict.fromkeys(subset["term_bucket_label"]))
+            if settings_label is not None
+        ],
         ordered=True,
     )
-    title = "Land-cover coefficient profiles by pollutant and subclass"
+    title = "Land-cover coefficients within cumulative distance-step specifications"
     if hidden_count > 0:
         title = f"{title} (showing top {max_facets} panels)"
     figure = px.line(
-        subset.sort_values(["facet_label", "distance_step_index", "model_family_label"]),
-        x="distance_label",
+        subset.sort_values(
+            ["profile_facet_label", "distance_step_index", "term_bucket", "model_family_label"]
+        ),
+        x="term_bucket_label",
         y="Estimate",
         error_y=subset["97.5%"] - subset["Estimate"] if {"97.5%", "Estimate"}.issubset(subset.columns) else None,
         error_y_minus=subset["Estimate"] - subset["2.5%"] if {"2.5%", "Estimate"}.issubset(subset.columns) else None,
         color="model_family_label",
         markers=True,
-        facet_col="facet_label",
+        facet_col="profile_facet_label",
         facet_col_wrap=3,
         hover_data=[
             "term_label",
+            "distance_step_label",
             "nobs",
+            "lasso_alpha",
             "lasso_selected_count",
+            "lasso_candidate_count",
             "map_converged",
         ],
         labels={
-            "distance_label": "Distance bucket",
+            "term_bucket_label": "Coefficient bucket",
             "Estimate": "Coefficient estimate",
             "model_family_label": "Model family",
-            "facet_label": "Panel",
+            "profile_facet_label": "Panel",
         },
         title=title,
     )
@@ -443,6 +485,380 @@ def make_term_forest(results: pd.DataFrame, *, top_n: int = DEFAULT_TOP_TERMS):
     return figure
 
 
+def make_diagnostics_table(manifest: pd.DataFrame, results: pd.DataFrame) -> pd.DataFrame:
+    """Build compact diagnostics for the active dashboard filters."""
+    total_models = int(manifest.shape[0])
+    ok_models = int(manifest["status_ok"].sum()) if "status_ok" in manifest.columns else 0
+    failed_models = total_models - ok_models
+    nobs = (
+        pd.to_numeric(manifest["nobs"], errors="coerce")
+        if "nobs" in manifest.columns
+        else pd.Series(dtype="float64")
+    )
+    lasso_counts = (
+        pd.to_numeric(manifest["lasso_selected_count"], errors="coerce")
+        if "lasso_selected_count" in manifest.columns
+        else pd.Series(dtype="float64")
+    )
+    lasso_alpha = (
+        pd.to_numeric(manifest["lasso_alpha"], errors="coerce")
+        if "lasso_alpha" in manifest.columns
+        else pd.Series(dtype="float64")
+    )
+    lasso_candidates = (
+        pd.to_numeric(manifest["lasso_candidate_count"], errors="coerce")
+        if "lasso_candidate_count" in manifest.columns
+        else pd.Series(dtype="float64")
+    )
+    lasso_valid = (
+        pd.to_numeric(manifest["lasso_valid_candidate_count"], errors="coerce")
+        if "lasso_valid_candidate_count" in manifest.columns
+        else pd.Series(dtype="float64")
+    )
+    lasso_share = (
+        pd.to_numeric(manifest["lasso_selected_share"], errors="coerce")
+        if "lasso_selected_share" in manifest.columns
+        else pd.Series(dtype="float64")
+    )
+
+    if "map_converged" in manifest.columns and total_models > 0:
+        converged_share = float(manifest["map_converged"].fillna(False).mean())
+    else:
+        converged_share = 0.0
+    selected_rows = (
+        int(results["selected_by_lasso"].fillna(False).sum())
+        if "selected_by_lasso" in results.columns
+        else 0
+    )
+
+    diagnostics = [
+        ("Total models", f"{total_models:,}"),
+        ("Successful models", f"{ok_models:,}"),
+        ("Failed models", f"{failed_models:,}"),
+        ("Success rate", f"{ok_models / total_models:.1%}" if total_models else "0.0%"),
+        ("Converged share", f"{converged_share:.1%}" if total_models else "0.0%"),
+        ("Mean sample size", f"{nobs.mean():,.0f}" if nobs.notna().any() else "0"),
+        ("Median sample size", f"{nobs.median():,.0f}" if nobs.notna().any() else "0"),
+        (
+            "Mean LASSO selected terms",
+            f"{lasso_counts.mean():.1f}" if lasso_counts.notna().any() else "0.0",
+        ),
+        (
+            "Mean LASSO alpha",
+            f"{lasso_alpha.mean():.4f}" if lasso_alpha.notna().any() else "NA",
+        ),
+        (
+            "Mean LASSO candidate terms",
+            f"{lasso_candidates.mean():.1f}" if lasso_candidates.notna().any() else "0.0",
+        ),
+        (
+            "Mean valid LASSO candidates",
+            f"{lasso_valid.mean():.1f}" if lasso_valid.notna().any() else "0.0",
+        ),
+        (
+            "Mean LASSO selection share",
+            f"{lasso_share.mean():.1%}" if lasso_share.notna().any() else "0.0%",
+        ),
+        ("LASSO-selected coefficient rows", f"{selected_rows:,}"),
+    ]
+    return pd.DataFrame(diagnostics, columns=["metric", "value"])
+
+
+def make_lasso_stats_table(manifest: pd.DataFrame) -> pd.DataFrame:
+    """Build a compact per-specification LASSO diagnostics table."""
+    if manifest.empty or "model_family" not in manifest.columns:
+        return pd.DataFrame(
+            columns=[
+                "pollutant_label",
+                "land_cover_label",
+                "distance_step_label",
+                "lasso_alpha",
+                "lasso_candidate_count",
+                "lasso_valid_candidate_count",
+                "lasso_selected_count",
+                "lasso_selected_share",
+                "lasso_min_cv_mse",
+                "status",
+            ]
+        )
+    subset = manifest.loc[manifest["model_family"].eq("post_lasso")].copy()
+    if subset.empty:
+        return pd.DataFrame(
+            columns=[
+                "pollutant_label",
+                "land_cover_label",
+                "distance_step_label",
+                "lasso_alpha",
+                "lasso_candidate_count",
+                "lasso_valid_candidate_count",
+                "lasso_selected_count",
+                "lasso_selected_share",
+                "lasso_min_cv_mse",
+                "status",
+            ]
+        )
+    preferred = [
+        "pollutant_label",
+        "land_cover_label",
+        "distance_step_label",
+        "lasso_alpha",
+        "lasso_candidate_count",
+        "lasso_valid_candidate_count",
+        "lasso_selected_count",
+        "lasso_selected_share",
+        "lasso_min_cv_mse",
+        "status",
+        "selected_terms",
+        "nobs",
+        "map_converged",
+    ]
+    subset = subset.sort_values(
+        ["pollutant_label", "land_cover_label", "distance_step_name"],
+        kind="stable",
+    )
+    available = [column for column in preferred if column in subset.columns]
+    return subset.loc[:, available]
+
+
+def _land_cover_results(results: pd.DataFrame) -> pd.DataFrame:
+    if results.empty or "term_group" not in results.columns:
+        return results.iloc[0:0].copy()
+    return results.loc[
+        results["term_group"].eq("land_cover")
+        & results["term_subclass"].eq(results["land_cover_subclass"])
+    ].copy()
+
+
+def build_model_comparison_table(results: pd.DataFrame) -> pd.DataFrame:
+    """Align land-cover estimates for comparison across model families."""
+    subset = _land_cover_results(results)
+    required = {
+        "pollutant",
+        "pollutant_label",
+        "land_cover_subclass",
+        "land_cover_label",
+        "distance_step_name",
+        "distance_step_index",
+        "distance_label",
+        "term",
+        "model_family",
+        "Estimate",
+    }
+    if subset.empty or not required.issubset(subset.columns):
+        return pd.DataFrame()
+
+    index_columns = [
+        "pollutant",
+        "pollutant_label",
+        "land_cover_subclass",
+        "land_cover_label",
+        "distance_step_name",
+        "distance_step_index",
+        "distance_label",
+        "term",
+    ]
+    grouped = (
+        subset.assign(Estimate=pd.to_numeric(subset["Estimate"], errors="coerce"))
+        .groupby(index_columns + ["model_family"], dropna=False)
+        .agg(
+            Estimate=("Estimate", "mean"),
+            nobs=("nobs", "mean") if "nobs" in subset.columns else ("Estimate", "count"),
+        )
+        .reset_index()
+    )
+    estimates = grouped.pivot_table(
+        index=index_columns,
+        columns="model_family",
+        values="Estimate",
+        aggfunc="mean",
+    ).reset_index()
+    nobs = grouped.groupby(index_columns, dropna=False)["nobs"].mean().reset_index()
+    comparison = estimates.merge(nobs, on=index_columns, how="left")
+    if not {"crude_twfe", "post_lasso"}.issubset(comparison.columns):
+        return pd.DataFrame()
+
+    comparison = comparison.dropna(subset=["crude_twfe", "post_lasso"]).copy()
+    if comparison.empty:
+        return pd.DataFrame()
+
+    comparison["estimate_delta"] = comparison["post_lasso"] - comparison["crude_twfe"]
+    return comparison
+
+
+def make_model_comparison(results: pd.DataFrame):
+    """Compare land-cover estimates for the same specification across model families."""
+    px, go = _import_plotly()
+    comparison = build_model_comparison_table(results)
+    if comparison.empty:
+        return _empty_figure("Crude TWFE vs Post-LASSO land-cover estimates")
+
+    figure = px.scatter(
+        comparison,
+        x="crude_twfe",
+        y="post_lasso",
+        color="land_cover_label",
+        symbol="distance_label",
+        hover_data=[
+            "pollutant_label",
+            "land_cover_label",
+            "distance_label",
+            "nobs",
+            "estimate_delta",
+        ],
+        labels={
+            "crude_twfe": "Crude TWFE estimate",
+            "post_lasso": "Post-LASSO estimate",
+            "land_cover_label": "Land cover",
+            "distance_label": "Distance",
+            "estimate_delta": "Post-LASSO minus Crude TWFE",
+        },
+        title="Crude TWFE vs Post-LASSO land-cover estimates",
+    )
+    axis_values = pd.concat([comparison["crude_twfe"], comparison["post_lasso"]]).dropna()
+    if not axis_values.empty:
+        padding = max((axis_values.max() - axis_values.min()) * 0.05, 0.01)
+        lower = float(axis_values.min() - padding)
+        upper = float(axis_values.max() + padding)
+        figure.add_trace(
+            go.Scatter(
+                x=[lower, upper],
+                y=[lower, upper],
+                mode="lines",
+                name="Equal estimates",
+                line={"color": "black", "dash": "dash"},
+            )
+        )
+        figure.update_xaxes(range=[lower, upper])
+        figure.update_yaxes(range=[lower, upper])
+    figure.update_layout(template="plotly_white", height=620)
+    return figure
+
+
+def build_significance_matrix_table(results: pd.DataFrame) -> pd.DataFrame:
+    """Classify land-cover coefficient significance by pollutant and distance."""
+    subset = _land_cover_results(results)
+    required = {
+        "facet_label",
+        "distance_label",
+        "distance_step_index",
+        "Estimate",
+        "is_significant",
+    }
+    if subset.empty or not required.issubset(subset.columns):
+        return pd.DataFrame()
+
+    subset = subset.assign(
+        Estimate=pd.to_numeric(subset["Estimate"], errors="coerce"),
+        is_significant=subset["is_significant"].fillna(False).astype(bool),
+    )
+    grouped = (
+        subset.groupby(["facet_label", "distance_label", "distance_step_index"], dropna=False)
+        .agg(
+            has_estimate=("Estimate", lambda values: values.notna().any()),
+            significant_positive=(
+                "Estimate",
+                lambda values: bool(
+                    ((values > 0) & subset.loc[values.index, "is_significant"]).any()
+                ),
+            ),
+            significant_negative=(
+                "Estimate",
+                lambda values: bool(
+                    ((values < 0) & subset.loc[values.index, "is_significant"]).any()
+                ),
+            ),
+        )
+        .reset_index()
+    )
+
+    def _status(row: pd.Series) -> str:
+        if not row["has_estimate"]:
+            return "Missing"
+        if row["significant_positive"] and row["significant_negative"]:
+            return "Mixed significant"
+        if row["significant_positive"]:
+            return "Significant positive"
+        if row["significant_negative"]:
+            return "Significant negative"
+        return "Insignificant"
+
+    grouped["status"] = grouped.apply(_status, axis=1)
+    return grouped
+
+
+def make_significance_matrix(results: pd.DataFrame):
+    """Show the sign and significance of land-cover estimates by distance bucket."""
+    _, go = _import_plotly()
+    grouped = build_significance_matrix_table(results)
+    if grouped.empty:
+        return _empty_figure("Land-cover significance by distance")
+
+    status_order = [
+        "Missing",
+        "Insignificant",
+        "Significant negative",
+        "Mixed significant",
+        "Significant positive",
+    ]
+    status_codes = {status: index for index, status in enumerate(status_order)}
+    grouped["status_code"] = grouped["status"].map(status_codes)
+    x_order = (
+        grouped[["distance_label", "distance_step_index"]]
+        .drop_duplicates()
+        .sort_values("distance_step_index")["distance_label"]
+        .tolist()
+    )
+    y_order = sorted(grouped["facet_label"].dropna().unique().tolist())
+    matrix = (
+        grouped.pivot(index="facet_label", columns="distance_label", values="status_code")
+        .reindex(index=y_order, columns=x_order)
+    )
+    hover = (
+        grouped.pivot(index="facet_label", columns="distance_label", values="status")
+        .reindex(index=y_order, columns=x_order)
+    )
+    colorscale = [
+        [0.00, "#d8d8d8"],
+        [0.24, "#d8d8d8"],
+        [0.25, "#f1eadf"],
+        [0.49, "#f1eadf"],
+        [0.50, "#3b7ea1"],
+        [0.74, "#3b7ea1"],
+        [0.75, "#756bb1"],
+        [0.87, "#756bb1"],
+        [0.88, "#b24b45"],
+        [1.00, "#b24b45"],
+    ]
+    figure = go.Figure(
+        data=[
+            go.Heatmap(
+                z=matrix.to_numpy(),
+                x=x_order,
+                y=y_order,
+                text=hover.to_numpy(),
+                hovertemplate="%{y}<br>%{x}<br>%{text}<extra></extra>",
+                zmin=0,
+                zmax=len(status_order) - 1,
+                colorscale=colorscale,
+                colorbar={
+                    "tickmode": "array",
+                    "tickvals": list(status_codes.values()),
+                    "ticktext": status_order,
+                    "title": "Status",
+                },
+            )
+        ]
+    )
+    figure.update_layout(
+        template="plotly_white",
+        title="Land-cover significance by distance",
+        xaxis_title="Distance bucket",
+        yaxis_title="Pollutant | land cover",
+        height=max(520, 28 * len(y_order)),
+    )
+    return figure
+
+
 def _summary_cards(html, manifest: pd.DataFrame, results: pd.DataFrame):
     total_models = int(manifest.shape[0])
     ok_models = int(manifest["status_ok"].sum()) if "status_ok" in manifest.columns else 0
@@ -469,8 +885,17 @@ def _summary_cards(html, manifest: pd.DataFrame, results: pd.DataFrame):
     )
 
 
-def _dropdown_options(values: list[str]) -> list[dict[str, str]]:
-    return [{"label": value, "value": value} for value in values]
+def _dropdown_options(
+    values: list[str],
+    labeler: Any | None = None,
+) -> list[dict[str, str]]:
+    options = []
+    for value in values:
+        label = str(labeler(value)) if labeler is not None else str(value)
+        if label != str(value):
+            label = f"{label} ({value})"
+        options.append({"label": label, "value": value})
+    return options
 
 
 def run_plotly_app(
@@ -562,12 +987,54 @@ def run_plotly_app(
                             dcc.Tabs(
                                 [
                                     dcc.Tab(label="Overview", children=[dcc.Graph(id="status-heatmap")]),
-                                    dcc.Tab(label="Land Cover", children=[dcc.Graph(id="distance-profile")]),
+                                    dcc.Tab(
+                                        label="Land Cover",
+                                        children=[
+                                            html.Div(
+                                                "Each panel corresponds to a cumulative specification that includes buckets through the panel label.",
+                                                style={"color": "#5b5448", "margin": "10px 0 4px 8px"},
+                                            ),
+                                            dcc.Graph(id="distance-profile"),
+                                        ],
+                                    ),
+                                    dcc.Tab(
+                                        label="Comparison",
+                                        children=[
+                                            dcc.Graph(id="model-comparison"),
+                                            dcc.Graph(id="significance-matrix"),
+                                            html.H3("Diagnostics"),
+                                            dash_table.DataTable(
+                                                id="diagnostics-table",
+                                                page_size=20,
+                                                style_table={"maxWidth": "620px"},
+                                                style_cell={
+                                                    "textAlign": "left",
+                                                    "fontFamily": "Avenir Next, Helvetica Neue, sans-serif",
+                                                    "fontSize": "13px",
+                                                    "padding": "8px",
+                                                },
+                                                style_header={"fontWeight": 700},
+                                            ),
+                                        ],
+                                    ),
                                     dcc.Tab(
                                         label="Climate and Lasso",
                                         children=[
                                             dcc.Graph(id="top-terms"),
                                             dcc.Graph(id="term-forest"),
+                                            html.H3("LASSO Stats"),
+                                            dash_table.DataTable(
+                                                id="lasso-stats-table",
+                                                page_size=15,
+                                                sort_action="native",
+                                                filter_action="native",
+                                                style_table={"overflowX": "auto"},
+                                                style_cell={
+                                                    "textAlign": "left",
+                                                    "fontFamily": "Menlo, monospace",
+                                                    "fontSize": "12px",
+                                                },
+                                            ),
                                         ],
                                     ),
                                     dcc.Tab(
@@ -632,13 +1099,16 @@ def run_plotly_app(
         )
         term_groups = sorted(results["term_group"].dropna().unique().tolist())
         return (
-            _dropdown_options(families),
+            _dropdown_options(families, settings.model_family_label),
             families,
-            _dropdown_options(pollutants),
+            _dropdown_options(pollutants, _pollutant_label),
             pollutants[: min(len(pollutants), 6)],
-            _dropdown_options(subclasses),
+            _dropdown_options(
+                subclasses,
+                lambda value: settings.subclass_labels.get(str(value), str(value)),
+            ),
             subclasses[: min(len(subclasses), 4)],
-            _dropdown_options(distance_steps),
+            _dropdown_options(distance_steps, settings.distance_bucket_label),
             distance_steps,
             _dropdown_options(term_groups),
             term_groups,
@@ -648,8 +1118,14 @@ def run_plotly_app(
         Output("summary-cards", "children"),
         Output("status-heatmap", "figure"),
         Output("distance-profile", "figure"),
+        Output("model-comparison", "figure"),
+        Output("significance-matrix", "figure"),
+        Output("diagnostics-table", "data"),
+        Output("diagnostics-table", "columns"),
         Output("top-terms", "figure"),
         Output("term-forest", "figure"),
+        Output("lasso-stats-table", "data"),
+        Output("lasso-stats-table", "columns"),
         Output("manifest-table", "data"),
         Output("manifest-table", "columns"),
         Output("results-table", "data"),
@@ -694,8 +1170,12 @@ def run_plotly_app(
         summary = _summary_cards(html, filtered_manifest, filtered_results)
         status_heatmap = make_status_heatmap(filtered_manifest)
         distance_profile = make_distance_profile(filtered_results, max_facets=max_facets)
+        model_comparison = make_model_comparison(filtered_results)
+        significance_matrix = make_significance_matrix(filtered_results)
+        diagnostics_table = make_diagnostics_table(filtered_manifest, filtered_results)
         top_terms_figure = make_top_terms(filtered_results, top_n=top_terms)
         term_forest = make_term_forest(filtered_results, top_n=top_terms)
+        lasso_stats_table = make_lasso_stats_table(filtered_manifest).head(250)
 
         manifest_table = filtered_manifest.head(250)
         results_table = filtered_results.head(250)
@@ -703,8 +1183,14 @@ def run_plotly_app(
             summary,
             status_heatmap,
             distance_profile,
+            model_comparison,
+            significance_matrix,
+            diagnostics_table.to_dict("records"),
+            [{"name": column, "id": column} for column in diagnostics_table.columns],
             top_terms_figure,
             term_forest,
+            lasso_stats_table.to_dict("records"),
+            [{"name": column, "id": column} for column in lasso_stats_table.columns],
             manifest_table.to_dict("records"),
             [{"name": column, "id": column} for column in manifest_table.columns],
             results_table.to_dict("records"),
@@ -718,8 +1204,14 @@ __all__ = [
     "DEFAULT_MAX_FACETS",
     "DEFAULT_TOP_TERMS",
     "SensorResultRun",
+    "build_model_comparison_table",
+    "build_significance_matrix_table",
     "discover_result_runs",
     "filter_app_frame",
     "load_result_run",
+    "make_diagnostics_table",
+    "make_lasso_stats_table",
+    "make_model_comparison",
+    "make_significance_matrix",
     "run_plotly_app",
 ]

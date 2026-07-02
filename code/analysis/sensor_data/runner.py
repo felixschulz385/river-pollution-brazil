@@ -167,10 +167,16 @@ def _run_model(settings: SensorAnalysisSettings, frame: pd.DataFrame, spec) -> t
     selected_terms: tuple[str, ...] = ()
     lasso_alpha: float | None = None
     lasso_selected_count: int | None = None
+    lasso_candidate_count: int | None = None
+    lasso_valid_candidate_count: int | None = None
+    lasso_selected_share: float | None = None
+    lasso_min_cv_mse: float | None = None
 
     if spec.model_family == "post_lasso" and spec.candidate_regressor_columns:
+        lasso_candidate_count = int(len(spec.candidate_regressor_columns))
         candidate_frame = demeaned.loc[:, list(spec.candidate_regressor_columns)]
         candidate_matrix, valid_columns = _standardize_candidates(candidate_frame)
+        lasso_valid_candidate_count = int(len(valid_columns))
         if valid_columns:
             lasso = LassoCV(
                 cv=settings.lasso_settings.cv,
@@ -188,9 +194,13 @@ def _run_model(settings: SensorAnalysisSettings, frame: pd.DataFrame, spec) -> t
             )
             lasso_alpha = float(lasso.alpha_)
             lasso_selected_count = int(len(selected_terms))
+            lasso_selected_share = float(lasso_selected_count / len(valid_columns))
+            mean_mse_by_alpha = np.asarray(lasso.mse_path_, dtype=float).mean(axis=1)
+            lasso_min_cv_mse = float(np.min(mean_mse_by_alpha))
             regressors = tuple([*spec.forced_regressor_columns, *selected_terms])
         else:
             lasso_selected_count = 0
+            lasso_selected_share = 0.0
 
     tidy, formula = _run_ols(settings, demeaned, spec, regressors)
     metadata = {
@@ -198,6 +208,10 @@ def _run_model(settings: SensorAnalysisSettings, frame: pd.DataFrame, spec) -> t
         "selected_terms": selected_terms,
         "lasso_alpha": lasso_alpha,
         "lasso_selected_count": lasso_selected_count,
+        "lasso_candidate_count": lasso_candidate_count,
+        "lasso_valid_candidate_count": lasso_valid_candidate_count,
+        "lasso_selected_share": lasso_selected_share,
+        "lasso_min_cv_mse": lasso_min_cv_mse,
         "map_iterations": residualized.iterations,
         "map_converged": residualized.converged,
         "map_max_change": residualized.max_change,
@@ -276,6 +290,10 @@ def run_suite(
                     selected_terms=model_meta["selected_terms"],
                     lasso_alpha=model_meta["lasso_alpha"],
                     lasso_selected_count=model_meta["lasso_selected_count"],
+                    lasso_candidate_count=model_meta["lasso_candidate_count"],
+                    lasso_valid_candidate_count=model_meta["lasso_valid_candidate_count"],
+                    lasso_selected_share=model_meta["lasso_selected_share"],
+                    lasso_min_cv_mse=model_meta["lasso_min_cv_mse"],
                     map_iterations=model_meta["map_iterations"],
                     map_converged=model_meta["map_converged"],
                 )
@@ -290,6 +308,10 @@ def run_suite(
                     selected_terms=model_meta["selected_terms"],
                     lasso_alpha=model_meta["lasso_alpha"],
                     lasso_selected_count=model_meta["lasso_selected_count"],
+                    lasso_candidate_count=model_meta["lasso_candidate_count"],
+                    lasso_valid_candidate_count=model_meta["lasso_valid_candidate_count"],
+                    lasso_selected_share=model_meta["lasso_selected_share"],
+                    lasso_min_cv_mse=model_meta["lasso_min_cv_mse"],
                     map_iterations=model_meta["map_iterations"],
                     map_converged=model_meta["map_converged"],
                 )

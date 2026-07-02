@@ -757,8 +757,11 @@ def test_cli_run_writes_to_model_subdirectory(
 
     assert exit_code == 0
     assert (synthetic_settings.output_dir / "pollutant_ph" / "manifest.parquet").exists()
-    assert (synthetic_settings.output_dir / "pollutant_ph" / "results_readable.csv").exists()
-    assert (synthetic_settings.output_dir / "pollutant_ph" / "manifest_readable.csv").exists()
-    assert (synthetic_settings.output_dir / "pollutant_ph" / "results_readable.md").exists()
-    readable = pd.read_csv(synthetic_settings.output_dir / "pollutant_ph" / "results_readable.csv")
-    assert {"model", "pollutant_label", "land_cover_label", "distance_label", "term_label"}.issubset(readable.columns)
+    assert (synthetic_settings.output_dir / "pollutant_ph" / "results.parquet").exists()
+    assert (synthetic_settings.output_dir / "pollutant_ph" / "summary.parquet").exists()
+    assert (synthetic_settings.output_dir / "pollutant_ph" / "settings.parquet").exists()
+    assert not (synthetic_settings.output_dir / "pollutant_ph" / "results_readable.csv").exists()
+    assert not (synthetic_settings.output_dir / "pollutant_ph" / "manifest_readable.csv").exists()
+    assert not (synthetic_settings.output_dir / "pollutant_ph" / "results_readable.md").exists()
+    manifest = pd.read_parquet(synthetic_settings.output_dir / "pollutant_ph" / "manifest.parquet")
+    assert {"lasso_alpha", "lasso_candidate_count", "lasso_valid_candidate_count", "lasso_selected_share"}.issubset(manifest.columns)
