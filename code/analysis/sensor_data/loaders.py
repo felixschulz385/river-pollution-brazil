@@ -52,7 +52,7 @@ def load_sensor_data(settings: SensorAnalysisSettings) -> pd.DataFrame:
 
 def load_land_cover(settings: SensorAnalysisSettings) -> pd.DataFrame:
     """Load upstream land-cover features."""
-    land_cover = pd.read_parquet(settings.land_cover_path)
+    land_cover = pd.read_parquet(settings.land_cover_path).reset_index(drop=True)
     if settings.sensor_id_column not in land_cover.columns:
         for alias in settings.sensor_id_aliases:
             if alias in land_cover.columns:
@@ -191,7 +191,7 @@ def load_climate_data(settings: SensorAnalysisSettings) -> pd.DataFrame:
 
 def load_trenches(settings: SensorAnalysisSettings) -> pd.DataFrame:
     """Load trench to river-system mappings."""
-    trenches = pd.read_parquet(settings.trenches_path)
+    trenches = pd.read_parquet(settings.trenches_path).reset_index(drop=True)
     validate_required_columns(trenches, {"trench_id", "system_id"}, "trenches")
     return trenches.loc[:, ["trench_id", "system_id"]].drop_duplicates()
 
