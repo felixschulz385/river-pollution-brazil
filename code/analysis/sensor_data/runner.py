@@ -98,7 +98,7 @@ def _ols_formula(outcome_column: str, regressors: tuple[str, ...]) -> str:
 
 
 def _prepare_sample(settings: SensorAnalysisSettings, frame: pd.DataFrame, spec) -> pd.DataFrame:
-    sample = frame.loc[:, _analysis_columns(settings, spec)].dropna().copy()
+    sample = frame.loc[:, _analysis_columns(settings, spec)].dropna().reset_index(drop=True).copy()
     if sample.empty:
         raise ValueError("No complete observations remain after dropping missing values.")
     if sample[spec.outcome_column].nunique(dropna=True) < 2:

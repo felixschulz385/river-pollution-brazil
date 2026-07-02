@@ -225,10 +225,18 @@ def build_analysis_data(
     sensor_data["quarter"] = sensor_data[settings.date_column].dt.quarter.astype(int)
 
     climate = inputs.climate.copy()
+    land_cover = inputs.land_cover.copy()
+    index_names = [
+        name
+        for name in land_cover.index.names
+        if name is not None and name not in land_cover.columns
+    ]
+    if index_names:
+        land_cover = land_cover.reset_index()
 
-    if settings.sensor_id_column in inputs.land_cover.columns:
+    if settings.sensor_id_column in land_cover.columns:
         land_cover_merge_keys = [settings.sensor_id_column, "year"]
-    elif "trench_id" in inputs.land_cover.columns:
+    elif "trench_id" in land_cover.columns:
         land_cover_merge_keys = ["trench_id", "year"]
     else:
         raise ValueError(
@@ -237,7 +245,7 @@ def build_analysis_data(
         )
 
     merged = sensor_data.merge(
-        inputs.land_cover,
+        land_cover,
         on=land_cover_merge_keys,
         how="left",
         validate="many_to_one",

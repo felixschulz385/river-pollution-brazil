@@ -10,6 +10,7 @@ __all__ = [
     "build_model_specs",
     "faceted_distance_coefplot",
     "list_groups",
+    "run_plotly_app",
     "run_suite",
 ]
 
@@ -19,3 +20,10 @@ def faceted_distance_coefplot(*args, **kwargs):
     from .plots import faceted_distance_coefplot as _faceted_distance_coefplot
 
     return _faceted_distance_coefplot(*args, **kwargs)
+
+
+def run_plotly_app(*args, **kwargs):
+    """Import the Plotly app lazily so CLI usage stays optional."""
+    from .plotly_app import run_plotly_app as _run_plotly_app
+
+    return _run_plotly_app(*args, **kwargs)
