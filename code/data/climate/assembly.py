@@ -127,6 +127,42 @@ def _prepare_station_trenches(stations_rivers_df):
     )
 
 
+def _collapse_same_day_targets(targets):
+    if targets.empty:
+        return targets
+
+    collapsed = targets.sort_values(
+        [STATION_CODE_COLUMN, DATE_COLUMN, DATETIME_COLUMN],
+        kind="mergesort",
+    )
+    group_columns = [STATION_CODE_COLUMN, DATE_COLUMN]
+    duplicate_mask = collapsed.duplicated(subset=group_columns, keep=False)
+    if not duplicate_mask.any():
+        return collapsed.reset_index(drop=True)
+
+    duplicate_rows = collapsed.loc[duplicate_mask].copy()
+    fill_columns = [
+        column for column in duplicate_rows.columns if column not in group_columns
+    ]
+    duplicate_rows.loc[:, fill_columns] = (
+        duplicate_rows.groupby(group_columns, sort=False, observed=True)[fill_columns]
+        .bfill()
+    )
+    duplicate_rows = duplicate_rows.drop_duplicates(
+        subset=group_columns,
+        keep="first",
+    )
+
+    collapsed = pd.concat(
+        [collapsed.loc[~duplicate_mask], duplicate_rows],
+        ignore_index=True,
+    ).sort_values(
+        [STATION_CODE_COLUMN, DATE_COLUMN, DATETIME_COLUMN],
+        kind="mergesort",
+    )
+    return collapsed.loc[:, targets.columns].reset_index(drop=True)
+
+
 def _prepare_sensor_targets(water_quality_df, station_trenches_df):
     if STATION_CODE_COLUMN not in water_quality_df.columns:
         raise ValueError("Water-quality data must include `station_code` for climate assembly.")
@@ -143,16 +179,21 @@ def _prepare_sensor_targets(water_quality_df, station_trenches_df):
     targets[DATETIME_COLUMN] = pd.to_datetime(targets[DATETIME_COLUMN], errors="coerce")
     targets[DATE_COLUMN] = targets[DATETIME_COLUMN].dt.normalize()
     targets = targets.dropna(subset=[STATION_CODE_COLUMN, DATETIME_COLUMN, DATE_COLUMN])
+    targets = _collapse_same_day_targets(targets)
 
+    station_trench_lookup = station_trenches_df.drop_duplicates(
+        subset=[STATION_CODE_COLUMN],
+        keep="first",
+    )
     targets = targets.merge(
-        station_trenches_df,
+        station_trench_lookup,
         on=STATION_CODE_COLUMN,
         how="inner",
-        validate="many_to_many",
+        validate="many_to_one",
     )
     targets[TRENCH_ID_COLUMN] = targets[TRENCH_ID_COLUMN].astype(np.int64)
     return targets.drop_duplicates(
-        subset=[STATION_CODE_COLUMN, DATETIME_COLUMN, TRENCH_ID_COLUMN],
+        subset=[STATION_CODE_COLUMN, DATE_COLUMN],
         keep="first",
     ).reset_index(drop=True)
 

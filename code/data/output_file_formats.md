@@ -128,11 +128,13 @@ Semantics:
 
 ### `data/climate/processed/era5_land/climate_sensor_upstream.parquet`
 
-One row per sensor observation, indexed by (`station_code`, `datetime`).
+One row per station-day sensor observation, indexed by (`station_code`, `datetime`).
 
 Semantics:
 
-- Includes the matched `trench_id` plus upstream distance-bucket climate features.
+- Same-day duplicate water-quality rows are collapsed before assembly.
+- Includes a single matched `trench_id` per station plus upstream distance-bucket
+  climate features.
 - Daily and trailing 7/30/90/180/365 day means are computed from the trench/day
   climate table.
 
