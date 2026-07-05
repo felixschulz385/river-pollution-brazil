@@ -37,10 +37,18 @@ from .constants import (
     UPSTREAM_DISTANCE_COLUMN,
     YEAR_COLUMN,
 )
-from land_cover.aggregation import AVAILABLE_KERNELS, _explode_trench_adm2_matches, distance_weights
+from land_cover.aggregation import AVAILABLE_KERNELS, distance_weights
 from land_cover.preprocess import deduplicate_drainage_polygons
 from river_network import RiverNetwork
 import river_network as rn_module
+from shared.sensor_upstream import (
+    build_target_reachability_lookup,
+    label_values_by_intervals,
+    prepare_entity_links,
+    prepare_observation_targets,
+    prepare_trench_adm2_matches,
+    resolve_multi_seed_reachable_distances,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -109,107 +117,8 @@ def _annual_aggregate_sql(climate_columns, *, source_alias):
     return ",\n                ".join(expressions)
 
 
-def _prepare_station_trenches(stations_rivers_df):
-    required_columns = {STATION_CODE_COLUMN, TRENCH_ID_COLUMN}
-    missing_columns = required_columns.difference(stations_rivers_df.columns)
-    if missing_columns:
-        raise ValueError(
-            "Stations-rivers data is missing required columns: "
-            f"{sorted(missing_columns)}."
-        )
-
-    station_trenches = stations_rivers_df[[STATION_CODE_COLUMN, TRENCH_ID_COLUMN]].dropna().copy()
-    station_trenches[STATION_CODE_COLUMN] = station_trenches[STATION_CODE_COLUMN].astype(str)
-    station_trenches[TRENCH_ID_COLUMN] = station_trenches[TRENCH_ID_COLUMN].astype(np.int64)
-    return station_trenches.drop_duplicates(
-        subset=[STATION_CODE_COLUMN, TRENCH_ID_COLUMN],
-        keep="first",
-    )
-
-
-def _collapse_same_day_targets(targets):
-    if targets.empty:
-        return targets
-
-    collapsed = targets.sort_values(
-        [STATION_CODE_COLUMN, DATE_COLUMN, DATETIME_COLUMN],
-        kind="mergesort",
-    )
-    group_columns = [STATION_CODE_COLUMN, DATE_COLUMN]
-    duplicate_mask = collapsed.duplicated(subset=group_columns, keep=False)
-    if not duplicate_mask.any():
-        return collapsed.reset_index(drop=True)
-
-    duplicate_rows = collapsed.loc[duplicate_mask].copy()
-    fill_columns = [
-        column for column in duplicate_rows.columns if column not in group_columns
-    ]
-    duplicate_rows.loc[:, fill_columns] = (
-        duplicate_rows.groupby(group_columns, sort=False, observed=True)[fill_columns]
-        .bfill()
-    )
-    duplicate_rows = duplicate_rows.drop_duplicates(
-        subset=group_columns,
-        keep="first",
-    )
-
-    collapsed = pd.concat(
-        [collapsed.loc[~duplicate_mask], duplicate_rows],
-        ignore_index=True,
-    ).sort_values(
-        [STATION_CODE_COLUMN, DATE_COLUMN, DATETIME_COLUMN],
-        kind="mergesort",
-    )
-    return collapsed.loc[:, targets.columns].reset_index(drop=True)
-
-
-def _prepare_sensor_targets(water_quality_df, station_trenches_df):
-    if STATION_CODE_COLUMN not in water_quality_df.columns:
-        raise ValueError("Water-quality data must include `station_code` for climate assembly.")
-    if DATETIME_COLUMN in water_quality_df.columns:
-        datetime_column = DATETIME_COLUMN
-    elif DATE_COLUMN in water_quality_df.columns:
-        datetime_column = DATE_COLUMN
-    else:
-        raise ValueError("Water-quality data must include either `datetime` or `date`.")
-
-    targets = water_quality_df[[STATION_CODE_COLUMN, datetime_column]].copy()
-    targets = targets.rename(columns={datetime_column: DATETIME_COLUMN})
-    targets[STATION_CODE_COLUMN] = targets[STATION_CODE_COLUMN].astype(str)
-    targets[DATETIME_COLUMN] = pd.to_datetime(targets[DATETIME_COLUMN], errors="coerce")
-    targets[DATE_COLUMN] = targets[DATETIME_COLUMN].dt.normalize()
-    targets = targets.dropna(subset=[STATION_CODE_COLUMN, DATETIME_COLUMN, DATE_COLUMN])
-    targets = _collapse_same_day_targets(targets)
-
-    station_trench_lookup = station_trenches_df.drop_duplicates(
-        subset=[STATION_CODE_COLUMN],
-        keep="first",
-    )
-    targets = targets.merge(
-        station_trench_lookup,
-        on=STATION_CODE_COLUMN,
-        how="inner",
-        validate="many_to_one",
-    )
-    targets[TRENCH_ID_COLUMN] = targets[TRENCH_ID_COLUMN].astype(np.int64)
-    return targets.drop_duplicates(
-        subset=[STATION_CODE_COLUMN, DATE_COLUMN],
-        keep="first",
-    ).reset_index(drop=True)
-
-
 def _assign_distance_buckets(distances):
-    distances = pd.Series(distances, copy=False)
-    bucket_values = pd.Series(pd.NA, index=distances.index, dtype="object")
-    for bucket_name, lower_bound, upper_bound in SENSOR_DISTANCE_BUCKETS:
-        if lower_bound == 0:
-            mask = distances.ge(lower_bound) & distances.le(upper_bound)
-        elif np.isinf(upper_bound):
-            mask = distances.gt(lower_bound)
-        else:
-            mask = distances.gt(lower_bound) & distances.le(upper_bound)
-        bucket_values.loc[mask] = bucket_name
-    return bucket_values
+    return label_values_by_intervals(distances, SENSOR_DISTANCE_BUCKETS)
 
 
 def _sensor_bucket_count_column(bucket_name):
@@ -231,29 +140,6 @@ def _empty_sensor_feature_row(climate_columns):
     return result
 
 
-def _build_sensor_upstream_lookup(network, target_trench_ids):
-    upstream_frames = []
-    for trench_id in target_trench_ids:
-        upstream = network.get_upstream_trenches(int(trench_id))[
-            [TRENCH_ID_COLUMN, UPSTREAM_DISTANCE_COLUMN]
-        ].copy()
-        upstream[DISTANCE_BUCKET_COLUMN] = _assign_distance_buckets(upstream[UPSTREAM_DISTANCE_COLUMN])
-        upstream = upstream.dropna(subset=[DISTANCE_BUCKET_COLUMN])
-        if upstream.empty:
-            continue
-        upstream["target_trench_id"] = int(trench_id)
-        upstream = upstream.rename(columns={TRENCH_ID_COLUMN: "source_trench_id"})
-        upstream_frames.append(
-            upstream[["target_trench_id", "source_trench_id", DISTANCE_BUCKET_COLUMN]]
-            .drop_duplicates()
-            .reset_index(drop=True)
-        )
-
-    if not upstream_frames:
-        return pd.DataFrame(columns=["target_trench_id", "source_trench_id", DISTANCE_BUCKET_COLUMN])
-    return pd.concat(upstream_frames, ignore_index=True)
-
-
 def _assemble_sensor_upstream_duckdb(
     *,
     climate_path,
@@ -268,8 +154,19 @@ def _assemble_sensor_upstream_duckdb(
     water_quality_df = pd.read_parquet(water_quality_path)
     logger.info("Loading station-river matches from %s", stations_rivers_path)
     stations_rivers_df = pd.read_parquet(stations_rivers_path)
-    station_trenches = _prepare_station_trenches(stations_rivers_df)
-    targets = _prepare_sensor_targets(water_quality_df, station_trenches)
+    station_trenches = prepare_entity_links(
+        stations_rivers_df,
+        entity_column=STATION_CODE_COLUMN,
+        location_column=TRENCH_ID_COLUMN,
+    )
+    targets = prepare_observation_targets(
+        water_quality_df,
+        station_trenches,
+        entity_column=STATION_CODE_COLUMN,
+        date_column=DATE_COLUMN,
+        timestamp_column=DATETIME_COLUMN,
+        location_column=TRENCH_ID_COLUMN,
+    )
     logger.info("Found %d climate sensor target row(s).", len(targets))
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -277,12 +174,11 @@ def _assemble_sensor_upstream_duckdb(
         empty_df = pd.DataFrame(
             columns=[
                 STATION_CODE_COLUMN,
-                DATETIME_COLUMN,
                 DATE_COLUMN,
                 TRENCH_ID_COLUMN,
                 *_empty_sensor_feature_row(climate_columns).keys(),
             ]
-        ).set_index([STATION_CODE_COLUMN, DATETIME_COLUMN])
+        ).set_index([STATION_CODE_COLUMN, DATE_COLUMN])
         empty_df.to_parquet(output_path, index=True)
         return empty_df
 
@@ -293,7 +189,16 @@ def _assemble_sensor_upstream_duckdb(
     target_trench_ids = (
         targets[TRENCH_ID_COLUMN].drop_duplicates().astype(np.int64).sort_values().tolist()
     )
-    upstream_lookup = _build_sensor_upstream_lookup(network, target_trench_ids)
+    upstream_lookup = build_target_reachability_lookup(
+        network,
+        target_trench_ids,
+        location_column=TRENCH_ID_COLUMN,
+        distance_column=UPSTREAM_DISTANCE_COLUMN,
+        category_column=DISTANCE_BUCKET_COLUMN,
+        system_column=rn_module.SYSTEM_ID_KEY,
+        position_column=rn_module.TRENCH_INDEX_COLUMN,
+        categorize_distances=_assign_distance_buckets,
+    )
     logger.info(
         "Prepared %d upstream trench mapping row(s) for %d target trench(es).",
         len(upstream_lookup),
@@ -333,7 +238,7 @@ def _assemble_sensor_upstream_duckdb(
             CREATE TEMP TABLE climate_bucket_daily AS
             SELECT
                 u.target_trench_id,
-                c.{DATE_COLUMN} AS {DATE_COLUMN},
+                CAST(c.{DATE_COLUMN} AS DATE) AS {DATE_COLUMN},
                 u.{DISTANCE_BUCKET_COLUMN},
                 COUNT(DISTINCT c.{TRENCH_ID_COLUMN}) AS {REACHABLE_TRENCH_COUNT_COLUMN},
                 {aggregate_columns_sql}
@@ -379,16 +284,15 @@ def _assemble_sensor_upstream_duckdb(
             COPY (
                 SELECT
                     t.{STATION_CODE_COLUMN},
-                    t.{DATETIME_COLUMN},
-                    t.{DATE_COLUMN},
+                    CAST(t.{DATE_COLUMN} AS DATE) AS {DATE_COLUMN},
                     t.{TRENCH_ID_COLUMN},
                     {feature_selects_sql}
                 FROM sensor_targets_df AS t
                 LEFT JOIN climate_bucket_windowed AS w
                     ON t.{TRENCH_ID_COLUMN} = w.target_trench_id
-                   AND t.{DATE_COLUMN} = w.{DATE_COLUMN}
-                GROUP BY 1, 2, 3, 4
-                ORDER BY 1, 2, 4
+                   AND CAST(t.{DATE_COLUMN} AS DATE) = w.{DATE_COLUMN}
+                GROUP BY 1, 2, 3
+                ORDER BY 1, 2, 3
             ) TO {output_sql_path} (FORMAT PARQUET)
             """
         )
@@ -416,8 +320,14 @@ def _build_adm2_upstream_weights(
     if network.drainage_areas is None:
         raise ValueError("River network must include drainage polygon data.")
 
-    trench_adm2_matches = _explode_trench_adm2_matches(network.trenches)
-    drainage_polygons = deduplicate_drainage_polygons(network.drainage_areas.copy())
+    trench_adm2_matches = prepare_trench_adm2_matches(
+        network,
+        rn_module=rn_module,
+        trench_id_column=TRENCH_ID_COLUMN,
+    )
+    drainage_polygons = deduplicate_drainage_polygons(
+        network.drainage_areas.reset_index(drop=True).copy()
+    ).reset_index(drop=True)
     trench_lookup = drainage_polygons[[TRENCH_ID_COLUMN]].merge(
         trench_adm2_matches[[TRENCH_ID_COLUMN, "adm2", rn_module.SYSTEM_ID_KEY]].drop_duplicates(),
         on=TRENCH_ID_COLUMN,
@@ -426,27 +336,6 @@ def _build_adm2_upstream_weights(
     ).dropna(subset=[rn_module.SYSTEM_ID_KEY])
 
     adm2_units = trench_lookup["adm2"].dropna().unique()
-    rivers = network.trenches
-    system_trench_tables = {
-        int(system_id): system_trenches[[TRENCH_ID_COLUMN, rn_module.TRENCH_INDEX_COLUMN]]
-        .sort_values(rn_module.TRENCH_INDEX_COLUMN)
-        .reset_index(drop=True)
-        for system_id, system_trenches in rivers.groupby(rn_module.SYSTEM_ID_KEY)
-    }
-    system_trench_id_arrays = {
-        system_id: system_trenches[TRENCH_ID_COLUMN].to_numpy(dtype=np.int64)
-        for system_id, system_trenches in system_trench_tables.items()
-    }
-    system_trench_positions = {
-        system_id: dict(
-            zip(
-                system_trenches[TRENCH_ID_COLUMN].to_numpy(dtype=np.int64),
-                system_trenches[rn_module.TRENCH_INDEX_COLUMN].to_numpy(dtype=np.int64),
-            )
-        )
-        for system_id, system_trenches in system_trench_tables.items()
-    }
-
     def process_adm2(adm2_id):
         adm2_trenches = trench_lookup.loc[
             trench_lookup["adm2"] == adm2_id,
@@ -455,71 +344,16 @@ def _build_adm2_upstream_weights(
         if adm2_trenches.empty:
             return None
 
-        trench_distance_frames = []
-        for system_id, system_adm2_trenches in adm2_trenches.groupby(rn_module.SYSTEM_ID_KEY):
-            system_id = int(system_id)
-            system_trench_ids = system_trench_id_arrays.get(system_id, np.asarray([], dtype=np.int64))
-            if len(system_trench_ids) == 0:
-                continue
-
-            trench_position_lookup = system_trench_positions[system_id]
-            seed_positions = np.asarray(
-                [
-                    trench_position_lookup[trench_id]
-                    for trench_id in system_adm2_trenches[TRENCH_ID_COLUMN]
-                    if trench_id in trench_position_lookup
-                ],
-                dtype=np.int64,
-            )
-            if len(seed_positions) == 0:
-                continue
-
-            system_reachability = network.trench_reachability_matrices[system_id][seed_positions, :].tocsr()
-            system_distance = network.trench_distance_matrices[system_id][seed_positions, :].tocsr()
-
-            min_distances = np.full(len(system_trench_ids), np.inf)
-            for row_idx in range(system_reachability.shape[0]):
-                reach_start = system_reachability.indptr[row_idx]
-                reach_end = system_reachability.indptr[row_idx + 1]
-                reachable_cols = system_reachability.indices[reach_start:reach_end]
-                if len(reachable_cols) == 0:
-                    continue
-
-                dist_start = system_distance.indptr[row_idx]
-                dist_end = system_distance.indptr[row_idx + 1]
-                distance_lookup = dict(
-                    zip(
-                        system_distance.indices[dist_start:dist_end],
-                        system_distance.data[dist_start:dist_end],
-                    )
-                )
-                reachable_distances = np.asarray(
-                    [distance_lookup.get(col, 0.0) for col in reachable_cols],
-                    dtype=float,
-                )
-                np.minimum.at(min_distances, reachable_cols, reachable_distances)
-
-            reachable_mask = np.isfinite(min_distances)
-            if not np.any(reachable_mask):
-                continue
-
-            trench_distance_frames.append(
-                pd.DataFrame(
-                    {
-                        TRENCH_ID_COLUMN: system_trench_ids[reachable_mask],
-                        UPSTREAM_DISTANCE_COLUMN: min_distances[reachable_mask],
-                    }
-                )
-            )
-
-        if not trench_distance_frames:
-            return None
-
-        trench_distance_lookup = (
-            pd.concat(trench_distance_frames, ignore_index=True)
-            .groupby(TRENCH_ID_COLUMN, as_index=False)[UPSTREAM_DISTANCE_COLUMN]
-            .min()
+        trench_distance_lookup = resolve_multi_seed_reachable_distances(
+            network,
+            adm2_trenches,
+            location_column=TRENCH_ID_COLUMN,
+            distance_column=UPSTREAM_DISTANCE_COLUMN,
+            system_column=rn_module.SYSTEM_ID_KEY,
+            position_column=rn_module.TRENCH_INDEX_COLUMN,
         )
+        if trench_distance_lookup.empty:
+            return None
         trench_distance_lookup["weight"] = distance_weights(
             trench_distance_lookup[UPSTREAM_DISTANCE_COLUMN].to_numpy(),
             kernel=kernel,

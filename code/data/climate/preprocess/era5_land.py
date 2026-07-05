@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import json
 import logging
@@ -17,8 +18,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import rioxarray  # noqa: F401
 import xarray as xr
-from odc.geo.geom import Geometry
-from odc.geo.xr import rasterize, xr_zeros
+from odc.geo.geobox import GeoBox
 
 from ..constants import (
     DATE_COLUMN,
@@ -41,6 +41,7 @@ from ..fetch.common import (
 )
 from land_cover.preprocess import deduplicate_drainage_polygons
 from river_network import RiverNetwork
+from shared.spatial_tabular import build_feature_label_grid
 
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,10 @@ ERA5_FILENAME_PATTERN = re.compile(r"era5_land_(hourly|daily)_(?P<year>\d{4})_(?
 EARTHKIT_TEMP_DIR_PREFIX = "tmp"
 EARTHKIT_TEMP_RETENTION_SECONDS = 6 * 3600
 ERA5_TABULAR_TIME_CHUNK_DAYS = 7
+ERA5_REPROJECT_TIME_SLICE_SIZE = 5
+TRENCH_MASK_CACHE_VERSION = "v2"
+CLIMATE_TABULARIZATION_RESOLUTION_DEGREES = 0.005
+TRENCH_MASK_AREA_CRS = "EPSG:5880"
 ERA5_DAILY_VARIABLE_NAME_MAP = {
     "2m_dewpoint_temperature": "2d",
     "2m_temperature": "2t",
@@ -177,6 +182,14 @@ ERA5L_VAR_CONFIG = {
 }
 
 
+@dataclass(frozen=True)
+class _TrenchGridIndex:
+    trench_grid: xr.DataArray
+    active_trench_ids: np.ndarray
+    inverse: np.ndarray
+    valid_pixels: np.ndarray
+
+
 def _root(root_dir=".") -> Path:
     return Path(root_dir)
 
@@ -270,19 +283,22 @@ def _load_drainage_polygons(root_dir="."):
         )
 
     drainage_polygons = drainage_polygons[drainage_polygons["within_brazil"]]
-    drainage_polygons = deduplicate_drainage_polygons(drainage_polygons)
-    return drainage_polygons[[TRENCH_ID_COLUMN, "geometry"]].copy()
+    drainage_polygons = deduplicate_drainage_polygons(drainage_polygons).reset_index(drop=True)
+    return drainage_polygons[[TRENCH_ID_COLUMN, "geometry"]].copy().reset_index(drop=True)
 
 
 def _trench_mask_cache_path(root_dir, drainage_polygons, geobox) -> Path:
     signature = hashlib.sha256(
         "|".join(
             [
+                TRENCH_MASK_CACHE_VERSION,
                 TRENCH_ID_COLUMN,
                 str(tuple(drainage_polygons[TRENCH_ID_COLUMN].tolist())),
                 str(getattr(geobox, "shape", "")),
                 str(getattr(geobox, "transform", "")),
                 str(getattr(geobox, "crs", "")),
+                str(CLIMATE_TABULARIZATION_RESOLUTION_DEGREES),
+                str(TRENCH_MASK_AREA_CRS),
             ]
         ).encode("utf-8")
     ).hexdigest()[:16]
@@ -314,17 +330,13 @@ def _load_or_build_trench_mask(root_dir, drainage_polygons, geobox):
                 close()
 
     logger.info("Building trench raster mask for %d drainage polygon(s)", len(drainage_polygons))
-    mask = xr_zeros(geobox, dtype="int64", name=TRENCH_ID_COLUMN)
-    for row in drainage_polygons.itertuples(index=False):
-        geometry = getattr(row, "geometry", None)
-        if geometry is None or geometry.is_empty:
-            continue
-        trench_id = int(getattr(row, TRENCH_ID_COLUMN))
-        mask = mask + rasterize(
-            Geometry(geometry, crs="EPSG:4326"),
-            geobox,
-            all_touched=True,
-        ).astype("int64") * trench_id
+    mask = build_feature_label_grid(
+        drainage_polygons,
+        geobox,
+        label_column=TRENCH_ID_COLUMN,
+        area_crs=TRENCH_MASK_AREA_CRS,
+        fill_value=0,
+    )
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     logger.info("Caching trench raster mask at %s", cache_path)
@@ -334,6 +346,34 @@ def _load_or_build_trench_mask(root_dir, drainage_polygons, geobox):
         consolidated=False,
     )
     return mask
+
+
+def _tabularization_geobox(geobox):
+    if not getattr(geobox.crs, "geographic", False):
+        raise ValueError(
+            "Climate trench/day tabularization expects a geographic geobox to hardcode "
+            f"{CLIMATE_TABULARIZATION_RESOLUTION_DEGREES} degree resolution."
+        )
+
+    resolution = geobox.resolution
+    native_resolution = max(abs(resolution.x), abs(resolution.y))
+    scale_factor = CLIMATE_TABULARIZATION_RESOLUTION_DEGREES / native_resolution
+    target = geobox.zoom_out(scale_factor)
+    if tuple(target.shape) == tuple(geobox.shape):
+        target = GeoBox.from_bbox(
+            tuple(geobox.extent.boundingbox),
+            crs=geobox.crs,
+            resolution=CLIMATE_TABULARIZATION_RESOLUTION_DEGREES,
+        )
+    logger.info(
+        "Using fixed climate tabularization geobox at %s degree resolution: shape=%s resolution=%s -> shape=%s resolution=%s",
+        CLIMATE_TABULARIZATION_RESOLUTION_DEGREES,
+        tuple(geobox.shape),
+        geobox.resolution,
+        tuple(target.shape),
+        target.resolution,
+    )
+    return target
 
 
 def _spatial_dataset_for_tabularization(dataset: xr.Dataset) -> xr.Dataset:
@@ -348,6 +388,25 @@ def _flatten_trench_grid(trench_grid: xr.DataArray) -> tuple[np.ndarray, np.ndar
     valid_pixels = flat > 0
     active_trench_ids, inverse = np.unique(flat[valid_pixels].astype(np.int64), return_inverse=True)
     return active_trench_ids, inverse.astype(np.int32, copy=False), valid_pixels
+
+
+def _build_trench_grid_index(trench_grid: xr.DataArray) -> _TrenchGridIndex:
+    active_trench_ids, inverse, valid_pixels = _flatten_trench_grid(trench_grid)
+    return _TrenchGridIndex(
+        trench_grid=trench_grid,
+        active_trench_ids=active_trench_ids,
+        inverse=inverse,
+        valid_pixels=valid_pixels,
+    )
+
+
+def _empty_trench_day_frame(climate_columns: list[str]) -> pd.DataFrame:
+    return pd.DataFrame(columns=[TRENCH_ID_COLUMN, DATE_COLUMN, *climate_columns])
+
+
+def _time_windows(total_size: int, window_size: int):
+    for start in range(0, total_size, window_size):
+        yield start, min(start + window_size, total_size)
 
 
 def _nanmean_by_group(
@@ -376,24 +435,22 @@ def _aggregate_time_chunk(
     chunk: xr.Dataset,
     *,
     climate_columns: list[str],
-    active_trench_ids: np.ndarray,
-    inverse: np.ndarray,
-    valid_pixels: np.ndarray,
+    trench_grid_index: _TrenchGridIndex,
 ) -> pd.DataFrame:
     loaded = chunk.transpose("time", "latitude", "longitude").load()
     n_times = loaded.sizes["time"]
-    n_groups = len(active_trench_ids)
+    n_groups = len(trench_grid_index.active_trench_ids)
     dates = pd.to_datetime(loaded["time"].values, errors="coerce").normalize()
 
     payload: dict[str, np.ndarray] = {
-        TRENCH_ID_COLUMN: np.tile(active_trench_ids, n_times),
+        TRENCH_ID_COLUMN: np.tile(trench_grid_index.active_trench_ids, n_times),
         DATE_COLUMN: np.repeat(dates, n_groups),
     }
     for variable in climate_columns:
-        values = loaded[variable].to_numpy().reshape(n_times, -1)[:, valid_pixels]
+        values = loaded[variable].to_numpy().reshape(n_times, -1)[:, trench_grid_index.valid_pixels]
         payload[variable] = _nanmean_by_group(
             values,
-            inverse=inverse,
+            inverse=trench_grid_index.inverse,
             n_groups=n_groups,
         ).reshape(-1)
 
@@ -402,13 +459,88 @@ def _aggregate_time_chunk(
     return frame
 
 
+def _chunk_layout(dataset: xr.Dataset) -> dict[str, tuple[int, ...]]:
+    chunk_map = getattr(dataset, "chunks", None) or getattr(dataset, "chunksizes", None)
+    if chunk_map is None:
+        raise ValueError("ERA5-Land tabularization requires chunked xarray data.")
+    return {name: tuple(int(size) for size in sizes) for name, sizes in chunk_map.items()}
+
+
+def _require_single_spatial_chunk(chunk_layout: dict[str, tuple[int, ...]]) -> None:
+    for dim_name in ("latitude", "longitude"):
+        dim_chunks = chunk_layout.get(dim_name)
+        if not dim_chunks:
+            raise ValueError(f"Expected chunk layout for spatial dimension `{dim_name}`.")
+        if len(dim_chunks) != 1:
+            raise ValueError(
+                "ERA5-Land tabularization currently expects a single source chunk for "
+                f"`{dim_name}`, found {dim_chunks}."
+            )
+
+
+def _load_native_climate_chunk(
+    dataset: xr.Dataset,
+    *,
+    time_start: int,
+    time_stop: int,
+    chunk_layout: dict[str, tuple[int, ...]],
+) -> xr.Dataset:
+    return (
+        dataset.isel(
+            time=slice(time_start, time_stop),
+            latitude=slice(0, chunk_layout["latitude"][0]),
+            longitude=slice(0, chunk_layout["longitude"][0]),
+        )
+        .compute()
+    )
+
+
+def _aggregate_reprojected_climate_slice(
+    climate_slice: xr.Dataset,
+    *,
+    target_geobox,
+    climate_columns: list[str],
+    trench_grid_index: _TrenchGridIndex,
+) -> pd.DataFrame:
+    reprojected_slice = climate_slice.odc.reproject(target_geobox)
+    return _aggregate_time_chunk(
+        reprojected_slice,
+        climate_columns=climate_columns,
+        trench_grid_index=trench_grid_index,
+    )
+
+
+def _aggregate_reprojected_climate_chunk(
+    climate_chunk: xr.Dataset,
+    *,
+    target_geobox,
+    climate_columns: list[str],
+    trench_grid_index: _TrenchGridIndex,
+) -> pd.DataFrame:
+    slice_frames = []
+    chunk_time = climate_chunk.sizes["time"]
+    for slice_start, slice_stop in _time_windows(chunk_time, ERA5_REPROJECT_TIME_SLICE_SIZE):
+        logger.info("Reprojecting ERA5-Land chunk-local days %s:%s", slice_start, slice_stop)
+        climate_slice = climate_chunk.isel(time=slice(slice_start, slice_stop))
+        slice_frames.append(
+            _aggregate_reprojected_climate_slice(
+                climate_slice,
+                target_geobox=target_geobox,
+                climate_columns=climate_columns,
+                trench_grid_index=trench_grid_index,
+            )
+        )
+
+    if not slice_frames:
+        return _empty_trench_day_frame(climate_columns)
+    return pd.concat(slice_frames, ignore_index=True)
+
+
 def _write_chunked_trench_day_table(
     dataset: xr.Dataset,
     *,
     climate_columns: list[str],
-    active_trench_ids: np.ndarray,
-    inverse: np.ndarray,
-    valid_pixels: np.ndarray,
+    trench_grid_index: _TrenchGridIndex,
     output_path: Path,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -418,26 +550,44 @@ def _write_chunked_trench_day_table(
 
     writer = None
     try:
+        chunk_layout = _chunk_layout(dataset)
+        _require_single_spatial_chunk(chunk_layout)
         total_time = dataset.sizes["time"]
-        for start in range(0, total_time, ERA5_TABULAR_TIME_CHUNK_DAYS):
-            stop = min(start + ERA5_TABULAR_TIME_CHUNK_DAYS, total_time)
-            logger.info("Tabularizing ERA5-Land days %s:%s of %s", start, stop, total_time)
-            frame = _aggregate_time_chunk(
-                dataset.isel(time=slice(start, stop)),
-                climate_columns=climate_columns,
-                active_trench_ids=active_trench_ids,
-                inverse=inverse,
-                valid_pixels=valid_pixels,
+        source_time_chunk_size = chunk_layout["time"][0]
+
+        for chunk_start, chunk_stop in _time_windows(total_time, source_time_chunk_size):
+            logger.info(
+                "Loading native ERA5-Land chunk %s:%s of %s before reprojection",
+                chunk_start,
+                chunk_stop,
+                total_time,
             )
-            table = pa.Table.from_pandas(frame, preserve_index=False)
-            if writer is None:
-                writer = pq.ParquetWriter(temp_path, table.schema)
-            writer.write_table(table)
-            del frame, table
+            climate_chunk = _load_native_climate_chunk(
+                dataset,
+                time_start=chunk_start,
+                time_stop=chunk_stop,
+                chunk_layout=chunk_layout,
+            )
+            try:
+                frame = _aggregate_reprojected_climate_chunk(
+                    climate_chunk,
+                    target_geobox=trench_grid_index.trench_grid.odc.geobox,
+                    climate_columns=climate_columns,
+                    trench_grid_index=trench_grid_index,
+                )
+                table = pa.Table.from_pandas(frame, preserve_index=False)
+                if writer is None:
+                    writer = pq.ParquetWriter(temp_path, table.schema)
+                writer.write_table(table)
+                del frame, table
+            finally:
+                close = getattr(climate_chunk, "close", None)
+                if callable(close):
+                    close()
             gc.collect()
 
         if writer is None:
-            empty = pd.DataFrame(columns=[TRENCH_ID_COLUMN, DATE_COLUMN, *climate_columns])
+            empty = _empty_trench_day_frame(climate_columns)
             writer = pq.ParquetWriter(
                 temp_path,
                 pa.Table.from_pandas(empty, preserve_index=False).schema,
@@ -459,7 +609,6 @@ def tabularize_era5_land_by_trench(root_dir=".") -> Path:
     dataset = xr.open_zarr(
         store_path,
         consolidated=False,
-        chunks={"time": ERA5_TABULAR_TIME_CHUNK_DAYS},
     )
     try:
         climate_columns = _available_era5_output_variables(dataset)
@@ -467,17 +616,18 @@ def tabularize_era5_land_by_trench(root_dir=".") -> Path:
             raise ValueError("Processed ERA5-Land store does not contain any supported variables.")
 
         spatial_dataset = _spatial_dataset_for_tabularization(dataset[climate_columns])
-        geobox = spatial_dataset[climate_columns[0]].isel(time=0, drop=True).odc.geobox
+        native_geobox = spatial_dataset[climate_columns[0]].isel(time=0, drop=True).odc.geobox
+        geobox = _tabularization_geobox(native_geobox)
         trench_grid = _load_or_build_trench_mask(
             root_dir,
             drainage_polygons[[TRENCH_ID_COLUMN, "geometry"]],
             geobox,
         )
-        active_trench_ids, inverse, valid_pixels = _flatten_trench_grid(trench_grid)
-        missing_overlap = len(drainage_polygons) - len(active_trench_ids)
+        trench_grid_index = _build_trench_grid_index(trench_grid)
+        missing_overlap = len(drainage_polygons) - len(trench_grid_index.active_trench_ids)
         logger.info(
             "Trench raster covers %s/%s drainage polygons; omitting %s no-overlap trench(es) from trench/day output",
-            len(active_trench_ids),
+            len(trench_grid_index.active_trench_ids),
             len(drainage_polygons),
             missing_overlap,
         )
@@ -485,9 +635,7 @@ def tabularize_era5_land_by_trench(root_dir=".") -> Path:
         _write_chunked_trench_day_table(
             spatial_dataset,
             climate_columns=climate_columns,
-            active_trench_ids=active_trench_ids,
-            inverse=inverse,
-            valid_pixels=valid_pixels,
+            trench_grid_index=trench_grid_index,
             output_path=output_path,
         )
     finally:

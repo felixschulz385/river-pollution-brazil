@@ -17,7 +17,7 @@ from .constants import (
 )
 from .river_network_import import rn_module
 from .schema import subclass_summary_id
-from shared.spatial_tabular import is_no_overlap_error, masked_unique_counts
+from shared.spatial_tabular import crop_unique_counts, is_extent_mismatch_error
 
 
 logger = logging.getLogger(__name__)
@@ -147,10 +147,10 @@ def process_year(year, file, datadir, drainage_polygons, legend_path, output_col
                 continue
 
             try:
-                values, counts = masked_unique_counts(lc, geometry)
+                values, counts = crop_unique_counts(lc, geometry)
                 n_success += 1
             except (ValueError, RuntimeError, Exception) as e:
-                if is_no_overlap_error(e):
+                if is_extent_mismatch_error(e):
                     n_no_overlap += 1
                     if n_no_overlap <= 10:
                         logger.debug("Polygon %s does not overlap raster extent", j)

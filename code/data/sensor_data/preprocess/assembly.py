@@ -145,16 +145,15 @@ def _collapse_same_day_observations(water_quality):
         return collapsed.reset_index(drop=True)
 
     duplicate_rows = collapsed.loc[duplicate_mask].copy()
-    fill_columns = [
-        column for column in duplicate_rows.columns if column not in group_columns
-    ]
-    duplicate_rows.loc[:, fill_columns] = (
-        duplicate_rows.groupby(group_columns, sort=False, observed=True)[fill_columns]
-        .bfill()
-    )
-    duplicate_rows = duplicate_rows.drop_duplicates(
-        subset=group_columns,
-        keep="first",
+    duplicate_rows = (
+        duplicate_rows.groupby(
+            group_columns,
+            sort=False,
+            observed=True,
+            as_index=False,
+            dropna=False,
+        )
+        .first()
     )
 
     collapsed = pd.concat(
@@ -576,9 +575,9 @@ def assemble_sensor_data(
     assembled["streamflow_total_weight"] = assembled["streamflow_total_weight"].fillna(0.0)
 
     assembled = assembled.sort_values(
-        [STATION_CODE_COLUMN, DATETIME_COLUMN],
+        [STATION_CODE_COLUMN, DATE_COLUMN, DATETIME_COLUMN],
         kind="mergesort",
-    ).set_index([STATION_CODE_COLUMN, DATETIME_COLUMN])
+    ).set_index([STATION_CODE_COLUMN, DATE_COLUMN])
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     assembled.to_parquet(output_path, index=True)

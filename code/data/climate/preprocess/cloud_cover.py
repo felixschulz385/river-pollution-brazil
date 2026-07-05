@@ -11,7 +11,7 @@ from tqdm import tqdm
 import xarray as xr
 from odc.geo.geobox import GeoBox
 
-from shared.spatial_tabular import mapping_to_long_frame, rasterize_value_grid
+from shared.spatial_tabular import mapping_to_long_frame, rasterize_feature_values
 
 
 MONTH_DICT = {
@@ -216,14 +216,14 @@ def _build_deter_cloud_cover(root_dir="."):
             crs="EPSG:4326",
             resolution=0.01,
         )
-        cloud_cover_grid = rasterize_value_grid(
+        cloud_cover_grid = rasterize_feature_values(
             cloud_cover,
             geobox,
             value_column="cloud_cover",
             dtype=np.uint8,
             fill_value=0,
         ).to_dataset(name="cloud_cover")
-        boundaries_grid = rasterize_value_grid(
+        boundaries_grid = rasterize_feature_values(
             boundaries[["CC_2r", "geometry"]],
             geobox,
             value_column="CC_2r",
@@ -274,7 +274,7 @@ def preprocess_cloud_cover(root_dir="."):
     weather_data = weather_data.resample(time="1Y").mean().load()
 
     geobox = weather_data[list(weather_data.data_vars)[0]].odc.geobox
-    boundaries_grid = rasterize_value_grid(
+    boundaries_grid = rasterize_feature_values(
         boundaries[["CC_2r", "geometry"]],
         geobox,
         value_column="CC_2r",
