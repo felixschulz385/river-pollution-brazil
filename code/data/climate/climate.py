@@ -20,7 +20,7 @@ class climate:
             return fetch_era5_land_daily(root_dir=self.root_dir)
         raise ValueError(f"Unsupported climate fetch subtype: {subtype}")
 
-    def preprocess(self, subtype="cloud_cover", stage="all"):
+    def preprocess(self, subtype="cloud_cover", stage="all", n_jobs=None):
         """Preprocess the requested climate subtype."""
         if subtype == "cloud_cover":
             from .preprocess.cloud_cover import preprocess_cloud_cover
@@ -33,6 +33,7 @@ class climate:
                 root_dir=self.root_dir,
                 subtype=subtype,
                 stage=stage,
+                n_jobs=n_jobs,
             )
         raise ValueError(f"Unsupported climate preprocess subtype: {subtype}")
 

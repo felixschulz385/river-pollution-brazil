@@ -27,6 +27,7 @@ from .constants import (
     DEFAULT_STATIONS_RIVERS_PATH,
     DEFAULT_WATER_QUALITY_PATH,
     DISTANCE_BUCKET_COLUMN,
+    MONTH_COLUMN,
     REACHABLE_TRENCH_COUNT_COLUMN,
     SENSOR_DISTANCE_BUCKETS,
     SENSOR_UPSTREAM_DISTANCE_BUCKETS_VARIANT,
@@ -53,6 +54,9 @@ from shared.sensor_upstream import (
 
 logger = logging.getLogger(__name__)
 
+SENSOR_ASSEMBLY_MAX_MONTHS_PER_BATCH = 12
+SENSOR_ASSEMBLY_MIN_TARGETS_PER_BATCH = 2000
+
 
 def _sql_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
@@ -60,6 +64,10 @@ def _sql_literal(value: str) -> str:
 
 def _sql_ident(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
+
+
+def _sql_string_list(values: list[str]) -> str:
+    return "[" + ", ".join(_sql_literal(value) for value in values) + "]"
 
 
 def _resolve_path(root_dir, path, default_path):
@@ -93,11 +101,35 @@ def _load_trench_day_climate_columns(path, connection):
         )
 
     climate_columns = [
-        column for column in columns if column not in {TRENCH_ID_COLUMN, DATE_COLUMN, YEAR_COLUMN}
+        column
+        for column in columns
+        if column not in {TRENCH_ID_COLUMN, DATE_COLUMN, YEAR_COLUMN, MONTH_COLUMN}
     ]
     if not climate_columns:
         raise ValueError("Climate trench/day data does not include any climate variables.")
     return climate_columns
+
+
+def _partitioned_trench_day_paths(
+    climate_path: Path,
+    *,
+    start_date: pd.Timestamp,
+    end_date: pd.Timestamp,
+) -> list[Path]:
+    if not climate_path.is_dir():
+        return [climate_path]
+
+    partition_paths = []
+    for period in pd.period_range(start=start_date, end=end_date, freq="M"):
+        partition_dir = (
+            climate_path
+            / f"{YEAR_COLUMN}={period.year:04d}"
+            / f"{MONTH_COLUMN}={period.month:02d}"
+        )
+        if partition_dir.exists():
+            partition_paths.append(partition_dir)
+
+    return partition_paths or [climate_path]
 
 
 def _annual_aggregate_sql(climate_columns, *, source_alias):
@@ -138,6 +170,63 @@ def _empty_sensor_feature_row(climate_columns):
             for window_label in SENSOR_WINDOW_LABELS:
                 result[_sensor_bucket_mean_column(bucket_name, variable_name, window_label)] = np.nan
     return result
+
+
+def _iter_sensor_target_batches(targets):
+    batch_dates = pd.to_datetime(targets[DATE_COLUMN]).dt.normalize()
+    batch_periods = batch_dates.dt.to_period("M")
+    period_counts = (
+        pd.Series(1, index=batch_periods)
+        .groupby(level=0)
+        .sum()
+        .sort_index()
+    )
+    unique_periods = period_counts.index.tolist()
+    contiguous_runs = []
+    run_start = 0
+    for index in range(1, len(unique_periods) + 1):
+        is_break = index == len(unique_periods) or (
+            unique_periods[index].ordinal - unique_periods[index - 1].ordinal > 1
+        )
+        if is_break:
+            contiguous_runs.append(unique_periods[run_start:index])
+            run_start = index
+
+    for run_periods in contiguous_runs:
+        batch_start_index = 0
+        while batch_start_index < len(run_periods):
+            batch_end_index = batch_start_index
+            batch_target_count = 0
+            while batch_end_index < len(run_periods):
+                next_period = run_periods[batch_end_index]
+                batch_target_count += int(period_counts.loc[next_period])
+                batch_month_count = batch_end_index - batch_start_index + 1
+                batch_end_index += 1
+                if (
+                    batch_target_count >= SENSOR_ASSEMBLY_MIN_TARGETS_PER_BATCH
+                    or batch_month_count >= SENSOR_ASSEMBLY_MAX_MONTHS_PER_BATCH
+                ):
+                    break
+
+            batch_period_slice = run_periods[batch_start_index:batch_end_index]
+            batch_mask = batch_periods.isin(batch_period_slice)
+            batch_targets = targets.loc[batch_mask].copy()
+            batch_targets[DATE_COLUMN] = pd.to_datetime(batch_targets[DATE_COLUMN]).dt.normalize()
+
+            batch_start_period = batch_period_slice[0]
+            batch_end_period = batch_period_slice[-1]
+            batch_start = batch_start_period.to_timestamp(how="start")
+            batch_end = batch_end_period.to_timestamp(how="end").normalize()
+            if batch_start_period == batch_end_period:
+                batch_label = batch_start_period.strftime("%Y-%m")
+            else:
+                batch_label = (
+                    f"{batch_start_period.strftime('%Y-%m')}"
+                    f"_to_{batch_end_period.strftime('%Y-%m')}"
+                )
+
+            yield batch_label, batch_targets, batch_start, batch_end
+            batch_start_index = batch_end_index
 
 
 def _assemble_sensor_upstream_duckdb(
@@ -199,6 +288,12 @@ def _assemble_sensor_upstream_duckdb(
         position_column=rn_module.TRENCH_INDEX_COLUMN,
         categorize_distances=_assign_distance_buckets,
     )
+    upstream_lookup = upstream_lookup.rename(
+        columns={
+            "target_location_id": "target_trench_id",
+            "source_location_id": "source_trench_id",
+        }
+    )
     logger.info(
         "Prepared %d upstream trench mapping row(s) for %d target trench(es).",
         len(upstream_lookup),
@@ -206,14 +301,23 @@ def _assemble_sensor_upstream_duckdb(
     )
 
     temp_dir = Path(tempfile.mkdtemp(prefix="climate_sensor_duckdb_"))
+    parts_dir = temp_dir / "parts"
+    parts_dir.mkdir(parents=True, exist_ok=True)
+    max_window_size = max(SENSOR_WINDOW_LABELS.values())
+    lookback_days = max_window_size - 1
+    batch_specs = list(_iter_sensor_target_batches(targets))
+    logger.info(
+        "Processing %d sensor target batch(es) with %d-day lookback windows.",
+        len(batch_specs),
+        lookback_days,
+    )
+
     connection = duckdb.connect(database=":memory:")
     try:
         connection.execute(f"PRAGMA threads={int(max(1, n_jobs))}")
         connection.execute(f"PRAGMA temp_directory={_sql_literal(str(temp_dir))}")
-        connection.register("sensor_targets_df", targets)
-        connection.register("upstream_lookup_df", upstream_lookup)
+        connection.execute("PRAGMA preserve_insertion_order=false")
 
-        climate_sql_path = _sql_literal(str(climate_path))
         aggregate_columns_sql = ",\n            ".join(
             [
                 f"AVG(c.{_sql_ident(column)}) AS {_sql_ident(f'{column}_mean_day')}"
@@ -232,66 +336,146 @@ def _assemble_sensor_upstream_duckdb(
                     f") AS {_sql_ident(f'{column}_mean_{window_label}')}"
                 )
         window_columns_sql = ",\n            ".join(window_columns)
+        part_paths = []
 
-        connection.execute(
-            f"""
-            CREATE TEMP TABLE climate_bucket_daily AS
-            SELECT
-                u.target_trench_id,
-                CAST(c.{DATE_COLUMN} AS DATE) AS {DATE_COLUMN},
-                u.{DISTANCE_BUCKET_COLUMN},
-                COUNT(DISTINCT c.{TRENCH_ID_COLUMN}) AS {REACHABLE_TRENCH_COUNT_COLUMN},
-                {aggregate_columns_sql}
-            FROM read_parquet({climate_sql_path}) AS c
-            INNER JOIN upstream_lookup_df AS u
-                ON c.{TRENCH_ID_COLUMN} = u.source_trench_id
-            GROUP BY 1, 2, 3
-            """
-        )
-
-        connection.execute(
-            f"""
-            CREATE TEMP TABLE climate_bucket_windowed AS
-            SELECT
-                target_trench_id,
-                {DATE_COLUMN},
-                {DISTANCE_BUCKET_COLUMN},
-                {REACHABLE_TRENCH_COUNT_COLUMN},
-                {window_columns_sql}
-            FROM climate_bucket_daily
-            """
-        )
-
-        feature_selects = []
-        for bucket_name, _, _ in SENSOR_DISTANCE_BUCKETS:
-            bucket_literal = _sql_literal(bucket_name)
-            feature_selects.append(
-                f"COALESCE(MAX({REACHABLE_TRENCH_COUNT_COLUMN}) FILTER (WHERE {DISTANCE_BUCKET_COLUMN} = {bucket_literal}), 0) AS {_sensor_bucket_count_column(bucket_name)}"
+        for batch_index, (batch_label, batch_targets, batch_start, batch_end) in enumerate(batch_specs):
+            batch_target_trench_ids = (
+                batch_targets[TRENCH_ID_COLUMN].drop_duplicates().astype(np.int64)
             )
-            for variable_name in climate_columns:
-                feature_selects.append(
-                    f"MAX({_sql_ident(f'{variable_name}_mean_day')}) FILTER (WHERE {DISTANCE_BUCKET_COLUMN} = {bucket_literal}) AS {_sensor_bucket_mean_column(bucket_name, variable_name, 'day')}"
+            batch_upstream_lookup = upstream_lookup.loc[
+                upstream_lookup["target_trench_id"].isin(batch_target_trench_ids)
+            ].copy()
+            if batch_upstream_lookup.empty:
+                logger.info(
+                    "Skipping empty sensor target batch %s (%d/%d).",
+                    batch_label,
+                    batch_index + 1,
+                    len(batch_specs),
                 )
-                for window_label in SENSOR_WINDOW_LABELS:
-                    feature_selects.append(
-                        f"MAX({_sql_ident(f'{variable_name}_mean_{window_label}')}) FILTER (WHERE {DISTANCE_BUCKET_COLUMN} = {bucket_literal}) AS {_sensor_bucket_mean_column(bucket_name, variable_name, window_label)}"
-                    )
-        feature_selects_sql = ",\n                ".join(feature_selects)
-        output_sql_path = _sql_literal(str(output_path))
+                continue
 
+            batch_lookup_source_trenches = (
+                batch_upstream_lookup["source_trench_id"].drop_duplicates().astype(np.int64)
+            )
+            climate_start = batch_start - pd.Timedelta(days=lookback_days)
+            climate_batch_paths = _partitioned_trench_day_paths(
+                climate_path,
+                start_date=climate_start,
+                end_date=batch_end,
+            )
+            climate_sql_path = _sql_string_list([str(path) for path in climate_batch_paths])
+            part_path = parts_dir / f"part-{batch_index:04d}-{batch_label}.parquet"
+
+            logger.info(
+                "Processing sensor climate batch %s (%d/%d): %d targets, %d upstream trench links, %d source trenches, %d climate partition(s), dates %s to %s",
+                batch_label,
+                batch_index + 1,
+                len(batch_specs),
+                len(batch_targets),
+                len(batch_upstream_lookup),
+                len(batch_lookup_source_trenches),
+                len(climate_batch_paths),
+                climate_start.date(),
+                batch_end.date(),
+            )
+
+            connection.register("sensor_targets_batch_df", batch_targets)
+            connection.register("upstream_lookup_batch_df", batch_upstream_lookup)
+            connection.register(
+                "source_trench_ids_batch_df",
+                pd.DataFrame({TRENCH_ID_COLUMN: batch_lookup_source_trenches}),
+            )
+
+            connection.execute("DROP TABLE IF EXISTS climate_bucket_daily")
+            connection.execute("DROP TABLE IF EXISTS climate_bucket_windowed")
+            connection.execute(
+                f"""
+                CREATE TEMP TABLE climate_bucket_daily AS
+                SELECT
+                    u.target_trench_id,
+                    CAST(c.{DATE_COLUMN} AS DATE) AS {DATE_COLUMN},
+                    u.{DISTANCE_BUCKET_COLUMN},
+                    COUNT(DISTINCT c.{TRENCH_ID_COLUMN}) AS {REACHABLE_TRENCH_COUNT_COLUMN},
+                    {aggregate_columns_sql}
+                FROM read_parquet({climate_sql_path}) AS c
+                INNER JOIN source_trench_ids_batch_df AS s
+                    ON c.{TRENCH_ID_COLUMN} = s.{TRENCH_ID_COLUMN}
+                INNER JOIN upstream_lookup_batch_df AS u
+                    ON c.{TRENCH_ID_COLUMN} = u.source_trench_id
+                WHERE CAST(c.{DATE_COLUMN} AS DATE) BETWEEN DATE {_sql_literal(str(climate_start.date()))}
+                    AND DATE {_sql_literal(str(batch_end.date()))}
+                GROUP BY 1, 2, 3
+                """
+            )
+
+            connection.execute(
+                f"""
+                CREATE TEMP TABLE climate_bucket_windowed AS
+                SELECT
+                    target_trench_id,
+                    {DATE_COLUMN},
+                    {DISTANCE_BUCKET_COLUMN},
+                    {REACHABLE_TRENCH_COUNT_COLUMN},
+                    {window_columns_sql}
+                FROM climate_bucket_daily
+                """
+            )
+
+            feature_selects = []
+            for bucket_name, _, _ in SENSOR_DISTANCE_BUCKETS:
+                bucket_literal = _sql_literal(bucket_name)
+                feature_selects.append(
+                    f"COALESCE(MAX({REACHABLE_TRENCH_COUNT_COLUMN}) FILTER (WHERE {DISTANCE_BUCKET_COLUMN} = {bucket_literal}), 0) AS {_sensor_bucket_count_column(bucket_name)}"
+                )
+                for variable_name in climate_columns:
+                    feature_selects.append(
+                        f"MAX({_sql_ident(f'{variable_name}_mean_day')}) FILTER (WHERE {DISTANCE_BUCKET_COLUMN} = {bucket_literal}) AS {_sensor_bucket_mean_column(bucket_name, variable_name, 'day')}"
+                    )
+                    for window_label in SENSOR_WINDOW_LABELS:
+                        feature_selects.append(
+                            f"MAX({_sql_ident(f'{variable_name}_mean_{window_label}')}) FILTER (WHERE {DISTANCE_BUCKET_COLUMN} = {bucket_literal}) AS {_sensor_bucket_mean_column(bucket_name, variable_name, window_label)}"
+                        )
+            feature_selects_sql = ",\n                ".join(feature_selects)
+            part_sql_path = _sql_literal(str(part_path))
+
+            connection.execute(
+                f"""
+                COPY (
+                    SELECT
+                        t.{STATION_CODE_COLUMN},
+                        CAST(t.{DATE_COLUMN} AS DATE) AS {DATE_COLUMN},
+                        t.{TRENCH_ID_COLUMN},
+                        {feature_selects_sql}
+                    FROM sensor_targets_batch_df AS t
+                    LEFT JOIN climate_bucket_windowed AS w
+                        ON t.{TRENCH_ID_COLUMN} = w.target_trench_id
+                       AND CAST(t.{DATE_COLUMN} AS DATE) = w.{DATE_COLUMN}
+                    GROUP BY 1, 2, 3
+                    ORDER BY 1, 2, 3
+                ) TO {part_sql_path} (FORMAT PARQUET)
+                """
+            )
+            part_paths.append(part_path)
+
+        if not part_paths:
+            empty_df = pd.DataFrame(
+                columns=[
+                    STATION_CODE_COLUMN,
+                    DATE_COLUMN,
+                    TRENCH_ID_COLUMN,
+                    *_empty_sensor_feature_row(climate_columns).keys(),
+                ]
+            ).set_index([STATION_CODE_COLUMN, DATE_COLUMN])
+            empty_df.to_parquet(output_path, index=True)
+            return empty_df
+
+        output_sql_path = _sql_literal(str(output_path))
+        part_glob_sql = _sql_literal(str(parts_dir / "part-*.parquet"))
         connection.execute(
             f"""
             COPY (
-                SELECT
-                    t.{STATION_CODE_COLUMN},
-                    CAST(t.{DATE_COLUMN} AS DATE) AS {DATE_COLUMN},
-                    t.{TRENCH_ID_COLUMN},
-                    {feature_selects_sql}
-                FROM sensor_targets_df AS t
-                LEFT JOIN climate_bucket_windowed AS w
-                    ON t.{TRENCH_ID_COLUMN} = w.target_trench_id
-                   AND CAST(t.{DATE_COLUMN} AS DATE) = w.{DATE_COLUMN}
-                GROUP BY 1, 2, 3
+                SELECT *
+                FROM read_parquet({part_glob_sql})
                 ORDER BY 1, 2, 3
             ) TO {output_sql_path} (FORMAT PARQUET)
             """

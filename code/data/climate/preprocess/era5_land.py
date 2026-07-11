@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import json
 import logging
 from pathlib import Path
@@ -9,6 +10,7 @@ import gc
 import shutil
 import tempfile
 
+import dask
 import dask.array as da
 import numpy as np
 import pandas as pd
@@ -16,6 +18,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import rioxarray  # noqa: F401
 import xarray as xr
+from joblib import Parallel, delayed
 
 from ..constants import (
     DATE_COLUMN,
@@ -24,7 +27,9 @@ from ..constants import (
     DEFAULT_RIVER_NETWORK_PATH,
     ERA5_LAND_PREPROCESS_STAGES,
     ERA5_LAND_PREPROCESS_SUBTYPES,
+    MONTH_COLUMN,
     TRENCH_ID_COLUMN,
+    YEAR_COLUMN,
 )
 from ..fetch.common import (
     _timestamp,
@@ -55,9 +60,11 @@ ERA5_FILENAME_PATTERN = re.compile(r"era5_land_(hourly|daily)_(?P<year>\d{4})_(?
 EARTHKIT_TEMP_DIR_PREFIX = "tmp"
 EARTHKIT_TEMP_RETENTION_SECONDS = 6 * 3600
 ERA5_TABULAR_TIME_CHUNK_DAYS = 7
+ERA5_PARQUET_TIME_SLICE_DAYS = 7
 ERA5_TRENCH_SUBBATCH_SIZE = 1000
 ERA5_POINT_SELECTION_TOLERANCE_DEGREES = 0.1
 TRENCH_CENTROID_AREA_CRS = "EPSG:5880"
+DEFAULT_ERA5_PARQUET_N_JOBS = 2
 ERA5_DAILY_VARIABLE_NAME_MAP = {
     "2m_dewpoint_temperature": "2d",
     "2m_temperature": "2t",
@@ -271,7 +278,14 @@ def _load_drainage_polygons(root_dir=".", geobox_state: dict | None = None):
     if geobox_state is None:
         geobox_state = load_or_create_geobox_state(root_dir=root_dir)
 
-    within_geobox = drainage_polygons.centroid.within(
+    centroid_points = (
+        drainage_polygons
+        .to_crs(TRENCH_CENTROID_AREA_CRS)
+        .geometry
+        .centroid
+        .to_crs(4326)
+    )
+    within_geobox = centroid_points.within(
         geobox_state["geobox"].extent.geom.buffer(0.01)
     )
     drainage_polygons = drainage_polygons[
@@ -321,6 +335,19 @@ def _chunk_layout(dataset: xr.Dataset) -> dict[str, tuple[int, ...]]:
     return {name: tuple(int(size) for size in sizes) for name, sizes in chunk_map.items()}
 
 
+def _effective_era5_parquet_n_jobs(n_jobs: int | None) -> int:
+    if n_jobs is None:
+        return max(1, min(os.cpu_count() or 1, DEFAULT_ERA5_PARQUET_N_JOBS))
+    return max(1, int(n_jobs))
+
+
+def _time_chunk_windows(dataset: xr.Dataset) -> list[tuple[int, int]]:
+    chunk_layout = _chunk_layout(dataset)
+    total_time = dataset.sizes["time"]
+    source_time_chunk_size = chunk_layout["time"][0]
+    return list(_time_windows(total_time, source_time_chunk_size))
+
+
 def _extract_trench_subbatch(
     climate_chunk: xr.Dataset,
     *,
@@ -358,19 +385,25 @@ def _extract_trench_subbatch(
     return frame[[TRENCH_ID_COLUMN, DATE_COLUMN, *climate_columns]]
 
 
-def _extract_time_chunk(
-    dataset: xr.Dataset,
+def _extract_time_slice(
+    climate_chunk: xr.Dataset,
     *,
     time_start: int,
     time_stop: int,
     trench_coordinates: pd.DataFrame,
     climate_columns: list[str],
 ) -> pd.DataFrame:
-    climate_chunk = dataset.isel(time=slice(time_start, time_stop))
+    logger.debug(
+        "Selecting ERA5-Land time slice %s:%s within loaded chunk of %s day(s)",
+        time_start,
+        time_stop,
+        climate_chunk.sizes["time"],
+    )
     chunk_frames = []
     n_trenches = len(trench_coordinates)
+    climate_slice = climate_chunk.isel(time=slice(time_start, time_stop))
     for batch_start, batch_stop in _time_windows(n_trenches, ERA5_TRENCH_SUBBATCH_SIZE):
-        logger.info(
+        logger.debug(
             "Selecting ERA5-Land trench subbatch %s:%s for days %s:%s",
             batch_start,
             batch_stop,
@@ -380,7 +413,7 @@ def _extract_time_chunk(
         trench_batch = trench_coordinates.iloc[batch_start:batch_stop].reset_index(drop=True)
         chunk_frames.append(
             _extract_trench_subbatch(
-                climate_chunk,
+                climate_slice,
                 trench_batch=trench_batch,
                 climate_columns=climate_columns,
             )
@@ -396,59 +429,161 @@ def _extract_time_chunk(
     )
 
 
+def _write_time_chunk_parts(
+    dataset: xr.Dataset,
+    *,
+    time_start: int,
+    time_stop: int,
+    trench_coordinates: pd.DataFrame,
+    climate_columns: list[str],
+    output_dir: Path,
+) -> int:
+    logger.info(
+        "Selecting ERA5-Land time chunk %s:%s of %s",
+        time_start,
+        time_stop,
+        dataset.sizes["time"],
+    )
+    with dask.config.set(scheduler="single-threaded"):
+        climate_chunk = dataset.isel(time=slice(time_start, time_stop)).load()
+
+    parts_written = 0
+    try:
+        for local_start, local_stop in _time_windows(
+            climate_chunk.sizes["time"],
+            ERA5_PARQUET_TIME_SLICE_DAYS,
+        ):
+            global_start = time_start + local_start
+            global_stop = time_start + local_stop
+            frame = _extract_time_slice(
+                climate_chunk,
+                time_start=local_start,
+                time_stop=local_stop,
+                trench_coordinates=trench_coordinates,
+                climate_columns=climate_columns,
+            )
+            if frame.empty:
+                del frame
+                continue
+
+            _write_partitioned_time_slice_frame(
+                frame,
+                output_dir=output_dir,
+                basename=f"part-{global_start:05d}-{global_stop:05d}.parquet",
+            )
+            parts_written += 1
+            del frame
+            gc.collect()
+    finally:
+        close = getattr(climate_chunk, "close", None)
+        if callable(close):
+            close()
+        del climate_chunk
+        gc.collect()
+
+    return parts_written
+
+
+def _remove_path(path: Path) -> None:
+    if not path.exists():
+        return
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
+def _partition_path(output_dir: Path, *, year: int, month: int) -> Path:
+    return output_dir / f"{YEAR_COLUMN}={year:04d}" / f"{MONTH_COLUMN}={month:02d}"
+
+
+def _write_partitioned_time_slice_frame(
+    frame: pd.DataFrame,
+    *,
+    output_dir: Path,
+    basename: str,
+) -> None:
+    partition_index = pd.DataFrame(
+        {
+            YEAR_COLUMN: frame[DATE_COLUMN].dt.year.to_numpy(dtype=np.int16, copy=False),
+            MONTH_COLUMN: frame[DATE_COLUMN].dt.month.to_numpy(dtype=np.int8, copy=False),
+        }
+    )
+    group_indices = partition_index.groupby([YEAR_COLUMN, MONTH_COLUMN], sort=False).indices
+    for (year, month), indices in group_indices.items():
+        partition_dir = _partition_path(output_dir, year=int(year), month=int(month))
+        partition_dir.mkdir(parents=True, exist_ok=True)
+        pq.write_table(
+            pa.Table.from_pandas(frame.iloc[indices].copy(), preserve_index=False),
+            partition_dir / basename,
+        )
+
+
 def _write_chunked_trench_day_table(
     dataset: xr.Dataset,
     *,
     climate_columns: list[str],
     trench_coordinates: pd.DataFrame,
     output_path: Path,
+    n_jobs: int | None = None,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = output_path.with_suffix(output_path.suffix + ".tmp")
-    if temp_path.exists():
-        temp_path.unlink()
+    _remove_path(temp_path)
+    temp_path.mkdir(parents=True, exist_ok=True)
 
-    writer = None
-    try:
-        chunk_layout = _chunk_layout(dataset)
-        total_time = dataset.sizes["time"]
-        source_time_chunk_size = chunk_layout["time"][0]
+    effective_n_jobs = _effective_era5_parquet_n_jobs(n_jobs)
+    chunk_windows = _time_chunk_windows(dataset)
+    logger.info(
+        "Extracting %d ERA5-Land time chunk(s) with %d worker(s).",
+        len(chunk_windows),
+        effective_n_jobs,
+    )
 
-        for chunk_start, chunk_stop in _time_windows(total_time, source_time_chunk_size):
-            logger.info(
-                "Selecting ERA5-Land time chunk %s:%s of %s",
-                chunk_start,
-                chunk_stop,
-                total_time,
-            )
-            frame = _extract_time_chunk(
+    if effective_n_jobs == 1:
+        parts_written = sum(
+            _write_time_chunk_parts(
                 dataset,
                 time_start=chunk_start,
                 time_stop=chunk_stop,
                 trench_coordinates=trench_coordinates,
                 climate_columns=climate_columns,
+                output_dir=temp_path,
             )
-            table = pa.Table.from_pandas(frame, preserve_index=False)
-            if writer is None:
-                writer = pq.ParquetWriter(temp_path, table.schema)
-            writer.write_table(table)
-            del frame, table
-            gc.collect()
-
-        if writer is None:
-            empty = _empty_trench_day_frame(climate_columns)
-            writer = pq.ParquetWriter(
-                temp_path,
-                pa.Table.from_pandas(empty, preserve_index=False).schema,
+            for chunk_start, chunk_stop in chunk_windows
+        )
+    else:
+        parts_written = sum(
+            Parallel(
+                n_jobs=effective_n_jobs,
+                backend="threading",
+                pre_dispatch=effective_n_jobs,
+                batch_size=1,
+            )(
+                delayed(_write_time_chunk_parts)(
+                    dataset,
+                    time_start=chunk_start,
+                    time_stop=chunk_stop,
+                    trench_coordinates=trench_coordinates,
+                    climate_columns=climate_columns,
+                    output_dir=temp_path,
+                )
+                for chunk_start, chunk_stop in chunk_windows
             )
-    finally:
-        if writer is not None:
-            writer.close()
+        )
 
+    if parts_written == 0:
+        empty = _empty_trench_day_frame(climate_columns)
+        pq.write_table(
+            pa.Table.from_pandas(empty, preserve_index=False),
+            temp_path / "part-00000.parquet",
+        )
+
+    _remove_path(output_path)
     temp_path.replace(output_path)
 
 
-def tabularize_era5_land_by_trench(root_dir=".") -> Path:
+def tabularize_era5_land_by_trench(root_dir=".", n_jobs: int | None = None) -> Path:
     store_path = _era5_store_path(root_dir)
     if not store_path.exists():
         raise FileNotFoundError(f"Processed ERA5-Land store not found at {store_path}.")
@@ -479,6 +614,7 @@ def tabularize_era5_land_by_trench(root_dir=".") -> Path:
             climate_columns=climate_columns,
             trench_coordinates=trench_coordinates,
             output_path=output_path,
+            n_jobs=n_jobs,
         )
     finally:
         close = getattr(dataset, "close", None)
@@ -1104,7 +1240,7 @@ def process_era5_input_file(path: Path, *, root_dir=".", subtype="era5_land_hour
         return store_path
 
 
-def preprocess_era5_land(root_dir=".", subtype="era5_land_hourly", stage="all") -> Path:
+def preprocess_era5_land(root_dir=".", subtype="era5_land_hourly", stage="all", n_jobs: int | None = None) -> Path:
     if subtype not in SUPPORTED_ERA5_PREPROCESS_SUBTYPES:
         raise ValueError(f"Unsupported ERA5 preprocess subtype: {subtype}")
     if stage not in ERA5_LAND_PREPROCESS_STAGES:
@@ -1129,10 +1265,16 @@ def preprocess_era5_land(root_dir=".", subtype="era5_land_hourly", stage="all") 
 
     if not store_path.exists():
         raise FileNotFoundError(f"Processed ERA5-Land store not found at {store_path}.")
-    return tabularize_era5_land_by_trench(root_dir=root_dir)
+    return tabularize_era5_land_by_trench(root_dir=root_dir, n_jobs=n_jobs)
 
 
-def preprocess_era5_land_worker(root_dir=".", subtype="era5_land_hourly", poll_seconds=120, stage="all") -> Path:
+def preprocess_era5_land_worker(
+    root_dir=".",
+    subtype="era5_land_hourly",
+    poll_seconds=120,
+    stage="all",
+    n_jobs: int | None = None,
+) -> Path:
     if subtype not in SUPPORTED_ERA5_PREPROCESS_SUBTYPES:
         raise ValueError(f"Unsupported ERA5 preprocess subtype: {subtype}")
     if stage not in ERA5_LAND_PREPROCESS_STAGES:
@@ -1142,7 +1284,7 @@ def preprocess_era5_land_worker(root_dir=".", subtype="era5_land_hourly", poll_s
         )
 
     if stage == "parquet":
-        return tabularize_era5_land_by_trench(root_dir=root_dir)
+        return tabularize_era5_land_by_trench(root_dir=root_dir, n_jobs=n_jobs)
 
     last_store_path = _era5_store_path(root_dir)
     while True:
@@ -1163,7 +1305,7 @@ def preprocess_era5_land_worker(root_dir=".", subtype="era5_land_hourly", poll_s
             if last_store_path.exists():
                 if stage == "zarr":
                     return last_store_path
-                return tabularize_era5_land_by_trench(root_dir=root_dir)
+                return tabularize_era5_land_by_trench(root_dir=root_dir, n_jobs=n_jobs)
             raise FileNotFoundError(
                 f"No downloaded or active ERA5 files found for subtype {subtype!r}."
             )

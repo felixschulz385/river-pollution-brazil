@@ -251,7 +251,10 @@ def main(argv=None):
         "--n_jobs",
         type=int,
         default=None,
-        help="Number of parallel jobs for climate assembly (default: all CPUs)",
+        help=(
+            "Number of parallel jobs for climate preprocess/assembly "
+            "(default: conservative cap for ERA5 parquet preprocess; all CPUs for assembly)"
+        ),
     )
 
     # Water quality module
@@ -535,11 +538,12 @@ def main(argv=None):
             elif action == "preprocess":
                 if args.module == "climate":
                     logger.info(
-                        "Preprocessing climate data (subtype: %s, stage: %s)",
+                        "Preprocessing climate data (subtype: %s, stage: %s, n_jobs: %s)",
                         args.subtype,
                         args.stage,
+                        args.n_jobs,
                     )
-                    agent.preprocess(subtype=args.subtype, stage=args.stage)
+                    agent.preprocess(subtype=args.subtype, stage=args.stage, n_jobs=args.n_jobs)
                 else:
                     agent.preprocess()
             elif action == "assemble":

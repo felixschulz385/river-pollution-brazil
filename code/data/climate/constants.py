@@ -6,6 +6,7 @@ import numpy as np
 TRENCH_ID_COLUMN = "trench_id"
 DATE_COLUMN = "date"
 YEAR_COLUMN = "year"
+MONTH_COLUMN = "month"
 STATION_CODE_COLUMN = "station_code"
 DATETIME_COLUMN = "datetime"
 UPSTREAM_DISTANCE_COLUMN = "upstream_distance"

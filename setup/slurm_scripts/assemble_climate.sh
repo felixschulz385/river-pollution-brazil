@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH --job-name=assemble_climate_era5_land
-#SBATCH --output=./log/assemble_climate_era5_land/slurm-%j.log
+#SBATCH --job-name=assemble_climate
+#SBATCH --output=./log/assemble_climate/slurm-%j.log
 #SBATCH --partition=scicore
 #SBATCH --time=0-12:00:00
 #SBATCH --qos=1day
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=64G
+#SBATCH --mem=128G
 
 set -euo pipefail
 
