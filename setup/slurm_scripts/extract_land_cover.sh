@@ -14,4 +14,4 @@ conda activate rpb
 cd /scicore/home/meiera/schulz0022/projects/river-pollution-brazil
 
 # Run land-cover preprocessing using the CLI
-python code/data/cli.py land-cover preprocess --n_jobs 4 --river-network-path='data/river_network' --output='data/land_cover/land_cover.feather'
+python src/data/cli.py land-cover preprocess --n_jobs 4 --river-network-path='data/river_network' --output='data/land_cover/land_cover.feather'

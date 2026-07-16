@@ -16,7 +16,7 @@ conda activate rpb
 cd /scicore/home/meiera/schulz0022/projects/river-pollution-brazil
 mkdir -p log
 
-PYTHONPATH=code/data python code/data/cli.py water-quality assemble \
+PYTHONPATH=src/data python src/data/cli.py water-quality assemble \
   --root-dir . \
   --river-network-path data/river_network \
   --water-quality-path data/sensor_data/water_quality.parquet \

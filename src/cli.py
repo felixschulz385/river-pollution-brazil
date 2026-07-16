@@ -10,7 +10,7 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from code.analysis.cli import main as analysis_main  # noqa: E402
+from src.analysis.cli import main as analysis_main  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:

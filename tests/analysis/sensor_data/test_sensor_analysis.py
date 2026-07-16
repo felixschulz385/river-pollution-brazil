@@ -12,19 +12,16 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-sys.modules.pop("code", None)
 
-import code
-
-from code.analysis.cli import main as analysis_main
-from code.analysis.sensor_data import faceted_distance_coefplot
-from code.analysis.sensor_data.catalog import build_pollutant_catalog
-from code.analysis.sensor_data.groups import select_pollutants
-from code.analysis.sensor_data.prepare import build_analysis_data
-from code.analysis.sensor_data.residualize import residualize_with_map
-from code.analysis.sensor_data.runner import run_suite
-from code.analysis.sensor_data.specs import build_model_specs
-from code.analysis.settings import (
+from src.analysis.cli import main as analysis_main
+from src.analysis.sensor_data import faceted_distance_coefplot
+from src.analysis.sensor_data.catalog import build_pollutant_catalog
+from src.analysis.sensor_data.groups import select_pollutants
+from src.analysis.sensor_data.prepare import build_analysis_data
+from src.analysis.sensor_data.residualize import residualize_with_map
+from src.analysis.sensor_data.runner import run_suite
+from src.analysis.sensor_data.specs import build_model_specs
+from src.analysis.settings import (
     ClimateVariable,
     ControlVariable,
     DEFAULT_SETTINGS,
@@ -227,11 +224,6 @@ def _synthetic_settings(tmp_path: Path) -> SensorAnalysisSettings:
         type_group_names=DEFAULT_SETTINGS.type_group_names,
         subclass_labels=DEFAULT_SETTINGS.subclass_labels,
     )
-
-
-def test_top_level_code_package_exposes_stdlib_console_api() -> None:
-    assert code.InteractiveConsole is not None
-    assert code.compile_command is not None
 
 
 @pytest.fixture

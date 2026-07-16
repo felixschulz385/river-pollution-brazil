@@ -42,6 +42,11 @@ Options:
   --min-observations <n>               Minimum observations per pollutant
   --map-tolerance <float>              MAP convergence tolerance
   --map-max-iterations <n>             MAP maximum iterations
+  --lasso-jobs <n>                     Workers for LASSO CV (defaults to allocated CPUs)
+  --shard-count <n>                    Total array shards. Default: 1
+  --shard-index <n>                    Shard index; defaults to SLURM_ARRAY_TASK_ID
+  --resume                             Skip completed checkpoint chunks
+  --checkpoint-models <n>              Models per checkpoint chunk. Default: 25
   --output-dir <path>                  Override output directory
   --log-level <level>                  CLI log level. Default: INFO
   --dry-run                            Print the final command and exit
@@ -81,6 +86,11 @@ CLUSTER_VARIABLE=""
 MIN_OBSERVATIONS=""
 MAP_TOLERANCE=""
 MAP_MAX_ITERATIONS=""
+LASSO_JOBS=""
+SHARD_COUNT="1"
+SHARD_INDEX=""
+RESUME=0
+CHECKPOINT_MODELS="25"
 OUTPUT_DIR=""
 LOG_LEVEL="INFO"
 DRY_RUN=0
@@ -192,6 +202,26 @@ while [[ $# -gt 0 ]]; do
       MAP_MAX_ITERATIONS="$2"
       shift 2
       ;;
+    --lasso-jobs)
+      LASSO_JOBS="$2"
+      shift 2
+      ;;
+    --shard-count)
+      SHARD_COUNT="$2"
+      shift 2
+      ;;
+    --shard-index)
+      SHARD_INDEX="$2"
+      shift 2
+      ;;
+    --resume)
+      RESUME=1
+      shift
+      ;;
+    --checkpoint-models)
+      CHECKPOINT_MODELS="$2"
+      shift 2
+      ;;
     --output-dir)
       OUTPUT_DIR="$2"
       shift 2
@@ -240,7 +270,7 @@ case "${CLIMATE_INTERACTION_MODE}" in
 esac
 
 COMMAND=(
-  python code/cli.py analysis sensor-data
+  python src/cli.py analysis sensor-data
 )
 
 COMMAND+=(--log-level "${LOG_LEVEL}")
@@ -306,8 +336,18 @@ fi
 if [[ -n "${MAP_MAX_ITERATIONS}" ]]; then
   COMMAND+=(--map-max-iterations "${MAP_MAX_ITERATIONS}")
 fi
+if [[ -n "${LASSO_JOBS}" ]]; then
+  COMMAND+=(--lasso-jobs "${LASSO_JOBS}")
+fi
 
 COMMAND+=(run --pollutant-group-kind "${GROUP_KIND}" --pollutant-group "${GROUP_NAME}")
+if [[ -z "${SHARD_INDEX}" ]]; then
+  SHARD_INDEX="${SLURM_ARRAY_TASK_ID:-0}"
+fi
+COMMAND+=(--shard-count "${SHARD_COUNT}" --shard-index "${SHARD_INDEX}" --checkpoint-models "${CHECKPOINT_MODELS}")
+if [[ "${RESUME}" -eq 1 ]]; then
+  COMMAND+=(--resume)
+fi
 
 if [[ -n "${POLLUTANTS}" ]]; then
   COMMAND+=(--pollutants "${POLLUTANTS}")

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 
 from .groups import PollutantSelection
 from ..settings import DEFAULT_SETTINGS, SensorAnalysisSettings
@@ -24,6 +26,27 @@ class ModelSpec:
     coefficient_columns: tuple[str, ...]
     forced_regressor_columns: tuple[str, ...]
     candidate_regressor_columns: tuple[str, ...]
+
+    @property
+    def spec_id(self) -> str:
+        """Return a stable identifier suitable for checkpoints and merging."""
+        payload = json.dumps(
+            {
+                "pollutant": self.pollutant,
+                "group_kind": self.pollutant_group_kind,
+                "group_name": self.pollutant_group_name,
+                "family": self.model_family,
+                "subclass": self.land_cover_subclass,
+                "step": self.distance_step_index,
+                "outcome": self.outcome_column,
+                "coefficients": self.coefficient_columns,
+                "forced": self.forced_regressor_columns,
+                "candidates": self.candidate_regressor_columns,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def _land_cover_column(

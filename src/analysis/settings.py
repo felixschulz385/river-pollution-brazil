@@ -74,7 +74,16 @@ class LassoSettings:
     alphas: int = 100
     eps: float = 1e-3
     random_state: int = 0
+    # Random coordinate updates converge more reliably for the highly
+    # correlated climate-by-land-cover design than cyclic updates.
+    selection: str = "random"
+    tol: float = 1e-3
     max_iter: int = 10_000
+    # Resolved at runtime from an explicit override or SLURM_CPUS_PER_TASK.
+    n_jobs: int | None = None
+    # Candidate pruning makes the fast Gram path safe for the tall panels.
+    precompute: bool = True
+    near_duplicate_correlation: float = 1.0 - 1e-10
     standardize: bool = True
 
 

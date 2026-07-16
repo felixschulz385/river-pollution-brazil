@@ -1,7 +1,7 @@
 # Output File Formats
 
 This document describes the persisted files written by
-`code/data/river_network.py` and `code/data/land_cover.py`.
+`src/data/river_network.py` and `src/data/land_cover.py`.
 
 ## River Network Storage
 

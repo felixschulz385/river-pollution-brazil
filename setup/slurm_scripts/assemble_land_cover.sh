@@ -16,7 +16,7 @@ conda activate rpb
 cd /scicore/home/meiera/schulz0022/projects/river-pollution-brazil
 mkdir -p log/assemble_land_cover
 
-PYTHONPATH=code/data python code/data/cli.py land-cover assemble \
+PYTHONPATH=src/data python src/data/cli.py land-cover assemble \
   --variant sensor_upstream_distance_buckets \
   --land-cover-path data/land_cover/land_cover.feather \
   --water-quality-path data/sensor_data/water_quality.parquet \

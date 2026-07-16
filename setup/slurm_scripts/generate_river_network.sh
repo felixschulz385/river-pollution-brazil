@@ -11,4 +11,4 @@
 eval "$(/scicore/home/meiera/schulz0022/miniforge-pypy3/bin/conda shell.bash hook)"
 conda activate rpb
 
-python code/data/cli.py river-network generate --gpkg-path='/scicore/home/meiera/schulz0022/projects/river-pollution-brazil/data/river_network/raw/bho_2017_v_01_05_5k.gpkg' --gadm-path='/scicore/home/meiera/schulz0022/projects/river-pollution-brazil/data/gadm/gadm41_BRA.gpkg' --output-dir='/scicore/home/meiera/schulz0022/projects/river-pollution-brazil/data/river_network/'
+python src/data/cli.py river-network generate --gpkg-path='/scicore/home/meiera/schulz0022/projects/river-pollution-brazil/data/river_network/raw/bho_2017_v_01_05_5k.gpkg' --gadm-path='/scicore/home/meiera/schulz0022/projects/river-pollution-brazil/data/gadm/gadm41_BRA.gpkg' --output-dir='/scicore/home/meiera/schulz0022/projects/river-pollution-brazil/data/river_network/'

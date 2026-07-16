@@ -14,4 +14,4 @@ conda activate rpb
 cd /scicore/home/meiera/schulz0022/projects/river-pollution-brazil
 
 # Run land-cover preprocessing using the CLI
-python code/data/cli.py river-network compute-reachability --shapefile-path "data/river_network/shapefile.parquet" --topology-path "data/river_network/topology.parquet" --distance-path "data/river_network/distance_from_estuary.parquet" --output-dir "data/river_network/"
+python src/data/cli.py river-network compute-reachability --shapefile-path "data/river_network/shapefile.parquet" --topology-path "data/river_network/topology.parquet" --distance-path "data/river_network/distance_from_estuary.parquet" --output-dir "data/river_network/"

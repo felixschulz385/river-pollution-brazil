@@ -12,8 +12,9 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from code.analysis.sensor_data import list_groups, run_plotly_app, run_suite  # noqa: E402
-from code.analysis.settings import DEFAULT_SETTINGS, SensorAnalysisSettings  # noqa: E402
+from src.analysis.sensor_data import list_groups, run_plotly_app, run_suite  # noqa: E402
+from src.analysis.sensor_data.runner import merge_suite  # noqa: E402
+from src.analysis.settings import DEFAULT_SETTINGS, SensorAnalysisSettings  # noqa: E402
 
 
 def configure_logging(level: str) -> None:
@@ -262,6 +263,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Comma-separated model families such as crude_twfe,post_lasso.",
     )
+    run_parser.add_argument("--lasso-jobs", type=int, default=None, help="Workers for LASSO CV; defaults to SLURM_CPUS_PER_TASK.")
+    run_parser.add_argument("--shard-count", type=int, default=1, help="Total deterministic execution shards.")
+    run_parser.add_argument("--shard-index", type=int, default=0, help="Zero-based shard index to execute.")
+    run_parser.add_argument("--resume", action="store_true", help="Skip completed checkpointed specifications.")
+    run_parser.add_argument("--checkpoint-models", type=int, default=25, help="Completed models per immutable checkpoint chunk.")
+
+    merge_parser = subparsers.add_parser("merge", help="Merge completed sensor-analysis shard checkpoints")
+    merge_parser.add_argument("--run-dir", required=True, help="Canonical run directory containing _work checkpoints.")
+    merge_parser.add_argument("--run-fingerprint", default=None, help="Fingerprint printed by shard runs; defaults to the newest checkpoint run.")
+    merge_parser.add_argument("--expected-shards", type=int, required=True, help="Expected number of completed shards.")
 
     groups_parser = subparsers.add_parser("list-groups", help="List pollutant groups")
     groups_parser.add_argument(
@@ -348,6 +359,21 @@ def main(argv: list[str] | None = None) -> int:
             output_dir=args.output_dir,
             min_observations=args.min_observations,
             save_outputs=True,
+            lasso_jobs=args.lasso_jobs,
+            shard_count=args.shard_count,
+            shard_index=args.shard_index,
+            resume=args.resume,
+            checkpoint_models=args.checkpoint_models,
+        )
+        print(run.output_dir)
+        return 0
+
+    if args.command == "merge":
+        run = merge_suite(
+            settings,
+            run_dir=args.run_dir,
+            run_fingerprint=args.run_fingerprint,
+            expected_shards=args.expected_shards,
         )
         print(run.output_dir)
         return 0

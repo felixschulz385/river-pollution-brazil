@@ -181,6 +181,8 @@ def tidy_to_records(
     lasso_selected_count: int | None = None,
     lasso_candidate_count: int | None = None,
     lasso_valid_candidate_count: int | None = None,
+    lasso_pruned_candidate_count: int | None = None,
+    lasso_pruned_candidates: tuple[str, ...] = (),
     lasso_selected_share: float | None = None,
     lasso_min_cv_mse: float | None = None,
     map_iterations: int | None = None,
@@ -211,6 +213,8 @@ def tidy_to_records(
     frame["lasso_selected_count"] = lasso_selected_count
     frame["lasso_candidate_count"] = lasso_candidate_count
     frame["lasso_valid_candidate_count"] = lasso_valid_candidate_count
+    frame["lasso_pruned_candidate_count"] = lasso_pruned_candidate_count
+    frame["lasso_pruned_candidates"] = ",".join(lasso_pruned_candidates)
     frame["lasso_selected_share"] = lasso_selected_share
     frame["lasso_min_cv_mse"] = lasso_min_cv_mse
     frame["map_iterations"] = map_iterations
@@ -231,6 +235,8 @@ def manifest_record(
     lasso_selected_count: int | None = None,
     lasso_candidate_count: int | None = None,
     lasso_valid_candidate_count: int | None = None,
+    lasso_pruned_candidate_count: int | None = None,
+    lasso_pruned_candidates: tuple[str, ...] = (),
     lasso_selected_share: float | None = None,
     lasso_min_cv_mse: float | None = None,
     map_iterations: int | None = None,
@@ -258,6 +264,8 @@ def manifest_record(
         "lasso_selected_count": lasso_selected_count,
         "lasso_candidate_count": lasso_candidate_count,
         "lasso_valid_candidate_count": lasso_valid_candidate_count,
+        "lasso_pruned_candidate_count": lasso_pruned_candidate_count,
+        "lasso_pruned_candidates": ",".join(lasso_pruned_candidates),
         "lasso_selected_share": lasso_selected_share,
         "lasso_min_cv_mse": lasso_min_cv_mse,
         "map_iterations": map_iterations,
