@@ -232,6 +232,7 @@ class SensorAnalysisSettings:
             "c4": "Non-vegetated area",
             "c40": "Urban area",
             "c41": "Mining",
+            "c42": "Other non-vegetated area",
             "c5": "Water",
         }
     )

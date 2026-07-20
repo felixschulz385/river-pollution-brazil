@@ -10,7 +10,7 @@ from typing import Any
 import pandas as pd
 
 from .checkpoints import latest_fingerprint, load_partial_results, shard_progress
-from .results import build_readable_manifest_table, build_readable_results_table
+from .results import _term_label, build_readable_manifest_table, build_readable_results_table
 from ..settings import DEFAULT_SETTINGS, SensorAnalysisSettings
 
 
@@ -85,30 +85,6 @@ class SensorRunProgress:
 
 def _pollutant_label(name: str) -> str:
     return name.replace("_", " ").title()
-
-
-def _term_label(term: str, settings: SensorAnalysisSettings) -> str:
-    if "__x__" in term:
-        left, right = term.split("__x__", 1)
-        return f"{_term_label(left, settings)} x {_term_label(right, settings)}"
-    for subclass, label in settings.subclass_labels.items():
-        for bucket in settings.distance_buckets:
-            if term == settings.land_cover_column(bucket, subclass):
-                return f"{label}, {settings.distance_bucket_label(bucket)}"
-    for variable in settings.controls:
-        if term == variable.scaled_column:
-            return variable.source_column.replace("_", " ").title()
-    for variable in settings.climate_variables:
-        if term == variable.scaled_column:
-            pieces = []
-            if variable.variable_name is not None:
-                pieces.append(variable.variable_name.replace("_", " ").title())
-            if variable.window_name is not None:
-                pieces.append(variable.window_name.replace("_", " "))
-            if variable.distance_bucket is not None:
-                pieces.append(settings.distance_bucket_label(variable.distance_bucket))
-            return ", ".join(pieces) if pieces else variable.source_column.replace("_", " ").title()
-    return term.replace("_", " ").replace("__", " ").title()
 
 
 def _term_group(term: str, settings: SensorAnalysisSettings) -> str:
@@ -494,12 +470,34 @@ def _coefficient_group_frame(results: pd.DataFrame, *, term_group: str, model_fa
     return base.loc[base["model_family"].eq(model_family)].copy()
 
 
+_NON_LAND_COVER_COEF_GROUPS = {"Interactions (Post-Lasso)", "Climate (Post-Lasso)"}
+
+
+def _limit_non_land_cover_terms(frame: pd.DataFrame, *, top_terms: int) -> pd.DataFrame:
+    """Keep only the top-N non-land-cover terms (by mean |estimate|), land-cover untouched."""
+    non_land_cover = frame.loc[frame["coef_group"].isin(_NON_LAND_COVER_COEF_GROUPS)]
+    if non_land_cover.empty or "term" not in frame.columns:
+        return frame
+    ranked_terms = (
+        non_land_cover.assign(_abs_estimate=pd.to_numeric(non_land_cover.get("Estimate"), errors="coerce").abs())
+        .groupby("term")["_abs_estimate"]
+        .mean()
+        .sort_values(ascending=False)
+    )
+    if len(ranked_terms) <= top_terms:
+        return frame
+    kept_terms = set(ranked_terms.head(top_terms).index)
+    keep_mask = ~frame["coef_group"].isin(_NON_LAND_COVER_COEF_GROUPS) | frame["term"].isin(kept_terms)
+    return frame.loc[keep_mask].copy()
+
+
 def make_coefficient_dodge_chart(
     results: pd.DataFrame,
     *,
     groups: list[str] | None = None,
     significant_only: bool = False,
     max_facets: int = DEFAULT_MAX_FACETS,
+    top_terms: int = DEFAULT_TOP_TERMS,
     settings: SensorAnalysisSettings = DEFAULT_SETTINGS,
 ):
     """Plot Crude/Post-Lasso land-cover, interaction, and climate coefficients by bucket.
@@ -529,6 +527,7 @@ def make_coefficient_dodge_chart(
         combined = combined.loc[combined["is_significant"]].copy()
     if combined.empty:
         return _empty_figure("Land-cover and climate coefficients")
+    combined = _limit_non_land_cover_terms(combined, top_terms=top_terms)
 
     combined, hidden_count = _limit_facets(combined, facet_column="pollutant_label", max_facets=max_facets)
 
@@ -877,7 +876,18 @@ def _scale_caption(terms: pd.Series, settings: SensorAnalysisSettings) -> str:
 
 
 def build_model_comparison_table(results: pd.DataFrame) -> pd.DataFrame:
-    """Align land-cover estimates for comparison across model families."""
+    """Align land-cover estimates for comparison across model families.
+
+    `crude_twfe` and `post_lasso` specs are generally estimated on different
+    complete-case samples: `post_lasso` additionally requires non-null
+    climate/interaction columns, which are left-joined and often missing, so
+    it typically drops more rows (see `_build_work_groups` in `runner.py`).
+    Comparing their point estimates directly is therefore not automatically
+    apples-to-apples. Rather than average the two `nobs` values into one
+    (which hides the mismatch), this keeps them side by side as
+    `nobs_crude_twfe`/`nobs_post_lasso` and flags `same_sample` so the chart
+    can visually distinguish genuinely comparable pairs.
+    """
     subset = _land_cover_results(results)
     required = {
         "pollutant",
@@ -919,8 +929,16 @@ def build_model_comparison_table(results: pd.DataFrame) -> pd.DataFrame:
         values="Estimate",
         aggfunc="mean",
     ).reset_index()
-    nobs = grouped.groupby(index_columns, dropna=False)["nobs"].mean().reset_index()
-    comparison = estimates.merge(nobs, on=index_columns, how="left")
+    nobs_by_family = grouped.pivot_table(
+        index=index_columns,
+        columns="model_family",
+        values="nobs",
+        aggfunc="mean",
+    ).reset_index()
+    nobs_by_family.columns = [
+        column if column in index_columns else f"nobs_{column}" for column in nobs_by_family.columns
+    ]
+    comparison = estimates.merge(nobs_by_family, on=index_columns, how="left")
     if not {"crude_twfe", "post_lasso"}.issubset(comparison.columns):
         return pd.DataFrame()
 
@@ -929,6 +947,10 @@ def build_model_comparison_table(results: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
     comparison["estimate_delta"] = comparison["post_lasso"] - comparison["crude_twfe"]
+    if {"nobs_crude_twfe", "nobs_post_lasso"}.issubset(comparison.columns):
+        comparison["same_sample"] = comparison["nobs_crude_twfe"] == comparison["nobs_post_lasso"]
+    else:
+        comparison["same_sample"] = pd.NA
     return comparison
 
 
@@ -939,17 +961,28 @@ def make_model_comparison(results: pd.DataFrame):
     if comparison.empty:
         return _empty_figure("Crude TWFE vs Post-LASSO land-cover estimates")
 
+    differing_sample_count = int((~comparison["same_sample"].fillna(False)).sum())
+    title = "Crude TWFE vs Post-LASSO land-cover estimates"
+    if differing_sample_count > 0:
+        title = (
+            f"{title}<br><sup>{differing_sample_count} of {len(comparison)} pairs were estimated on "
+            "different complete-case samples (hollow markers) and are not strictly comparable</sup>"
+        )
+
     figure = px.scatter(
         comparison,
         x="crude_twfe",
         y="post_lasso",
         color="land_cover_label",
-        symbol="distance_label",
+        symbol="same_sample",
+        symbol_map={True: "circle", False: "circle-open"},
         hover_data=[
             "pollutant_label",
             "land_cover_label",
             "distance_label",
-            "nobs",
+            "nobs_crude_twfe",
+            "nobs_post_lasso",
+            "same_sample",
             "estimate_delta",
         ],
         labels={
@@ -957,9 +990,12 @@ def make_model_comparison(results: pd.DataFrame):
             "post_lasso": "Post-LASSO estimate",
             "land_cover_label": "Land cover",
             "distance_label": "Distance",
+            "nobs_crude_twfe": "N (Crude TWFE)",
+            "nobs_post_lasso": "N (Post-LASSO)",
+            "same_sample": "Same sample",
             "estimate_delta": "Post-LASSO minus Crude TWFE",
         },
-        title="Crude TWFE vs Post-LASSO land-cover estimates",
+        title=title,
     )
     figure.update_traces(marker={"size": 9, "line": {"width": 1, "color": "#fcfcfb"}})
     axis_values = pd.concat([comparison["crude_twfe"], comparison["post_lasso"]]).dropna()
@@ -1325,6 +1361,13 @@ def run_plotly_app(
                         ],
                         style={"minWidth": "220px"},
                     ),
+                    html.Div(
+                        [
+                            html.Label("Model family", style={"fontWeight": 700}),
+                            dcc.Dropdown(id="model-families", multi=True),
+                        ],
+                        style={"minWidth": "220px"},
+                    ),
                 ],
                 style={
                     "display": "flex",
@@ -1351,6 +1394,20 @@ def run_plotly_app(
                                         id="diagnostics-table",
                                         page_size=20,
                                         style_table={"maxWidth": "620px"},
+                                        style_cell={
+                                            "textAlign": "left",
+                                            "fontFamily": "Avenir Next, Helvetica Neue, sans-serif",
+                                            "fontSize": "13px",
+                                            "padding": "8px",
+                                        },
+                                        style_header=_TABLE_HEADER_STYLE,
+                                        style_data_conditional=_TABLE_ZEBRA_CONDITIONAL,
+                                    ),
+                                    html.H3("Post-LASSO selection detail", style={"marginTop": "24px"}),
+                                    dash_table.DataTable(
+                                        id="lasso-stats-table",
+                                        page_size=20,
+                                        style_table={"maxWidth": "980px", "overflowX": "auto"},
                                         style_cell={
                                             "textAlign": "left",
                                             "fontFamily": "Avenir Next, Helvetica Neue, sans-serif",
@@ -1443,6 +1500,8 @@ def run_plotly_app(
         Output("subclasses", "value"),
         Output("distance-steps", "options"),
         Output("distance-steps", "value"),
+        Output("model-families", "options"),
+        Output("model-families", "value"),
         Input("run-name", "value"),
     )
     def _refresh_filter_options(selected_run_name: str):
@@ -1456,6 +1515,7 @@ def run_plotly_app(
             if value in settings.distance_buckets
             else len(settings.distance_buckets),
         )
+        model_families = sorted(results["model_family"].dropna().unique().tolist())
         return (
             _run_progress_banner(html, selected_run_name),
             _dropdown_options(pollutants, _pollutant_label),
@@ -1467,6 +1527,8 @@ def run_plotly_app(
             subclasses[0] if subclasses else None,
             _dropdown_options(distance_steps, settings.distance_bucket_label),
             distance_steps[-1] if distance_steps else None,
+            _dropdown_options(model_families, settings.model_family_label),
+            model_families,
         )
 
     @app.callback(
@@ -1475,12 +1537,15 @@ def run_plotly_app(
         Output("significance-matrix", "figure"),
         Output("diagnostics-table", "data"),
         Output("diagnostics-table", "columns"),
+        Output("lasso-stats-table", "data"),
+        Output("lasso-stats-table", "columns"),
         Output("coefficient-dodge-chart", "figure"),
         Output("model-comparison", "figure"),
         Input("run-name", "value"),
         Input("pollutants", "value"),
         Input("subclasses", "value"),
         Input("distance-steps", "value"),
+        Input("model-families", "value"),
         Input("coef-groups", "value"),
         Input("coef-significant-only", "value"),
     )
@@ -1489,34 +1554,47 @@ def run_plotly_app(
         pollutants: list[str] | None,
         subclass: str | None,
         distance_step: str | None,
+        model_families: list[str] | None,
         coef_groups: list[str] | None,
         coef_significant_only: list[str] | None,
     ):
         subclasses = [subclass] if subclass else None
         distance_steps = [distance_step] if distance_step else None
         run = _load_selected_run(selected_run_name)
+        # The dodge chart and model-comparison view are explicitly about
+        # contrasting model families, so they intentionally see both
+        # regardless of the selector; every other view (heatmap, matrix,
+        # diagnostics, summary) pools crude_twfe and post_lasso rows unless
+        # narrowed here, which can hide genuine per-family disagreement.
         filtered_results = filter_app_frame(
             run.app_results,
             pollutants=pollutants,
             subclasses=subclasses,
             distance_steps=distance_steps,
         )
-        filtered_manifest = filter_app_frame(
+        family_filtered_results = filter_app_frame(
+            filtered_results,
+            model_families=model_families,
+        )
+        family_filtered_manifest = filter_app_frame(
             run.app_manifest,
             pollutants=pollutants,
             subclasses=subclasses,
             distance_steps=distance_steps,
+            model_families=model_families,
         )
 
-        summary = _summary_cards(html, filtered_manifest, filtered_results)
-        status_heatmap = make_status_heatmap(filtered_manifest)
-        significance_matrix = make_significance_matrix(filtered_results, settings=settings)
-        diagnostics_table = make_diagnostics_table(filtered_manifest, filtered_results)
+        summary = _summary_cards(html, family_filtered_manifest, family_filtered_results)
+        status_heatmap = make_status_heatmap(family_filtered_manifest)
+        significance_matrix = make_significance_matrix(family_filtered_results, settings=settings)
+        diagnostics_table = make_diagnostics_table(family_filtered_manifest, family_filtered_results)
+        lasso_stats_table = make_lasso_stats_table(family_filtered_manifest)
         coefficient_chart = make_coefficient_dodge_chart(
             filtered_results,
             groups=coef_groups,
             significant_only="significant" in set(coef_significant_only or []),
             max_facets=max_facets,
+            top_terms=top_terms,
             settings=settings,
         )
         model_comparison = make_model_comparison(filtered_results)
@@ -1527,6 +1605,8 @@ def run_plotly_app(
             significance_matrix,
             diagnostics_table.to_dict("records"),
             [{"name": column, "id": column} for column in diagnostics_table.columns],
+            lasso_stats_table.to_dict("records"),
+            [{"name": column, "id": column} for column in lasso_stats_table.columns],
             coefficient_chart,
             model_comparison,
         )

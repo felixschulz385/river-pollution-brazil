@@ -207,6 +207,16 @@ def load_climate_data(settings: SensorAnalysisSettings) -> pd.DataFrame:
             variable.source_column for variable in settings.climate_variables
         )
     validate_required_columns(climate, required_columns, "climate_data")
+    # Normalize the date join key to day granularity before duplicate
+    # detection and merging, so two readings on the same day that differ
+    # only by time-of-day are treated as the same key on both sides of the
+    # eventual join (see the matching normalization on the sensor side in
+    # `build_analysis_data`).
+    climate_date_key = settings.climate_join_keys[1]
+    if climate_date_key in climate.columns:
+        climate[climate_date_key] = pd.to_datetime(
+            climate[climate_date_key], errors="coerce"
+        ).dt.normalize()
     duplicate_mask = climate.duplicated(subset=list(settings.climate_join_keys), keep=False)
     if duplicate_mask.any():
         duplicate_rows = int(duplicate_mask.sum())
@@ -215,8 +225,22 @@ def load_climate_data(settings: SensorAnalysisSettings) -> pd.DataFrame:
             .drop_duplicates()
             .shape[0]
         )
+        # Average numeric measurements across duplicate join keys (e.g. two
+        # sub-daily readings on the same station-day) rather than keeping an
+        # arbitrary single row; non-numeric columns keep the earliest value.
+        numeric_columns = [
+            column
+            for column in climate.columns
+            if column not in settings.climate_join_keys and pd.api.types.is_numeric_dtype(climate[column])
+        ]
+        other_columns = [
+            column
+            for column in climate.columns
+            if column not in settings.climate_join_keys and column not in numeric_columns
+        ]
         logger.warning(
-            "Collapsing %d climate rows across %d duplicate join keys onto %s.",
+            "Collapsing %d climate rows across %d duplicate join keys onto %s "
+            "(mean for numeric columns, earliest for others).",
             duplicate_rows,
             duplicate_keys,
             ",".join(settings.climate_join_keys),
@@ -228,7 +252,9 @@ def load_climate_data(settings: SensorAnalysisSettings) -> pd.DataFrame:
         ]
         if sort_columns:
             climate = climate.sort_values(sort_columns, kind="stable")
-        climate = climate.groupby(list(settings.climate_join_keys), as_index=False, sort=False).first()
+        aggregation = {column: "mean" for column in numeric_columns}
+        aggregation.update({column: "first" for column in other_columns})
+        climate = climate.groupby(list(settings.climate_join_keys), as_index=False, sort=False).agg(aggregation)
 
     overlapping_metadata = [
         column
