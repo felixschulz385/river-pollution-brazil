@@ -51,7 +51,7 @@ conda activate 311
 cd /scicore/home/meiera/schulz0022/projects/river-pollution-brazil
 mkdir -p log/sensor_analysis
 
-python code/cli.py analysis sensor-data run \
+python src/cli.py analysis sensor-data run \
   --pollutant-group-kind "${GROUP_KIND}" \
   --pollutant-group "${GROUP_NAME}" \
   "$@"

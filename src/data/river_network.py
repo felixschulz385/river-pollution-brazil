@@ -35,7 +35,7 @@ that trench `j` can drain into trench `i`, and
 `trench_distance_matrices[system_id][i, j]` stores the along-network distance
 from upstream trench `j` to downstream trench `i`.
 
-Downstream consumers such as `code.data.land_cover.assembly` therefore look up a
+Downstream consumers such as `src.data.land_cover.assembly` therefore look up a
 target trench's `system_id` and `trench_index`, read that sparse matrix row, map
 the returned column indices back to trench identifiers using
 `river_trenches.parquet`, and bucket the resulting upstream distances.

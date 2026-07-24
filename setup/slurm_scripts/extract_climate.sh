@@ -25,7 +25,7 @@ export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
-PYTHONPATH=code/data python code/data/cli.py climate preprocess \
+PYTHONPATH=src/data python src/data/cli.py climate preprocess \
   --root-dir "${ROOT_DIR}" \
   --subtype era5_land_daily \
   --stage parquet \

@@ -1,7 +1,7 @@
 # Output File Formats
 
 This document describes the persisted files written by
-`code/data/river_network.py`, `code/data/land_cover.py`, and climate assembly
+`src/data/river_network.py`, `src/data/land_cover.py`, and climate assembly
 outputs.
 
 ## River Network Storage

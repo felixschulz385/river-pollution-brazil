@@ -6,15 +6,13 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-import code
-
-from code.analysis.cli import main as analysis_main
-from code.analysis.sensor_data.catalog import build_pollutant_catalog
-from code.analysis.sensor_data.groups import select_pollutants
-from code.analysis.sensor_data.prepare import build_analysis_data
-from code.analysis.sensor_data.runner import run_suite
-from code.analysis.sensor_data.specs import build_model_specs
-from code.analysis.settings import (
+from src.analysis.cli import main as analysis_main
+from src.analysis.sensor_data.catalog import build_pollutant_catalog
+from src.analysis.sensor_data.groups import select_pollutants
+from src.analysis.sensor_data.prepare import build_analysis_data
+from src.analysis.sensor_data.runner import run_suite
+from src.analysis.sensor_data.specs import build_model_specs
+from src.analysis.settings import (
     ControlVariable,
     DEFAULT_SETTINGS,
     ImportanceTier,
@@ -195,11 +193,6 @@ def _synthetic_settings(tmp_path: Path) -> SensorAnalysisSettings:
         ),
         subclass_labels=DEFAULT_SETTINGS.subclass_labels,
     )
-
-
-def test_top_level_code_package_exposes_stdlib_console_api() -> None:
-    assert code.InteractiveConsole is not None
-    assert code.compile_command is not None
 
 
 @pytest.fixture

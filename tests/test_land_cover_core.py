@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from code.data.land_cover.core import LandCover
-from code.data.land_cover.preprocess import get_files
+from src.data.land_cover.core import LandCover
+from src.data.land_cover.preprocess import get_files
 
 
 def test_get_files_supports_mapbiomas_collection_10_naming(tmp_path: Path):
@@ -30,7 +30,7 @@ def test_land_cover_initializes_output_columns_from_selected_legend(monkeypatch)
         captured["legend_path"] = legend_path
         return ["land_cover_total", "land_cover_class_1"]
 
-    monkeypatch.setattr("code.data.land_cover.core.get_output_columns", fake_get_output_columns)
+    monkeypatch.setattr("src.data.land_cover.core.get_output_columns", fake_get_output_columns)
 
     land_cover = LandCover(legend_path=Path("/tmp/custom_legend.xlsx"))
 

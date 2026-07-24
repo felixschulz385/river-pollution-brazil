@@ -11,7 +11,7 @@ import xarray as xr
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-DATA_ROOT = ROOT / "code" / "data"
+DATA_ROOT = ROOT / "src" / "data"
 if str(DATA_ROOT) not in sys.path:
     sys.path.insert(0, str(DATA_ROOT))
 

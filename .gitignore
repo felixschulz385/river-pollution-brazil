@@ -49,4 +49,4 @@ data/*/**
 api_creds
 setup/miniforge3/*
 **/scratch
-code/data/output/manual_*/
+src/data/output/manual_*/

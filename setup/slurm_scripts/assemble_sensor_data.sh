@@ -16,7 +16,7 @@ conda activate 311
 cd /scicore/home/meiera/schulz0022/projects/river-pollution-brazil
 mkdir -p log/assemble_sensor_data
 
-python code/cli.py data water-quality assemble \
+python src/cli.py data water-quality assemble \
   --root-dir . \
   --river-network-path data/river_network \
   --water-quality-path data/sensor_data/water_quality.parquet \

@@ -14,7 +14,7 @@ conda activate 311
 cd /scicore/home/meiera/schulz0022/projects/river-pollution-brazil
 mkdir -p log/assemble_land_cover_adm2
 
-python code/cli.py data land-cover assemble \
+python src/cli.py data land-cover assemble \
   --variant adm2 \
   --land-cover-path data/land_cover/land_cover.feather \
   --river-network-path data/river_network \

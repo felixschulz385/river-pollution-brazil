@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Compatibility wrapper for legacy `code/data/cli.py` invocations."""
+"""Compatibility wrapper for legacy `src/data/cli.py` invocations."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from code.cli import main as repository_main  # noqa: E402
+from src.cli import main as repository_main  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:

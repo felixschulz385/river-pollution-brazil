@@ -12,8 +12,8 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from code.analysis.sensor_data import list_groups, run_suite  # noqa: E402
-from code.analysis.settings import DEFAULT_SETTINGS, SensorAnalysisSettings  # noqa: E402
+from src.analysis.sensor_data import list_groups, run_suite  # noqa: E402
+from src.analysis.settings import DEFAULT_SETTINGS, SensorAnalysisSettings  # noqa: E402
 
 
 def configure_logging(level: str) -> None:

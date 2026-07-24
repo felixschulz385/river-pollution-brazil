@@ -42,15 +42,15 @@ class DataSourceFactory:
     @staticmethod
     def create(module: str, **kwargs):
         if module == "health":
-            from code.data.health import health
+            from src.data.health import health
 
             return health()
         if module == "climate":
-            from code.data.climate import climate
+            from src.data.climate import climate
 
             return climate(root_dir=kwargs.get("root_dir", "."))
         if module == "water-quality":
-            from code.data.sensor_data.sensor_data import sensor_data
+            from src.data.sensor_data.sensor_data import sensor_data
 
             return sensor_data(
                 root_dir=kwargs.get("root_dir", "."),
@@ -67,11 +67,11 @@ class DataSourceFactory:
                 log_every_tables=kwargs.get("log_every_tables"),
             )
         if module == "river-network":
-            from code.data.river_network import RiverNetwork
+            from src.data.river_network import RiverNetwork
 
             return RiverNetwork()
         if module == "land-cover":
-            from code.data.land_cover import LandCover
+            from src.data.land_cover import LandCover
 
             return LandCover(
                 datadir=kwargs.get("datadir"),
@@ -79,7 +79,7 @@ class DataSourceFactory:
                 legend_path=kwargs.get("legend_path"),
             )
         if module == "download":
-            from code.data.download import download_agent
+            from src.data.download import download_agent
 
             return download_agent(
                 remote_root_dir=kwargs.get(
@@ -91,7 +91,7 @@ class DataSourceFactory:
                 year=kwargs.get("year", 2010),
             )
         if module == "population":
-            from code.data.population import population
+            from src.data.population import population
 
             return population(
                 root_dir=kwargs.get("root_dir", "."),
@@ -423,7 +423,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.module == "analysis":
         if args.analysis_module != "sensor-data":
             parser.error(f"Unsupported analysis module: {args.analysis_module}")
-        from code.analysis.cli import main as analysis_main
+        from src.analysis.cli import main as analysis_main
 
         return analysis_main(["--log-level", args.log_level, *args.analysis_args])
 

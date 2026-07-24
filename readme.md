@@ -2,7 +2,7 @@
 
 This repository contains the code, intermediate data products, analysis outputs, and supporting material for a research project on deforestation, river pollution, and health externalities in Brazil. The project combines geospatial river-network construction, land-cover aggregation, water-quality data processing, health and population data preparation, and downstream econometric analysis.
 
-The main maintained workflow is organized around a repository-level Python CLI under `code/cli.py`.
+The main maintained workflow is organized around a repository-level Python CLI under `src/cli.py`.
 
 ![Drainage polygon processing](/output/figures/weights_example.png)
 
@@ -22,11 +22,11 @@ The repository also contains exploratory notebooks, figures, and Quarto document
 
 The main directories are:
 
-- `code/`: Python and R source code.
-- `code/data/`: data ingestion, preprocessing, and assembly workflows.
-- `code/analysis/`: analysis pipelines, especially the sensor-data regression workflow.
-- `code/assemble/`: standalone R assembly scripts.
-- `code/experiments/`: notebooks and exploratory analysis.
+- `src/`: Python and R source code.
+- `src/data/`: data ingestion, preprocessing, and assembly workflows.
+- `src/analysis/`: analysis pipelines, especially the sensor-data regression workflow.
+- `src/assemble/`: standalone R assembly scripts.
+- `src/experiments/`: notebooks and exploratory analysis.
 - `data/`: local data products used by the codebase.
 - `output/`: analysis outputs, figures, and documents.
 - `setup/`: Docker and Slurm/HPC support files.
@@ -38,7 +38,7 @@ The main directories are:
 The repository’s current top-level Python entry point is:
 
 ```bash
-python3 -m code.cli --help
+python3 -m src.cli --help
 ```
 
 This exposes two styles of commands:
@@ -46,7 +46,7 @@ This exposes two styles of commands:
 - grouped commands under `data` and `analysis`
 - flat compatibility aliases such as `health`, `water-quality`, `land-cover`, `population`, and `river-network`
 
-There is also a compatibility wrapper at `code/data/cli.py` for older invocations.
+There is also a compatibility wrapper at `src/data/cli.py` for older invocations.
 
 ## Data Workflows
 
@@ -55,8 +55,8 @@ There is also a compatibility wrapper at `code/data/cli.py` for older invocation
 Health data can be fetched and preprocessed through the CLI:
 
 ```bash
-python3 -m code.cli data health fetch --subtype all
-python3 -m code.cli data health preprocess --subtype all
+python3 -m src.cli data health fetch --subtype all
+python3 -m src.cli data health preprocess --subtype all
 ```
 
 Supported health subtypes are `mortality`, `hospitalization`, and `birth`.
@@ -74,9 +74,9 @@ The repository currently contains derived health outputs such as:
 Water-quality processing is organized into fetch, preprocess, and assemble stages:
 
 ```bash
-python3 -m code.cli data water-quality fetch --root-dir .
-python3 -m code.cli data water-quality preprocess --root-dir .
-python3 -m code.cli data water-quality assemble --root-dir .
+python3 -m src.cli data water-quality fetch --root-dir .
+python3 -m src.cli data water-quality preprocess --root-dir .
+python3 -m src.cli data water-quality assemble --root-dir .
 ```
 
 The water-quality fetch pipeline supports additional options for browser execution and partial reruns, including:
@@ -101,9 +101,9 @@ Transformation metadata used by the analysis pipeline is stored in:
 Land-cover processing is also organized into fetch, preprocess, and assemble stages:
 
 ```bash
-python3 -m code.cli data land-cover fetch
-python3 -m code.cli data land-cover preprocess --river-network-path data/river_network
-python3 -m code.cli data land-cover assemble --variant sensor --river-network-path data/river_network
+python3 -m src.cli data land-cover fetch
+python3 -m src.cli data land-cover preprocess --river-network-path data/river_network
+python3 -m src.cli data land-cover assemble --variant sensor --river-network-path data/river_network
 ```
 
 In the current code, `fetch` is only a placeholder and expects raw MapBiomas files to be obtained manually and placed in the configured data directory.
@@ -122,8 +122,8 @@ Current derived land-cover outputs include:
 Population data is processed through:
 
 ```bash
-python3 -m code.cli data population fetch --root-dir .
-python3 -m code.cli data population preprocess --root-dir .
+python3 -m src.cli data population fetch --root-dir .
+python3 -m src.cli data population preprocess --root-dir .
 ```
 
 The population fetch step pulls raw data from BigQuery and therefore requires appropriate Google Cloud credentials and access to the configured billing project.
@@ -137,7 +137,7 @@ The cleaned output is:
 The river-network workflow is exposed through:
 
 ```bash
-python3 -m code.cli data river-network generate \
+python3 -m src.cli data river-network generate \
   --gpkg-path path/to/source.gpkg \
   --output-dir data/river_network
 ```
@@ -155,23 +155,23 @@ Current river-network outputs in `data/river_network/` include:
 - `river_trenches.parquet`
 - `drainage_areas.parquet`
 
-The expected persisted formats are described in `code/data/output_file_formats.md`.
+The expected persisted formats are described in `src/data/output_file_formats.md`.
 
 ## Analysis Workflow
 
-The maintained analysis pipeline is the sensor-data workflow under `code/analysis/sensor_data/`.
+The maintained analysis pipeline is the sensor-data workflow under `src/analysis/sensor_data/`.
 
 At the repository level it can be invoked as:
 
 ```bash
-python3 -m code.cli analysis sensor-data list-groups
-python3 -m code.cli analysis sensor-data run
+python3 -m src.cli analysis sensor-data list-groups
+python3 -m src.cli analysis sensor-data run
 ```
 
 Direct invocation is also possible:
 
 ```bash
-python3 -m code.analysis.cli --help
+python3 -m src.analysis.cli --help
 ```
 
 This second command currently requires the analysis dependencies to be installed locally; in this environment it fails if packages such as `pandas` are missing.
@@ -187,7 +187,7 @@ The analysis CLI supports:
 Example:
 
 ```bash
-python3 -m code.cli analysis sensor-data run \
+python3 -m src.cli analysis sensor-data run \
   --pollutant-group-kind type \
   --pollutant-group core_physicochemical \
   --land-cover-subclasses c41,c42 \
@@ -280,8 +280,8 @@ The tests are concentrated in `tests/`, especially:
 
 The codebase reflects a research project with multiple generations of tooling. In practice:
 
-- `code/cli.py`, `code/data/`, `code/analysis/`, and the corresponding tests are the best starting points for current work.
-- `code/experiments/` contains exploratory notebooks and is useful for context, diagnostics, and replication of intermediate development steps.
+- `src/cli.py`, `src/data/`, `src/analysis/`, and the corresponding tests are the best starting points for current work.
+- `src/experiments/` contains exploratory notebooks and is useful for context, diagnostics, and replication of intermediate development steps.
 
 ## Data Availability
 

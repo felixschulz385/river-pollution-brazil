@@ -8,12 +8,12 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-DATA_ROOT = ROOT / "code" / "data"
+DATA_ROOT = ROOT / "src" / "data"
 if str(DATA_ROOT) not in sys.path:
     sys.path.insert(0, str(DATA_ROOT))
 
-from code.data.cli import main as data_cli_main
-from code.data.climate.climate import climate as _qualified_climate
+from src.data.cli import main as data_cli_main
+from src.data.climate.climate import climate as _qualified_climate
 from climate.climate import climate
 from climate.fetch.common import ClimateCredentialsError, ERA5_YEARS, load_cds_credentials
 from climate.fetch.common import load_download_manifest, manifest_path_for
