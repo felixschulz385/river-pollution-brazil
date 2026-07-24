@@ -83,7 +83,15 @@ class LassoSettings:
     n_jobs: int | None = None
     # Candidate pruning makes the fast Gram path safe for the tall panels.
     precompute: bool = True
-    near_duplicate_correlation: float = 1.0 - 1e-10
+    # A land-cover x climate interaction is near-collinear with the climate
+    # main effect whenever the land-cover share barely varies within a
+    # station/year (interaction ~= constant * climate after FE demeaning).
+    # That collinearity is what drives LassoCV non-convergence and the
+    # downstream ill-conditioned/rank-deficient OLS failures observed across
+    # most post_lasso specs. 1 - 1e-10 only catches literal duplicate
+    # columns; 0.99 (VIF ~50) also catches this near-collinearity while
+    # still keeping candidates that are genuinely distinct.
+    near_duplicate_correlation: float = 0.99
     standardize: bool = True
 
 
@@ -117,8 +125,12 @@ class SensorAnalysisSettings:
         "250_500km",
         "500km_plus",
     )
+    # `c0` ("not observed"/NA) is excluded: it is a data-coverage artifact,
+    # not a real land-cover type, and its share is typically near-constant
+    # within a station/year — as a forced regressor in every spec, it was
+    # rank-deficient after FE demeaning across nearly every pollutant and
+    # distance bucket (see `_rank_revealing_selected_terms` failures).
     land_cover_subclasses: tuple[str, ...] = (
-        "c0",
         "c1",
         "c2",
         "c3",
@@ -145,7 +157,7 @@ class SensorAnalysisSettings:
     )
     fixed_effects: tuple[FixedEffectSpec, ...] = (
         "station_code",
-        ("quarter", "system"),
+        #("quarter", "system"),
         ("year", "system"),
     )
     cluster_variable: str = "station_code"
