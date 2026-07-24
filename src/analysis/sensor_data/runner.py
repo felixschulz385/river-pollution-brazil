@@ -2,18 +2,36 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
+import re
 import tempfile
+import time
 import warnings
-from dataclasses import asdict, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+from scipy.linalg import LinAlgWarning
+from sklearn.exceptions import ConvergenceWarning
+from sklearn.linear_model import LassoCV
 
+from .checkpoints import (
+    completed_spec_ids,
+    input_fingerprint,
+    mark_shard_complete,
+    merge_shards,
+    shard_dir,
+    write_chunk,
+    write_shard_metadata,
+)
 from .groups import select_pollutants
 from .prepare import build_analysis_data
-from .results import SensorAnalysisRun, manifest_record, pollutant_lookup, save_run, tidy_to_records
+from .residualize import residualize_with_map
+from .results import SensorAnalysisRun, manifest_record, pollutant_lookup, tidy_to_records
 from .specs import build_model_specs
 from ..settings import DEFAULT_SETTINGS, SensorAnalysisSettings
 
@@ -25,18 +43,17 @@ import pyfixest as pf  # noqa: E402
 logger = logging.getLogger(__name__)
 
 
-def _configure_runtime_warnings() -> None:
-    """Silence known noisy pyfixest warnings during large batch runs."""
-    warnings.filterwarnings(
-        "ignore",
-        message=r"[\s\S]*singleton fixed effect\(s\) dropped from the model[\s\S]*",
-        category=UserWarning,
-    )
-    warnings.filterwarnings(
-        "ignore",
-        message=r"[\s\S]*variables dropped due to multicollinearity[\s\S]*",
-        category=UserWarning,
-    )
+class IllConditionedModelError(ValueError):
+    """Raised when OLS estimation is numerically ill-conditioned."""
+
+
+def _extract_warning_count(messages: tuple[str, ...]) -> int:
+    """Best-effort count of items referenced by pyfixest drop warnings."""
+    total = 0
+    for message in messages:
+        match = re.search(r"(\d+)", message)
+        total += int(match.group(1)) if match else 1
+    return total
 
 
 def _coerce_settings(
@@ -82,144 +99,519 @@ def _resolve_model_name(
 def _analysis_columns(settings: SensorAnalysisSettings, spec) -> list[str]:
     columns = [
         spec.outcome_column,
-        *spec.coefficient_columns,
-        *(control.scaled_column for control in settings.controls),
+        *spec.forced_regressor_columns,
+        *spec.candidate_regressor_columns,
         *settings.resolved_fixed_effects(),
         settings.cluster_variable,
     ]
     return list(dict.fromkeys(columns))
 
 
-def _run_model(settings: SensorAnalysisSettings, frame: pd.DataFrame, spec) -> tuple[pd.DataFrame, int]:
-    sample = frame.loc[:, _analysis_columns(settings, spec)].dropna().copy()
-    if sample.empty:
-        raise ValueError("No complete observations remain after dropping missing values.")
-    if sample[spec.outcome_column].nunique(dropna=True) < 2:
-        raise ValueError("Outcome has no variation after filtering.")
-    if all(sample[column].nunique(dropna=True) < 2 for column in spec.coefficient_columns):
-        raise ValueError("All land-cover regressors are constant after filtering.")
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message=r"[\s\S]*singleton fixed effect\(s\) dropped from the model[\s\S]*",
-            category=UserWarning,
-        )
-        warnings.filterwarnings(
-            "ignore",
-            message=r"[\s\S]*variables dropped due to multicollinearity[\s\S]*",
-            category=UserWarning,
-        )
+def _ols_formula(
+    outcome_column: str,
+    regressors: tuple[str, ...],
+    fixed_effects: tuple[str, ...],
+) -> str:
+    return f"{outcome_column} ~ {' + '.join(regressors)} | {'+'.join(fixed_effects)}"
+
+
+def _run_ols(
+    settings: SensorAnalysisSettings,
+    sample: pd.DataFrame,
+    spec,
+    regressors: tuple[str, ...],
+    fixed_effects: tuple[str, ...],
+):
+    """Fit the reported model with fixed effects absorbed inside pyfixest.
+
+    Fitting `| fe` here (rather than on MAP-demeaned data with no FE clause)
+    lets pyfixest count the absorbed FE parameters toward residual degrees
+    of freedom and the CRV1 small-sample factor, so clustered standard
+    errors are not overstated in precision relative to a proper within
+    estimator. Point estimates are unaffected (Frisch-Waugh-Lovell).
+    """
+    formula = _ols_formula(spec.outcome_column, regressors, fixed_effects)
+    columns = list(dict.fromkeys([spec.outcome_column, *regressors, *fixed_effects, settings.cluster_variable]))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         fit = pf.feols(
-            spec.formula,
+            formula,
             vcov={settings.vcov_type: settings.cluster_variable},
-            data=sample,
+            data=sample.loc[:, columns],
         )
-    return fit.tidy(), int(sample.shape[0])
+    numerical_warnings = [str(item.message) for item in caught if issubclass(item.category, LinAlgWarning)]
+    if numerical_warnings:
+        raise IllConditionedModelError(f"OLS ill-conditioned after rank validation: {numerical_warnings[0]}")
+    multicollinearity_warnings = [
+        str(item.message) for item in caught if "multicollinearity" in str(item.message).lower()
+    ]
+    singleton_warnings = [
+        str(item.message) for item in caught if "singleton fixed effect" in str(item.message).lower()
+    ]
+    return fit.tidy(), formula, numerical_warnings, multicollinearity_warnings, singleton_warnings
+
+
+def _standardize_candidates(candidate_frame: pd.DataFrame) -> tuple[np.ndarray, list[str]]:
+    valid_columns: list[str] = []
+    standardized_arrays: list[np.ndarray] = []
+    for column in candidate_frame.columns:
+        values = candidate_frame[column].to_numpy(dtype=float)
+        std = float(np.std(values))
+        if not np.isfinite(std) or std <= 0:
+            continue
+        centered = values - float(np.mean(values))
+        standardized_arrays.append(centered / std)
+        valid_columns.append(column)
+    if not standardized_arrays:
+        return np.empty((candidate_frame.shape[0], 0)), []
+    return np.column_stack(standardized_arrays), valid_columns
+
+
+def _prune_near_duplicate_candidates(
+    candidate_matrix: np.ndarray,
+    columns: list[str],
+    *,
+    correlation_threshold: float,
+) -> tuple[np.ndarray, list[str], list[str]]:
+    """Keep one deterministic representative of each near-duplicate candidate."""
+    if not 0.0 < correlation_threshold <= 1.0:
+        raise ValueError("LASSO near-duplicate correlation threshold must be in (0, 1].")
+    if candidate_matrix.shape[1] < 2:
+        return candidate_matrix, columns, []
+
+    correlations = (candidate_matrix.T @ candidate_matrix) / candidate_matrix.shape[0]
+    kept_indices: list[int] = []
+    dropped_columns: list[str] = []
+    for index, column in enumerate(columns):
+        if any(abs(correlations[index, kept_index]) >= correlation_threshold for kept_index in kept_indices):
+            dropped_columns.append(column)
+        else:
+            kept_indices.append(index)
+    return candidate_matrix[:, kept_indices], [columns[index] for index in kept_indices], dropped_columns
+
+
+def _resolve_lasso_jobs(settings: SensorAnalysisSettings, override: int | None) -> int:
+    """Resolve workers without assuming a local machine's CPU count is safe."""
+    if override is not None:
+        if override < 1:
+            raise ValueError("--lasso-jobs must be positive.")
+        return override
+    if settings.lasso_settings.n_jobs is not None:
+        return settings.lasso_settings.n_jobs
+    try:
+        return max(1, int(os.environ.get("SLURM_CPUS_PER_TASK", "1")))
+    except ValueError:
+        return 1
+
+
+def _rank_revealing_selected_terms(
+    sample: pd.DataFrame,
+    forced_terms: tuple[str, ...],
+    selected_terms: tuple[str, ...],
+    *,
+    tolerance: float = 1e-10,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Incrementally construct a QR basis, never dropping forced regressors."""
+    basis: list[np.ndarray] = []
+
+    def add(column: str) -> bool:
+        vector = sample[column].to_numpy(dtype=float).copy()
+        norm = float(np.linalg.norm(vector))
+        if not np.isfinite(norm) or norm == 0.0:
+            return False
+        for _ in range(2):
+            for basis_vector in basis:
+                vector -= np.dot(basis_vector, vector) * basis_vector
+        residual_norm = float(np.linalg.norm(vector))
+        if residual_norm <= tolerance * norm:
+            return False
+        basis.append(vector / residual_norm)
+        return True
+
+    for term in forced_terms:
+        if not add(term):
+            raise ValueError(f"Forced post-LASSO regressor is rank-deficient: {term}")
+    retained: list[str] = []
+    dropped: list[str] = []
+    for term in selected_terms:
+        if add(term):
+            retained.append(term)
+        else:
+            dropped.append(term)
+    return tuple(retained), tuple(dropped)
+
+
+def _fit_lasso(
+    settings: SensorAnalysisSettings,
+    candidate_matrix: np.ndarray,
+    outcome: np.ndarray,
+    *,
+    n_jobs: int,
+) -> tuple[LassoCV, bool, int, tuple[str, ...]]:
+    """Fit CV LASSO, retrying once only when the CV path fails to converge."""
+    messages: list[str] = []
+    # The retry must always raise the iteration budget, even when the
+    # configured max_iter already exceeds 50k, or the "retry" repeats the
+    # identical fit and deterministically fails again.
+    retry_max_iter = max(settings.lasso_settings.max_iter * 2, 50_000)
+    for attempt, max_iter in enumerate((settings.lasso_settings.max_iter, retry_max_iter), start=1):
+        lasso = LassoCV(
+            cv=settings.lasso_settings.cv,
+            alphas=settings.lasso_settings.alphas,
+            eps=settings.lasso_settings.eps,
+            random_state=settings.lasso_settings.random_state,
+            selection=settings.lasso_settings.selection,
+            tol=settings.lasso_settings.tol,
+            max_iter=max_iter,
+            n_jobs=n_jobs,
+            precompute=settings.lasso_settings.precompute,
+            fit_intercept=False,
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ConvergenceWarning)
+            lasso.fit(candidate_matrix, outcome)
+        convergence_messages = [str(item.message) for item in caught if issubclass(item.category, ConvergenceWarning)]
+        messages.extend(convergence_messages)
+        if not convergence_messages:
+            return lasso, True, attempt, tuple(messages)
+    return lasso, False, 2, tuple(messages)
+
+
+def _fit_residualized_model(
+    settings: SensorAnalysisSettings,
+    demeaned: pd.DataFrame,
+    raw_sample: pd.DataFrame,
+    fixed_effects: tuple[str, ...],
+    spec,
+    *,
+    nobs: int,
+    map_iterations: int,
+    map_converged: bool,
+    map_max_change: float,
+    lasso_jobs: int,
+    timings: dict[str, float],
+) -> tuple[pd.DataFrame, int, dict[str, object]]:
+    """Estimate one specification from a shared, residualized work group.
+
+    LASSO candidate selection and the rank-revealing design check run on the
+    MAP-demeaned frame, matching the within-transform used for selection.
+    The reported model is then refit on the raw sample with fixed effects
+    absorbed inside pyfixest (see `_run_ols`) so degrees of freedom and
+    clustered standard errors are correct.
+    """
+    regressors = tuple(spec.forced_regressor_columns)
+
+    selected_terms: tuple[str, ...] = ()
+    lasso_alpha: float | None = None
+    lasso_selected_count: int | None = None
+    lasso_candidate_count: int | None = None
+    lasso_valid_candidate_count: int | None = None
+    lasso_pruned_candidate_count: int | None = None
+    lasso_pruned_candidates: tuple[str, ...] = ()
+    lasso_selected_share: float | None = None
+    lasso_min_cv_mse: float | None = None
+    lasso_converged: bool | None = None
+    lasso_attempts: int | None = None
+    lasso_warnings: tuple[str, ...] = ()
+    design_dropped_terms: tuple[str, ...] = ()
+
+    if spec.model_family == "post_lasso" and spec.candidate_regressor_columns:
+        lasso_candidate_count = int(len(spec.candidate_regressor_columns))
+        candidate_frame = demeaned.loc[:, list(spec.candidate_regressor_columns)]
+        candidate_matrix, valid_columns = _standardize_candidates(candidate_frame)
+        lasso_valid_candidate_count = int(len(valid_columns))
+        if valid_columns:
+            candidate_matrix, valid_columns, pruned_columns = _prune_near_duplicate_candidates(
+                candidate_matrix,
+                valid_columns,
+                correlation_threshold=settings.lasso_settings.near_duplicate_correlation,
+            )
+            lasso_pruned_candidate_count = int(len(pruned_columns))
+            lasso_pruned_candidates = tuple(pruned_columns)
+            started = time.perf_counter()
+            lasso, lasso_converged, lasso_attempts, lasso_warnings = _fit_lasso(
+                settings,
+                candidate_matrix,
+                demeaned[spec.outcome_column].to_numpy(dtype=float),
+                n_jobs=lasso_jobs,
+            )
+            timings["lasso_seconds"] = time.perf_counter() - started
+            if not lasso_converged:
+                raise ValueError("LASSO CV did not converge after retry.")
+            selected_terms = tuple(
+                column
+                for column, coefficient in zip(valid_columns, lasso.coef_, strict=True)
+                if not np.isclose(coefficient, 0.0)
+            )
+            lasso_alpha = float(lasso.alpha_)
+            mean_mse_by_alpha = np.asarray(lasso.mse_path_, dtype=float).mean(axis=1)
+            lasso_min_cv_mse = float(np.min(mean_mse_by_alpha))
+            regressors = tuple([*spec.forced_regressor_columns, *selected_terms])
+        else:
+            lasso_pruned_candidate_count = 0
+
+    if spec.model_family == "post_lasso":
+        started = time.perf_counter()
+        selected_terms, design_dropped_terms = _rank_revealing_selected_terms(
+            demeaned,
+            tuple(spec.forced_regressor_columns),
+            selected_terms,
+        )
+        regressors = tuple([*spec.forced_regressor_columns, *selected_terms])
+        timings["design_seconds"] = time.perf_counter() - started
+        # Recompute after rank-revealing pruning so these counts match the
+        # terms actually estimated (and `selected_by_lasso` in the results),
+        # rather than the pre-pruning LASSO selection.
+        lasso_selected_count = int(len(selected_terms))
+        lasso_selected_share = (
+            float(lasso_selected_count / lasso_valid_candidate_count)
+            if lasso_valid_candidate_count
+            else 0.0
+        )
+    started = time.perf_counter()
+    tidy, formula, ols_warnings, multicollinearity_warnings, singleton_warnings = _run_ols(
+        settings, raw_sample, spec, regressors, fixed_effects
+    )
+    timings["ols_seconds"] = time.perf_counter() - started
+    metadata = {
+        "formula": formula,
+        "selected_terms": selected_terms,
+        "lasso_alpha": lasso_alpha,
+        "lasso_selected_count": lasso_selected_count,
+        "lasso_candidate_count": lasso_candidate_count,
+        "lasso_valid_candidate_count": lasso_valid_candidate_count,
+        "lasso_pruned_candidate_count": lasso_pruned_candidate_count,
+        "lasso_pruned_candidates": lasso_pruned_candidates,
+        "lasso_selected_share": lasso_selected_share,
+        "lasso_min_cv_mse": lasso_min_cv_mse,
+        "lasso_converged": lasso_converged,
+        "lasso_attempts": lasso_attempts,
+        "lasso_warning_count": len(lasso_warnings),
+        "ols_warning_count": len(ols_warnings),
+        "numerical_status": "lasso_retried" if lasso_attempts == 2 else "ok",
+        "warning_stage": "lasso" if lasso_warnings else None,
+        "warning_code": "ConvergenceWarning" if lasso_warnings else None,
+        "design_dropped_terms": design_dropped_terms,
+        "lasso_design_dropped_count": len(design_dropped_terms),
+        "multicollinearity_dropped_count": _extract_warning_count(tuple(multicollinearity_warnings)),
+        "singleton_dropped_count": _extract_warning_count(tuple(singleton_warnings)),
+        "map_iterations": map_iterations,
+        "map_converged": map_converged,
+        "map_max_change": map_max_change,
+        "timings": timings,
+        "regressors": regressors,
+    }
+    return tidy, nobs, metadata
+
+
+@dataclass
+class _WorkGroup:
+    key: str
+    mask: np.ndarray
+    specs: list[object]
+
+    @property
+    def cost(self) -> int:
+        return int(self.mask.sum()) * sum(1 + len(spec.candidate_regressor_columns) for spec in self.specs)
+
+
+def _build_work_groups(settings: SensorAnalysisSettings, frame: pd.DataFrame, specs: list[object]) -> list[_WorkGroup]:
+    groups: dict[str, _WorkGroup] = {}
+    fixed_effects = ",".join(settings.resolved_fixed_effects())
+    for spec in specs:
+        mask = frame.loc[:, _analysis_columns(settings, spec)].notna().all(axis=1).to_numpy(dtype=bool)
+        mask_digest = hashlib.sha256(np.packbits(mask).tobytes()).hexdigest()
+        key = f"{spec.outcome_column}:{fixed_effects}:{mask_digest}"
+        groups.setdefault(key, _WorkGroup(key, mask, [])).specs.append(spec)
+    return list(groups.values())
+
+
+def _assign_work_groups(groups: list[_WorkGroup], shard_count: int) -> dict[str, int]:
+    loads = [0] * shard_count
+    assignments: dict[str, int] = {}
+    for group in sorted(groups, key=lambda item: (-item.cost, item.key)):
+        shard = min(range(shard_count), key=lambda index: (loads[index], index))
+        assignments[group.key] = shard
+        loads[shard] += group.cost
+    return assignments
+
+
+def _records_for_group(
+    settings: SensorAnalysisSettings,
+    frame: pd.DataFrame,
+    group: _WorkGroup,
+    metadata_by_pollutant: dict,
+    *,
+    lasso_jobs: int,
+) -> tuple[list[pd.DataFrame], list[dict[str, object]]]:
+    """Run a work group, sharing its complete-case sample and MAP projection."""
+    result_frames: list[pd.DataFrame] = []
+    manifest_rows: list[dict[str, object]] = []
+    feature_columns = list(dict.fromkeys(column for spec in group.specs for column in [*spec.forced_regressor_columns, *spec.candidate_regressor_columns]))
+    outcome_column = group.specs[0].outcome_column
+    columns = list(dict.fromkeys([outcome_column, *feature_columns, *settings.resolved_fixed_effects(), settings.cluster_variable]))
+    fixed_effects = settings.resolved_fixed_effects()
+    sample_started = time.perf_counter()
+    sample = frame.loc[group.mask, columns].reset_index(drop=True).copy()
+    sample_seconds = time.perf_counter() - sample_started
+    map_seconds = 0.0
+    if sample.empty:
+        residualized = None
+        residualization_error = "No complete observations remain after dropping missing values."
+    else:
+        started = time.perf_counter()
+        try:
+            residualized = residualize_with_map(
+                sample,
+                outcome_column=outcome_column,
+                feature_columns=feature_columns,
+                fixed_effect_columns=fixed_effects,
+                tolerance=settings.map_tolerance,
+                max_iterations=settings.map_max_iterations,
+            )
+            residualization_error = None
+            map_seconds = time.perf_counter() - started
+            demeaned = residualized.frame.copy()
+            demeaned[settings.cluster_variable] = sample[settings.cluster_variable].to_numpy()
+        except Exception as exc:  # pragma: no cover - defensive batch boundary
+            residualized = None
+            residualization_error = str(exc)
+    # Sample construction and MAP demeaning are shared across the group;
+    # amortize their cost evenly across specs rather than crediting it all
+    # to whichever spec happens to run first.
+    group_size = len(group.specs) or 1
+    shared_sample_seconds = sample_seconds / group_size
+    shared_map_seconds = map_seconds / group_size
+    for spec in group.specs:
+        meta = metadata_by_pollutant[spec.pollutant]
+        started = time.perf_counter()
+        try:
+            if residualized is None:
+                raise ValueError(residualization_error)
+            if demeaned[spec.outcome_column].nunique(dropna=True) < 2:
+                raise ValueError("Outcome has no variation after filtering.")
+            if all(demeaned[column].nunique(dropna=True) < 2 for column in spec.coefficient_columns):
+                raise ValueError("All land-cover regressors are constant after FE demeaning.")
+            timings = {
+                "sample_seconds": shared_sample_seconds,
+                "map_seconds": shared_map_seconds,
+                "lasso_seconds": 0.0,
+                "design_seconds": 0.0,
+                "ols_seconds": 0.0,
+            }
+            tidy, nobs, model_meta = _fit_residualized_model(
+                settings,
+                demeaned,
+                sample,
+                fixed_effects,
+                spec,
+                nobs=int(sample.shape[0]),
+                map_iterations=residualized.iterations,
+                map_converged=residualized.converged,
+                map_max_change=residualized.max_change,
+                lasso_jobs=lasso_jobs,
+                timings=timings,
+            )
+            timings["total_seconds"] = time.perf_counter() - started
+            extra_fields = {
+                **model_meta["timings"],
+                "lasso_converged": model_meta["lasso_converged"],
+                "lasso_attempts": model_meta["lasso_attempts"],
+                "lasso_warning_count": model_meta["lasso_warning_count"],
+                "ols_warning_count": model_meta["ols_warning_count"],
+                "numerical_status": model_meta["numerical_status"],
+                "warning_stage": model_meta["warning_stage"],
+                "warning_code": model_meta["warning_code"],
+                "design_dropped_terms": ",".join(model_meta["design_dropped_terms"]),
+                "lasso_design_dropped_count": model_meta["lasso_design_dropped_count"],
+                "multicollinearity_dropped_count": model_meta["multicollinearity_dropped_count"],
+                "singleton_dropped_count": model_meta["singleton_dropped_count"],
+            }
+            records = tidy_to_records(
+                tidy, spec, meta, nobs,
+                formula=model_meta["formula"], selected_terms=model_meta["selected_terms"],
+                lasso_alpha=model_meta["lasso_alpha"], lasso_selected_count=model_meta["lasso_selected_count"],
+                lasso_candidate_count=model_meta["lasso_candidate_count"], lasso_valid_candidate_count=model_meta["lasso_valid_candidate_count"],
+                lasso_pruned_candidate_count=model_meta["lasso_pruned_candidate_count"], lasso_pruned_candidates=model_meta["lasso_pruned_candidates"],
+                lasso_selected_share=model_meta["lasso_selected_share"], lasso_min_cv_mse=model_meta["lasso_min_cv_mse"],
+                map_iterations=model_meta["map_iterations"], map_converged=model_meta["map_converged"],
+            )
+            records["spec_id"] = spec.spec_id
+            for key, value in extra_fields.items():
+                records[key] = value
+            result_frames.append(records)
+            manifest = manifest_record(spec, meta, status="ok", nobs=nobs, formula=model_meta["formula"], selected_terms=model_meta["selected_terms"], lasso_alpha=model_meta["lasso_alpha"], lasso_selected_count=model_meta["lasso_selected_count"], lasso_candidate_count=model_meta["lasso_candidate_count"], lasso_valid_candidate_count=model_meta["lasso_valid_candidate_count"], lasso_pruned_candidate_count=model_meta["lasso_pruned_candidate_count"], lasso_pruned_candidates=model_meta["lasso_pruned_candidates"], lasso_selected_share=model_meta["lasso_selected_share"], lasso_min_cv_mse=model_meta["lasso_min_cv_mse"], map_iterations=model_meta["map_iterations"], map_converged=model_meta["map_converged"])
+            manifest.update({"spec_id": spec.spec_id, **extra_fields})
+            manifest_rows.append(manifest)
+        except Exception as exc:  # pragma: no cover - batch boundary
+            logger.warning("Model failed for family=%s pollutant=%s subclass=%s step=%s: %s", spec.model_family, spec.pollutant, spec.land_cover_subclass, spec.distance_step_name, exc)
+            ill_conditioned = isinstance(exc, IllConditionedModelError)
+            failed = manifest_record(spec, meta, status="failed", nobs=0, error=str(exc))
+            failed.update({"spec_id": spec.spec_id, "total_seconds": time.perf_counter() - started, "numerical_status": "failed", "warning_stage": "ols" if ill_conditioned else None, "warning_code": "LinAlgWarning" if ill_conditioned else None})
+            manifest_rows.append(failed)
+    return result_frames, manifest_rows
 
 
 def run_suite(
     settings: SensorAnalysisSettings = DEFAULT_SETTINGS,
     *,
-    pollutant_group_kind: str = "all",
-    pollutant_group: str = "all",
-    pollutants: list[str] | None = None,
-    land_cover_subclasses: list[str] | None = None,
-    max_distance_step: int | None = None,
-    output_dir: str | Path | None = None,
-    min_observations: int | None = None,
-    save_outputs: bool = True,
+    pollutant_group_kind: str = "all", pollutant_group: str = "all", pollutants: list[str] | None = None,
+    land_cover_subclasses: list[str] | None = None, max_distance_step: int | None = None,
+    model_families: list[str] | None = None, output_dir: str | Path | None = None,
+    min_observations: int | None = None, save_outputs: bool = True, lasso_jobs: int | None = None,
+    shard_count: int = 1, shard_index: int = 0, resume: bool = False, checkpoint_models: int = 25,
 ) -> SensorAnalysisRun:
-    """Run the configured sensor analysis suite."""
-    _configure_runtime_warnings()
-    model_name = _resolve_model_name(
-        pollutant_group_kind=pollutant_group_kind,
-        pollutant_group=pollutant_group,
-        pollutants=pollutants,
-    )
-    effective_settings = _coerce_settings(
-        settings,
-        output_dir=Path(output_dir) / model_name if output_dir is not None else settings.output_dir / model_name,
-        minimum_observations=min_observations,
-    )
+    """Run one deterministic shard of the sensor-analysis suite."""
+    if shard_count < 1 or not 0 <= shard_index < shard_count or checkpoint_models < 1:
+        raise ValueError("Invalid shard count, shard index, or checkpoint size.")
+    if not save_outputs and shard_count != 1:
+        raise ValueError("Sharded runs require output checkpoints.")
+    model_name = _resolve_model_name(pollutant_group_kind=pollutant_group_kind, pollutant_group=pollutant_group, pollutants=pollutants)
+    effective_settings = _coerce_settings(settings, output_dir=Path(output_dir) / model_name if output_dir is not None else settings.output_dir / model_name, minimum_observations=min_observations)
     prepared = build_analysis_data(effective_settings)
-    pollutant_selection = select_pollutants(
-        prepared.pollutant_catalog,
-        group_kind=pollutant_group_kind,
-        group_name=pollutant_group,
-        explicit_pollutants=pollutants,
-        minimum_observations=effective_settings.minimum_observations,
-    )
-    specs = build_model_specs(
-        effective_settings,
-        pollutant_selection,
-        subclass_selection=land_cover_subclasses,
-        max_distance_step=max_distance_step,
-    )
-    pollutant_meta = pollutant_lookup(prepared.pollutant_catalog)
-
+    selection = select_pollutants(prepared.pollutant_catalog, group_kind=pollutant_group_kind, group_name=pollutant_group, explicit_pollutants=pollutants, minimum_observations=effective_settings.minimum_observations)
+    specs = build_model_specs(effective_settings, selection, subclass_selection=land_cover_subclasses, max_distance_step=max_distance_step, model_families=model_families, climate_variables=prepared.climate_variables)
+    run_inputs = json.dumps({"group_kind": pollutant_group_kind, "group": pollutant_group, "pollutants": pollutants, "subclasses": land_cover_subclasses, "step": max_distance_step, "families": model_families}, sort_keys=True)
+    fingerprint = hashlib.sha256(f"{input_fingerprint(effective_settings)}:{run_inputs}".encode()).hexdigest()[:20]
+    groups = _build_work_groups(effective_settings, prepared.data, specs)
+    assignments = _assign_work_groups(groups, shard_count)
+    assigned_groups = [group for group in groups if assignments[group.key] == shard_index]
+    assigned_ids = [spec.spec_id for group in assigned_groups for spec in group.specs]
+    if save_outputs:
+        write_shard_metadata(effective_settings.output_dir, fingerprint, shard_index, shard_count, assigned_ids, effective_settings)
+    completed = completed_spec_ids(effective_settings.output_dir, fingerprint, shard_index) if save_outputs and resume else set()
     result_frames: list[pd.DataFrame] = []
     manifest_rows: list[dict[str, object]] = []
-
-    logger.info("Running %d model specification(s).", len(specs))
-    for index, spec in enumerate(specs, start=1):
-        logger.info(
-            "Model %d/%d: pollutant=%s subclass=%s step=%s",
-            index,
-            len(specs),
-            spec.pollutant,
-            spec.land_cover_subclass,
-            spec.distance_step_name,
-        )
-        meta = pollutant_meta[spec.pollutant]
-        try:
-            tidy_frame, nobs = _run_model(effective_settings, prepared.data, spec)
-            result_frames.append(tidy_to_records(tidy_frame, spec, meta, nobs))
-            manifest_rows.append(
-                manifest_record(spec, meta, status="ok", nobs=nobs)
-            )
-        except Exception as exc:  # pragma: no cover - exercised in CLI/integration flows
-            logger.warning(
-                "Model failed for pollutant=%s subclass=%s step=%s: %s",
-                spec.pollutant,
-                spec.land_cover_subclass,
-                spec.distance_step_name,
-                exc,
-            )
-            manifest_rows.append(
-                manifest_record(
-                    spec,
-                    meta,
-                    status="failed",
-                    nobs=0,
-                    error=str(exc),
-                )
-            )
-
-    results = (
-        pd.concat(result_frames, ignore_index=True)
-        if result_frames
-        else pd.DataFrame()
-    )
-    manifest = pd.DataFrame.from_records(manifest_rows)
-    summary = {
-        "models_total": int(len(manifest_rows)),
-        "models_succeeded": int((manifest["status"] == "ok").sum()) if not manifest.empty else 0,
-        "models_failed": int((manifest["status"] == "failed").sum()) if not manifest.empty else 0,
-        "model_name": model_name,
-        "pollutants": list(pollutant_selection.pollutants),
-        "land_cover_subclasses": land_cover_subclasses or list(effective_settings.land_cover_subclasses),
-        "max_distance_step": max_distance_step or len(effective_settings.distance_buckets),
-        "minimum_observations": effective_settings.minimum_observations,
-    }
-    run = SensorAnalysisRun(
-        results=results,
-        manifest=manifest,
-        summary=summary,
-        output_dir=effective_settings.output_dir,
-    )
+    pending_results: list[pd.DataFrame] = []
+    pending_manifest: list[dict[str, object]] = []
+    chunk_index = len(list(shard_dir(effective_settings.output_dir, fingerprint, shard_index).glob("chunk-*"))) if save_outputs else 0
+    lasso_worker_count = _resolve_lasso_jobs(effective_settings, lasso_jobs)
+    logger.info("Running shard %d/%d with %d model specification(s).", shard_index + 1, shard_count, len(assigned_ids))
+    for group in assigned_groups:
+        remaining = [spec for spec in group.specs if spec.spec_id not in completed]
+        if not remaining:
+            continue
+        group.specs = remaining
+        group_results, group_manifest = _records_for_group(effective_settings, prepared.data, group, pollutant_lookup(prepared.pollutant_catalog), lasso_jobs=lasso_worker_count)
+        result_frames.extend(group_results); manifest_rows.extend(group_manifest)
+        pending_results.extend(group_results); pending_manifest.extend(group_manifest)
+        if save_outputs and len(pending_manifest) >= checkpoint_models:
+            write_chunk(effective_settings.output_dir, fingerprint, shard_index, chunk_index, pd.concat(pending_results, ignore_index=True) if pending_results else pd.DataFrame(), pd.DataFrame.from_records(pending_manifest))
+            chunk_index += 1; pending_results = []; pending_manifest = []
+    if save_outputs and pending_manifest:
+        write_chunk(effective_settings.output_dir, fingerprint, shard_index, chunk_index, pd.concat(pending_results, ignore_index=True) if pending_results else pd.DataFrame(), pd.DataFrame.from_records(pending_manifest))
     if save_outputs:
-        save_run(run, settings_payload=asdict(effective_settings))
-    return run
+        mark_shard_complete(effective_settings.output_dir, fingerprint, shard_index)
+        if shard_count == 1:
+            return merge_shards(effective_settings.output_dir, fingerprint, 1, effective_settings)
+    results = pd.concat(result_frames, ignore_index=True) if result_frames else pd.DataFrame()
+    manifest = pd.DataFrame.from_records(manifest_rows)
+    return SensorAnalysisRun(results, manifest, {"run_fingerprint": fingerprint, "shard_index": shard_index, "shard_count": shard_count}, effective_settings.output_dir)
 
 
-__all__ = ["run_suite"]
+def merge_suite(settings: SensorAnalysisSettings, *, run_dir: str | Path, run_fingerprint: str | None, expected_shards: int) -> SensorAnalysisRun:
+    """Publish canonical outputs from completed shard checkpoints."""
+    return merge_shards(Path(run_dir), run_fingerprint, expected_shards, settings)
+
+
+__all__ = ["merge_suite", "run_suite"]

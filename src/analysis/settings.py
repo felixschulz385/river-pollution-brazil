@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 from typing import TypeAlias
 
 
@@ -17,6 +18,18 @@ class ControlVariable:
     source_column: str
     scaled_column: str
     scale: float = 1.0
+
+
+@dataclass(frozen=True)
+class ClimateVariable:
+    """Definition of one upstream climate variable."""
+
+    source_column: str
+    scaled_column: str
+    scale: float = 1.0
+    distance_bucket: str | None = None
+    variable_name: str | None = None
+    window_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -54,16 +67,54 @@ FixedEffectSpec: TypeAlias = str | tuple[str, ...] | list[str]
 
 
 @dataclass(frozen=True)
+class LassoSettings:
+    """Hyperparameters for Post-LASSO selection."""
+
+    cv: int = 5
+    alphas: int = 100
+    eps: float = 1e-3
+    random_state: int = 0
+    # Random coordinate updates converge more reliably for the highly
+    # correlated climate-by-land-cover design than cyclic updates.
+    selection: str = "random"
+    tol: float = 1e-3
+    max_iter: int = 10_000
+    # Resolved at runtime from an explicit override or SLURM_CPUS_PER_TASK.
+    n_jobs: int | None = None
+    # Candidate pruning makes the fast Gram path safe for the tall panels.
+    precompute: bool = True
+    # A land-cover x climate interaction is near-collinear with the climate
+    # main effect whenever the land-cover share barely varies within a
+    # station/year (interaction ~= constant * climate after FE demeaning).
+    # That collinearity is what drives LassoCV non-convergence and the
+    # downstream ill-conditioned/rank-deficient OLS failures observed across
+    # most post_lasso specs. 1 - 1e-10 only catches literal duplicate
+    # columns; 0.99 (VIF ~50) also catches this near-collinearity while
+    # still keeping candidates that are genuinely distinct.
+    near_duplicate_correlation: float = 0.99
+    standardize: bool = True
+
+
+@dataclass(frozen=True)
 class SensorAnalysisSettings:
     """Default configuration for the sensor analysis suite."""
 
     # Paths
     project_root: Path = PROJECT_ROOT
     sensor_data_path: Path = PROJECT_ROOT / "data/sensor_data/water_quality_assembled.parquet"
-    land_cover_path: Path = PROJECT_ROOT / "data/land_cover/land_cover_sensor_upstream.parquet"
+    land_cover_path: Path = PROJECT_ROOT / "data/land_cover/land_cover_assembled_sensor.parquet"
+    climate_data_path: Path | None = PROJECT_ROOT / "data/climate/processed/climate_assembled_sensor.parquet"
     transformations_path: Path = PROJECT_ROOT / "data/sensor_data/water_quality_transformations.json"
     trenches_path: Path = PROJECT_ROOT / "data/river_network/trenches.parquet"
     output_dir: Path = PROJECT_ROOT / "output/analysis/sensor_data"
+    sensor_id_column: str = "station_code"
+    sensor_id_aliases: tuple[str, ...] = ("sensor_id", "station_code")
+    datetime_column: str = "datetime"
+    date_column: str = "date"
+    climate_join_keys: tuple[str, str] = ("station_code", "date")
+    climate_column_prefix: str = "cl_"
+    climate_count_suffix: str = "_n"
+    climate_interaction_mode: str = "same_bucket"
 
     # Land-cover regressors
     distance_buckets: tuple[str, ...] = (
@@ -74,8 +125,12 @@ class SensorAnalysisSettings:
         "250_500km",
         "500km_plus",
     )
+    # `c0` ("not observed"/NA) is excluded: it is a data-coverage artifact,
+    # not a real land-cover type, and its share is typically near-constant
+    # within a station/year — as a forced regressor in every spec, it was
+    # rank-deficient after FE demeaning across nearly every pollutant and
+    # distance bucket (see `_rank_revealing_selected_terms` failures).
     land_cover_subclasses: tuple[str, ...] = (
-        "c0",
         "c1",
         "c2",
         "c3",
@@ -102,11 +157,14 @@ class SensorAnalysisSettings:
     )
     fixed_effects: tuple[FixedEffectSpec, ...] = (
         "station_code",
-        ("quarter", "year", "system"),
+        #("quarter", "system"),
+        ("year", "system"),
     )
     cluster_variable: str = "station_code"
     vcov_type: str = "CRV1"
     minimum_observations: int = 5_000
+    map_tolerance: float = 1e-8
+    map_max_iterations: int = 1_000
 
     # Pollutant grouping
     importance_tiers: tuple[ImportanceTier, ...] = (
@@ -129,9 +187,13 @@ class SensorAnalysisSettings:
             scale=100.0,
         ),
     )
+    climate_variables: tuple[ClimateVariable, ...] = ()
+    model_families: tuple[str, ...] = ("crude_twfe", "post_lasso")
+    lasso_settings: LassoSettings = field(default_factory=LassoSettings)
 
     # Pollutant catalog exclusions
     excluded_pollutant_columns: tuple[str, ...] = (
+        "sensor_id",
         "station_code",
         "datetime",
         "date",
@@ -182,7 +244,24 @@ class SensorAnalysisSettings:
             "c4": "Non-vegetated area",
             "c40": "Urban area",
             "c41": "Mining",
+            "c42": "Other non-vegetated area",
             "c5": "Water",
+        }
+    )
+    distance_bucket_labels: dict[str, str] = field(
+        default_factory=lambda: {
+            "0_10km": "0-10 km",
+            "10_50km": "10-50 km",
+            "50_100km": "50-100 km",
+            "100_250km": "100-250 km",
+            "250_500km": "250-500 km",
+            "500km_plus": "500+ km",
+        }
+    )
+    model_family_labels: dict[str, str] = field(
+        default_factory=lambda: {
+            "crude_twfe": "Crude TWFE",
+            "post_lasso": "Post-LASSO",
         }
     )
 
@@ -196,6 +275,89 @@ class SensorAnalysisSettings:
             f"{self.land_cover_source_column(bucket, subclass)}"
             f"{self.land_cover_transform.column_suffix()}"
         )
+
+    def interaction_column(self, land_cover_column: str, climate_column: str) -> str:
+        """Return the analysis column name for a land-cover and climate interaction."""
+        return f"{land_cover_column}__x__{climate_column}"
+
+    def climate_scaled_column(self, source_column: str) -> str:
+        """Return the analysis column name for a climate regressor."""
+        return f"{source_column}__scaled"
+
+    def climate_matches_bucket(
+        self,
+        climate_bucket: str | None,
+        land_cover_bucket: str,
+    ) -> bool:
+        """Return whether a climate regressor can interact with a land-cover bucket."""
+        if climate_bucket is None:
+            return True
+        if self.climate_interaction_mode == "all":
+            return True
+        if self.climate_interaction_mode == "same_bucket":
+            return climate_bucket == land_cover_bucket
+        if self.climate_interaction_mode == "cumulative":
+            try:
+                climate_index = self.distance_buckets.index(climate_bucket)
+                land_cover_index = self.distance_buckets.index(land_cover_bucket)
+            except ValueError:
+                return False
+            return climate_index <= land_cover_index
+        raise ValueError(
+            "Unsupported climate interaction mode "
+            f"`{self.climate_interaction_mode}`. Expected one of "
+            "`same_bucket`, `cumulative`, `all`."
+        )
+
+    def parse_climate_source_column(self, column: str) -> ClimateVariable | None:
+        """Parse a climate source column assembled on the sensor panel."""
+        pattern = (
+            rf"^{re.escape(self.climate_column_prefix)}"
+            rf"({'|'.join(re.escape(bucket) for bucket in self.distance_buckets)})"
+            rf"_(.+)$"
+        )
+        match = re.match(pattern, column)
+        if match is None:
+            return None
+        bucket = match.group(1)
+        suffix = match.group(2)
+        if suffix == self.climate_count_suffix.lstrip("_"):
+            return None
+        variable_name, _, window_name = suffix.rpartition("_")
+        if not variable_name:
+            variable_name = suffix
+            window_name = None
+        return ClimateVariable(
+            source_column=column,
+            scaled_column=self.climate_scaled_column(column),
+            scale=1.0,
+            distance_bucket=bucket,
+            variable_name=variable_name,
+            window_name=window_name or None,
+        )
+
+    def discover_climate_variables(
+        self,
+        columns: list[str] | tuple[str, ...],
+    ) -> tuple[ClimateVariable, ...]:
+        """Infer all available climate regressors from assembled columns."""
+        discovered: list[ClimateVariable] = []
+        seen: set[str] = set()
+        for column in columns:
+            parsed = self.parse_climate_source_column(column)
+            if parsed is None or parsed.source_column in seen:
+                continue
+            discovered.append(parsed)
+            seen.add(parsed.source_column)
+        return tuple(discovered)
+
+    def distance_bucket_label(self, bucket: str) -> str:
+        """Return a human-readable distance-bucket label."""
+        return self.distance_bucket_labels.get(bucket, bucket.replace("_", " "))
+
+    def model_family_label(self, family: str) -> str:
+        """Return a human-readable model-family label."""
+        return self.model_family_labels.get(family, family.replace("_", " ").title())
 
     def resolve_fixed_effect_name(self, effect: FixedEffectSpec) -> str:
         """Return the materialized column name for a fixed effect."""
@@ -212,12 +374,14 @@ DEFAULT_SETTINGS = SensorAnalysisSettings()
 
 
 __all__ = [
+    "ClimateVariable",
     "ControlVariable",
     "DEFAULT_SETTINGS",
     "FixedEffectSpec",
     "FixedEffectVariable",
     "ImportanceTier",
     "LandCoverTransform",
+    "LassoSettings",
     "PROJECT_ROOT",
     "SensorAnalysisSettings",
 ]

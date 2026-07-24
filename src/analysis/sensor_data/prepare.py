@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 import pandas as pd
@@ -24,16 +24,33 @@ class PreparedAnalysisData:
     pollutant_catalog: list[PollutantDefinition]
     land_cover_catalog: list
     transformations: dict[str, dict[str, object]]
+    climate_variables: tuple
+    climate_columns: tuple[str, ...]
+    interaction_columns: tuple[str, ...]
 
 
-def _apply_transform(series: pd.Series, transform_name: str) -> pd.Series:
+_SUPPORTED_OUTCOME_TRANSFORMS = ("identity", "log10_1p")
+
+
+def _apply_transform(series: pd.Series, transform_name: str, *, pollutant: str = "") -> pd.Series:
     if transform_name == "identity":
         return series.astype(float)
     if transform_name == "log10_1p":
         values = series.astype(float)
-        values = values.where(values >= 0)
+        negative_rows = values < 0
+        if negative_rows.any():
+            logger.warning(
+                "Dropping %d negative `%s` observations before log10_1p transform "
+                "(log10_1p is undefined for negative values).",
+                int(negative_rows.sum()),
+                pollutant or series.name,
+            )
+        values = values.where(~negative_rows)
         return np.log10(1.0 + values)
-    raise ValueError(f"Unsupported transform `{transform_name}`.")
+    raise ValueError(
+        f"Unsupported transform `{transform_name}` for pollutant `{pollutant}`. "
+        f"Supported transforms: {', '.join(_SUPPORTED_OUTCOME_TRANSFORMS)}."
+    )
 
 
 def _build_transformed_columns(
@@ -47,6 +64,7 @@ def _build_transformed_columns(
         transformed_series[transformed_column] = _apply_transform(
             frame[pollutant.name],
             pollutant.transform,
+            pollutant=pollutant.name,
         )
     return pd.DataFrame(transformed_series, index=frame.index)
 
@@ -63,7 +81,10 @@ def _apply_land_cover_transform(
         return np.log(values.where(values > 0))
     if transform.kind == "log10":
         return np.log10(values.where(values > 0))
-    raise ValueError(f"Unsupported land-cover transform `{transform.kind}`.")
+    raise ValueError(
+        f"Unsupported land-cover transform `{transform.kind}`. "
+        "Supported transforms: identity, log, log10."
+    )
 
 
 def _build_land_cover_columns(
@@ -77,11 +98,50 @@ def _build_land_cover_columns(
     transformed_series: dict[str, pd.Series] = {}
     for bucket in settings.distance_buckets:
         for subclass in settings.land_cover_subclasses:
-            transformed_series[settings.land_cover_column(bucket, subclass)] = _apply_land_cover_transform(
+            transformed_series[
+                settings.land_cover_column(bucket, subclass)
+            ] = _apply_land_cover_transform(
                 frame[settings.land_cover_source_column(bucket, subclass)],
                 settings,
             )
     return pd.DataFrame(transformed_series, index=frame.index)
+
+
+def _build_scaled_columns(frame: pd.DataFrame, variables) -> pd.DataFrame:
+    """Build scaled controls or climate columns in one batch."""
+    scaled_series: dict[str, pd.Series] = {}
+    for variable in variables:
+        scaled_series[variable.scaled_column] = (
+            frame[variable.source_column].astype(float) / variable.scale
+        )
+    return pd.DataFrame(scaled_series, index=frame.index)
+
+
+def _build_interaction_columns(
+    frame: pd.DataFrame,
+    settings: SensorAnalysisSettings,
+) -> pd.DataFrame:
+    """Build all configured land-cover and climate interaction candidates."""
+    interaction_series: dict[str, pd.Series] = {}
+    climate_variables = settings.climate_variables
+    for bucket in settings.distance_buckets:
+        matching_climate_variables = [
+            variable
+            for variable in climate_variables
+            if settings.climate_matches_bucket(variable.distance_bucket, bucket)
+        ]
+        for subclass in settings.land_cover_subclasses:
+            land_cover_column = settings.land_cover_column(bucket, subclass)
+            for climate_variable in matching_climate_variables:
+                interaction_column = settings.interaction_column(
+                    land_cover_column,
+                    climate_variable.scaled_column,
+                )
+                interaction_series[interaction_column] = (
+                    frame[land_cover_column].astype(float)
+                    * frame[climate_variable.scaled_column].astype(float)
+                )
+    return pd.DataFrame(interaction_series, index=frame.index)
 
 
 def _extract_fixed_effect_variable(
@@ -123,7 +183,11 @@ def _fixed_effect_component(
 def _stringify_fixed_effect_component(series: pd.Series) -> pd.Series:
     numeric = pd.to_numeric(series, errors="coerce")
     if numeric.notna().any() and numeric.dropna().mod(1).eq(0).all():
-        return numeric.astype("Int64").astype("string")
+        # Re-mask NA positions explicitly: converting a nullable Int64 with
+        # missing values straight to StringDtype can stringify the missing
+        # marker into the literal text "<NA>" instead of preserving it as
+        # missing, which would merge unrelated rows into one bogus FE level.
+        return numeric.astype("Int64").astype("string").mask(numeric.isna())
     return series.astype("string")
 
 
@@ -162,62 +226,178 @@ def build_analysis_data(
     """Build a merged regression-ready sensor analysis panel."""
     inputs = load_analysis_inputs(settings)
     sensor_data = inputs.sensor_data.copy()
-    sensor_data["station_code"] = sensor_data["station_code"].astype(str)
-    sensor_data["datetime"] = pd.to_datetime(sensor_data["datetime"], errors="coerce")
-    sensor_data["date"] = pd.to_datetime(sensor_data["date"], errors="coerce")
-    sensor_data["date"] = sensor_data["date"].fillna(sensor_data["datetime"])
-    missing_date_rows = sensor_data["date"].isna()
+    sensor_data[settings.sensor_id_column] = sensor_data[settings.sensor_id_column].astype(str)
+    # Normalize to day granularity so a stray time-of-day component (e.g.
+    # `date` synthesized from a full `datetime` in `load_sensor_data`)
+    # cannot silently miss the climate join, which matches on calendar day.
+    sensor_data[settings.date_column] = pd.to_datetime(
+        sensor_data[settings.date_column],
+        errors="coerce",
+    ).dt.normalize()
+    if settings.datetime_column in sensor_data.columns:
+        sensor_data[settings.datetime_column] = pd.to_datetime(
+            sensor_data[settings.datetime_column],
+            errors="coerce",
+        )
+    missing_date_rows = sensor_data[settings.date_column].isna()
     if missing_date_rows.any():
         logger.warning(
-            "Dropping %d sensor rows with missing date/datetime values.",
+            "Dropping %d sensor rows with missing date values.",
             int(missing_date_rows.sum()),
         )
         sensor_data = sensor_data.loc[~missing_date_rows].copy()
-    sensor_data["year"] = sensor_data["date"].dt.year.astype(int)
-    sensor_data["quarter"] = sensor_data["date"].dt.quarter.astype(int)
+    sensor_data["year"] = sensor_data[settings.date_column].dt.year.astype(int)
+    sensor_data["quarter"] = sensor_data[settings.date_column].dt.quarter.astype(int)
 
+    climate = inputs.climate.copy()
+    land_cover = inputs.land_cover.copy()
+    index_names = [
+        name
+        for name in land_cover.index.names
+        if name is not None and name not in land_cover.columns
+    ]
+    if index_names:
+        land_cover = land_cover.reset_index()
+
+    # Normalize join-key dtypes on both sides so a float/nullable-Int year or
+    # an un-stringified sensor id cannot silently fail to match: `merge`'s
+    # `validate="many_to_one"` only checks cardinality, not key type.
+    if settings.sensor_id_column in land_cover.columns:
+        land_cover[settings.sensor_id_column] = land_cover[settings.sensor_id_column].astype(str)
+    if "year" in land_cover.columns:
+        coerced_year = pd.to_numeric(land_cover["year"], errors="coerce")
+        invalid_year_rows = coerced_year.isna()
+        if invalid_year_rows.any():
+            logger.warning(
+                "Dropping %d land_cover rows with non-numeric year values.",
+                int(invalid_year_rows.sum()),
+            )
+            land_cover = land_cover.loc[~invalid_year_rows].copy()
+            coerced_year = coerced_year.loc[~invalid_year_rows]
+        land_cover["year"] = coerced_year.astype(int)
+
+    if settings.sensor_id_column in land_cover.columns:
+        land_cover_merge_keys = [settings.sensor_id_column, "year"]
+    elif "trench_id" in land_cover.columns:
+        land_cover_merge_keys = ["trench_id", "year"]
+    else:
+        raise ValueError(
+            "land_cover must contain either sensor-level keys "
+            f"({settings.sensor_id_column}, year) or trench-level keys (trench_id, year)."
+        )
+
+    sensor_row_count = int(len(sensor_data))
     merged = sensor_data.merge(
-        inputs.land_cover,
-        on=["station_code", "year"],
+        land_cover,
+        on=land_cover_merge_keys,
         how="left",
         validate="many_to_one",
         suffixes=("", "_land_cover"),
-    ).merge(
+        indicator="_land_cover_match",
+    )
+    land_cover_matched = int((merged["_land_cover_match"] == "both").sum())
+    if land_cover_matched < sensor_row_count:
+        logger.warning(
+            "%d of %d sensor rows have no matching land_cover row on %s; those rows will "
+            "be dropped once analysis columns are required to be complete.",
+            sensor_row_count - land_cover_matched,
+            sensor_row_count,
+            land_cover_merge_keys,
+        )
+    merged = merged.drop(columns="_land_cover_match")
+
+    if "trench_id_land_cover" in merged.columns:
+        trench_mismatch = (
+            merged["trench_id_land_cover"].notna()
+            & merged["trench_id"].notna()
+            & merged["trench_id_land_cover"].ne(merged["trench_id"])
+        )
+        if trench_mismatch.any():
+            logger.warning(
+                "Found %d row(s) where land-cover trench_id does not match "
+                "sensor-data trench_id.",
+                int(trench_mismatch.sum()),
+            )
+
+    if not climate.empty:
+        climate_key_sensor, climate_key_date = settings.climate_join_keys
+        climate[climate_key_sensor] = climate[climate_key_sensor].astype(str)
+        climate[climate_key_date] = pd.to_datetime(climate[climate_key_date], errors="coerce").dt.normalize()
+        if climate_key_date in merged.columns:
+            merged[climate_key_date] = pd.to_datetime(merged[climate_key_date], errors="coerce").dt.normalize()
+        merged = merged.merge(
+            climate,
+            on=list(settings.climate_join_keys),
+            how="left",
+            validate="many_to_one",
+            indicator="_climate_match",
+        )
+        climate_matched = int((merged["_climate_match"] == "both").sum())
+        if climate_matched < sensor_row_count:
+            logger.warning(
+                "%d of %d sensor rows have no matching climate row on %s; those rows will "
+                "be dropped once analysis columns are required to be complete.",
+                sensor_row_count - climate_matched,
+                sensor_row_count,
+                list(settings.climate_join_keys),
+            )
+        merged = merged.drop(columns="_climate_match")
+    merged = merged.merge(
         inputs.trenches,
         on="trench_id",
         how="left",
         validate="many_to_one",
     )
 
-    trench_mismatch = (
-        merged["trench_id_land_cover"].notna()
-        & merged["trench_id"].notna()
-        & merged["trench_id_land_cover"].ne(merged["trench_id"])
+    climate_variables = (
+        settings.climate_variables
+        if settings.climate_variables
+        else settings.discover_climate_variables(tuple(merged.columns))
     )
-    if trench_mismatch.any():
-        logger.warning(
-            "Found %d station-year row(s) where land-cover trench_id does not match "
-            "sensor-data trench_id.",
-            int(trench_mismatch.sum()),
-        )
+    effective_settings = (
+        settings
+        if climate_variables == settings.climate_variables
+        else replace(settings, climate_variables=climate_variables)
+    )
 
-    for control in settings.controls:
-        merged[control.scaled_column] = (
-            merged[control.source_column] / control.scale
-        )
-
-    fixed_effect_columns = _build_fixed_effect_columns(merged, settings)
-    land_cover_columns = _build_land_cover_columns(merged, settings)
-    replacement_columns = list(fixed_effect_columns.columns) + list(land_cover_columns.columns)
+    fixed_effect_columns = _build_fixed_effect_columns(merged, effective_settings)
+    control_columns = _build_scaled_columns(merged, effective_settings.controls)
+    climate_columns = _build_scaled_columns(merged, effective_settings.climate_variables)
+    land_cover_columns = _build_land_cover_columns(merged, effective_settings)
     merged = pd.concat(
-        [merged.drop(columns=replacement_columns, errors="ignore"), fixed_effect_columns, land_cover_columns],
+        [
+            merged,
+            control_columns,
+            climate_columns,
+            fixed_effect_columns,
+            land_cover_columns,
+        ],
+        axis=1,
+    )
+    interaction_columns = _build_interaction_columns(merged, effective_settings)
+    replacement_columns = (
+        list(fixed_effect_columns.columns)
+        + list(control_columns.columns)
+        + list(climate_columns.columns)
+        + list(land_cover_columns.columns)
+        + list(interaction_columns.columns)
+    )
+    merged = pd.concat(
+        [
+            merged.drop(columns=replacement_columns, errors="ignore"),
+            control_columns,
+            climate_columns,
+            fixed_effect_columns,
+            land_cover_columns,
+            interaction_columns,
+        ],
         axis=1,
     )
 
     pollutant_catalog = build_pollutant_catalog(
         merged,
         inputs.transformations,
-        settings,
+        effective_settings,
     )
     transformed_columns = _build_transformed_columns(merged, pollutant_catalog)
     merged = pd.concat([merged, transformed_columns], axis=1)
@@ -225,8 +405,11 @@ def build_analysis_data(
     return PreparedAnalysisData(
         data=merged,
         pollutant_catalog=pollutant_catalog,
-        land_cover_catalog=build_land_cover_catalog(settings),
+        land_cover_catalog=build_land_cover_catalog(effective_settings),
         transformations=inputs.transformations,
+        climate_variables=tuple(effective_settings.climate_variables),
+        climate_columns=tuple(climate_columns.columns),
+        interaction_columns=tuple(interaction_columns.columns),
     )
 
 
