@@ -36,9 +36,12 @@
 
 .venv/*
 .vscode/*
-data/*/**
+/data/
 aux/
 log/
+.pytest_tmp/*
+.pytest_tmp_grib/*
+**/secrets/
 output/documents/*/*/**
 output/presentations/
 output/analysis/
@@ -46,3 +49,4 @@ data/*/**
 api_creds
 setup/miniforge3/*
 **/scratch
+code/data/output/manual_*/

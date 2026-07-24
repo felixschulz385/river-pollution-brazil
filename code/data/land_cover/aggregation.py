@@ -25,36 +25,10 @@ from .constants import (
 from .preprocess import deduplicate_drainage_polygons
 from .river_network_import import rn_module
 from .schema import validate_land_cover_output_columns
+from shared.sensor_upstream import prepare_trench_adm2_matches, resolve_multi_seed_reachable_distances
 
 
 logger = logging.getLogger(__name__)
-
-
-def _reachable_distances_for_row(system_reachability, system_distance, row_idx):
-    """Return reachable upstream columns and aligned distances for one sparse row."""
-    reach_start = system_reachability.indptr[row_idx]
-    reach_end = system_reachability.indptr[row_idx + 1]
-    reachable_cols = system_reachability.indices[reach_start:reach_end]
-    if len(reachable_cols) == 0:
-        return reachable_cols, np.asarray([], dtype=float)
-
-    dist_start = system_distance.indptr[row_idx]
-    dist_end = system_distance.indptr[row_idx + 1]
-    distance_cols = system_distance.indices[dist_start:dist_end]
-    distance_vals = system_distance.data[dist_start:dist_end].astype(float, copy=False)
-
-    if len(distance_cols) == len(reachable_cols) and np.array_equal(
-        distance_cols,
-        reachable_cols,
-    ):
-        return reachable_cols, distance_vals
-
-    distance_lookup = dict(zip(distance_cols.tolist(), distance_vals.tolist()))
-    reachable_distances = np.asarray(
-        [distance_lookup.get(int(col), 0.0) for col in reachable_cols],
-        dtype=float,
-    )
-    return reachable_cols, reachable_distances
 
 
 def _normalize_network_frame(frame):
@@ -120,87 +94,6 @@ def _land_cover_feature_stem(lc_column):
     raise ValueError(f"Unsupported land-cover column for long output: {lc_column}")
 
 
-def _explode_trench_adm2_matches(rivers, trench_adm2_table=None):
-    """Expand trench-level ADM2 match data into one row per trench-ADM2 pair."""
-    if trench_adm2_table is not None and not trench_adm2_table.empty:
-        required_columns = {TRENCH_ID_COLUMN, "adm2"}
-        missing_columns = required_columns.difference(trench_adm2_table.columns)
-        if missing_columns:
-            raise ValueError(
-                "Saved trench ADM2 table is missing required columns: "
-                f"{sorted(missing_columns)}."
-            )
-        trench_adm2 = trench_adm2_table[[TRENCH_ID_COLUMN, "adm2"]].dropna(
-            subset=["adm2"]
-        )
-        trench_adm2 = trench_adm2.drop_duplicates(
-            subset=[TRENCH_ID_COLUMN, "adm2"],
-            keep="first",
-        )
-        return trench_adm2.merge(
-            rivers[[TRENCH_ID_COLUMN, rn_module.SYSTEM_ID_KEY]].drop_duplicates(),
-            on=TRENCH_ID_COLUMN,
-            how="left",
-            validate="many_to_one",
-        )
-
-    adm2_list_column = getattr(rn_module, "ADM2_LIST_COLUMN", None)
-    intersection_lengths_column = getattr(
-        rn_module,
-        "ADM2_INTERSECTION_LENGTHS_COLUMN",
-        None,
-    )
-    if adm2_list_column is None or adm2_list_column not in rivers.columns:
-        if "adm2" not in rivers.columns:
-            raise ValueError(
-                "River trench data must include either `adm2` or saved ADM2 list columns "
-                "for upstream aggregation."
-            )
-        trench_adm2 = rivers[[TRENCH_ID_COLUMN, rn_module.SYSTEM_ID_KEY, "adm2"]].copy()
-        trench_adm2 = trench_adm2.dropna(subset=["adm2"])
-        trench_adm2["intersection_length"] = np.nan
-        return trench_adm2
-
-    required_columns = {
-        TRENCH_ID_COLUMN,
-        rn_module.SYSTEM_ID_KEY,
-        adm2_list_column,
-        intersection_lengths_column,
-    }
-    missing_columns = required_columns.difference(rivers.columns)
-    if missing_columns:
-        raise ValueError(
-            "River trench data is missing ADM2 match columns: "
-            f"{sorted(missing_columns)}."
-        )
-
-    trench_adm2 = rivers[
-        [
-            TRENCH_ID_COLUMN,
-            rn_module.SYSTEM_ID_KEY,
-            adm2_list_column,
-            intersection_lengths_column,
-        ]
-    ].copy()
-    trench_adm2 = trench_adm2.rename(
-        columns={
-            adm2_list_column: "adm2",
-            intersection_lengths_column: "intersection_length",
-        }
-    )
-    trench_adm2["adm2"] = trench_adm2["adm2"].apply(
-        lambda values: values if isinstance(values, list) else []
-    )
-    trench_adm2["intersection_length"] = trench_adm2["intersection_length"].apply(
-        lambda values: values if isinstance(values, list) else []
-    )
-    trench_adm2 = trench_adm2.explode(
-        ["adm2", "intersection_length"],
-        ignore_index=True,
-    )
-    return trench_adm2.dropna(subset=["adm2"])
-
-
 def aggregate_along_rivers(
     self,
     land_cover_path=DEFAULT_ASSEMBLY_LAND_COVER_PATH,
@@ -246,9 +139,10 @@ def aggregate_along_rivers(
             f"{sorted(missing_drainage_columns)}."
         )
 
-    trench_adm2_matches = _explode_trench_adm2_matches(
-        rivers,
-        getattr(network, "trench_adm2_table", None),
+    trench_adm2_matches = prepare_trench_adm2_matches(
+        network,
+        rn_module=rn_module,
+        trench_id_column=TRENCH_ID_COLUMN,
     )
     trench_columns = [TRENCH_ID_COLUMN, rn_module.SYSTEM_ID_KEY, "adm2"]
     trench_lookup = drainage_polygons[[TRENCH_ID_COLUMN]].merge(
@@ -300,26 +194,6 @@ def aggregate_along_rivers(
             "Recompute river matrices with RiverNetwork.compute_distance_matrices()."
         )
 
-    system_trench_tables = {
-        int(system_id): system_trenches[[TRENCH_ID_COLUMN, rn_module.TRENCH_INDEX_COLUMN]]
-        .sort_values(rn_module.TRENCH_INDEX_COLUMN)
-        .reset_index(drop=True)
-        for system_id, system_trenches in rivers.groupby(rn_module.SYSTEM_ID_KEY)
-    }
-    system_trench_id_arrays = {
-        system_id: system_trenches[TRENCH_ID_COLUMN].to_numpy(dtype=np.int64)
-        for system_id, system_trenches in system_trench_tables.items()
-    }
-    system_trench_positions = {
-        system_id: dict(
-            zip(
-                system_trenches[TRENCH_ID_COLUMN].to_numpy(dtype=np.int64),
-                system_trenches[rn_module.TRENCH_INDEX_COLUMN].to_numpy(dtype=np.int64),
-            )
-        )
-        for system_id, system_trenches in system_trench_tables.items()
-    }
-
     def process_adm2(adm2_id):
         """Process a single ADM2 unit for all years."""
         try:
@@ -328,70 +202,19 @@ def aggregate_along_rivers(
             if adm2_trenches is None or adm2_trenches.empty:
                 return None
 
-            trench_distance_frames = []
-            for system_id, system_adm2_trenches in adm2_trenches.groupby(
-                rn_module.SYSTEM_ID_KEY
-            ):
-                system_id = int(system_id)
-                system_trench_ids = system_trench_id_arrays.get(
-                    system_id,
-                    np.asarray([], dtype=np.int64),
-                )
-                if len(system_trench_ids) == 0:
-                    continue
-
-                trench_position_lookup = system_trench_positions[system_id]
-                seed_positions = np.asarray(
-                    [
-                        trench_position_lookup[trench_id]
-                        for trench_id in system_adm2_trenches[TRENCH_ID_COLUMN]
-                        if trench_id in trench_position_lookup
-                    ],
-                    dtype=np.int64,
-                )
-                if len(seed_positions) == 0:
-                    continue
-
-                system_reachability = network.trench_reachability_matrices[system_id][
-                    seed_positions, :
-                ].tocsr()
-                system_distance = network.trench_distance_matrices[system_id][
-                    seed_positions, :
-                ].tocsr()
-
-                min_distances = np.full(len(system_trench_ids), np.inf)
-                for row_idx in range(system_reachability.shape[0]):
-                    reachable_cols, reachable_distances = _reachable_distances_for_row(
-                        system_reachability,
-                        system_distance,
-                        row_idx,
-                    )
-                    if len(reachable_cols) == 0:
-                        continue
-                    np.minimum.at(min_distances, reachable_cols, reachable_distances)
-
-                reachable_mask = np.isfinite(min_distances)
-                if not np.any(reachable_mask):
-                    continue
-
-                trench_distance_frames.append(
-                    pd.DataFrame(
-                        {
-                            TRENCH_ID_COLUMN: system_trench_ids[reachable_mask],
-                            "upstream_distance": min_distances[reachable_mask],
-                        }
-                    )
-                )
-
-            if not trench_distance_frames:
-                return None
-
-            trench_distance_lookup = (
-                pd.concat(trench_distance_frames, ignore_index=True)
-                .groupby(TRENCH_ID_COLUMN, as_index=False)["upstream_distance"]
-                .min()
-                .set_index(TRENCH_ID_COLUMN)["upstream_distance"]
+            trench_distance_lookup = resolve_multi_seed_reachable_distances(
+                network,
+                adm2_trenches,
+                location_column=TRENCH_ID_COLUMN,
+                distance_column="upstream_distance",
+                system_column=rn_module.SYSTEM_ID_KEY,
+                position_column=rn_module.TRENCH_INDEX_COLUMN,
             )
+            if trench_distance_lookup.empty:
+                return None
+            trench_distance_lookup = trench_distance_lookup.set_index(TRENCH_ID_COLUMN)[
+                "upstream_distance"
+            ]
             trench_distance_lookup = _apply_shifted_origin(
                 trench_distance_lookup,
                 trench_lengths,

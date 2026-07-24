@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 DATA_MODULES = (
     "health",
+    "climate",
     "water-quality",
     "land-cover",
     "population",
@@ -44,6 +45,10 @@ class DataSourceFactory:
             from code.data.health import health
 
             return health()
+        if module == "climate":
+            from code.data.climate import climate
+
+            return climate(root_dir=kwargs.get("root_dir", "."))
         if module == "water-quality":
             from code.data.sensor_data.sensor_data import sensor_data
 
@@ -108,6 +113,43 @@ def _add_data_module_parsers(subparsers, module_dest: str) -> None:
         choices=["all", "mortality", "hospitalization", "birth"],
         default="all",
     )
+
+    climate_parser = subparsers.add_parser("climate", help="Process climate data")
+    climate_parser.set_defaults(**{module_dest: "climate"})
+    climate_parser.add_argument("action", choices=["fetch", "preprocess", "assemble"])
+    climate_parser.add_argument("--root-dir", default=".")
+    climate_parser.add_argument(
+        "--subtype",
+        default="cloud_cover",
+        choices=["cloud_cover", "era5_land_hourly", "era5_land_daily"],
+    )
+    climate_parser.add_argument("--stage", default="all", choices=["all", "zarr", "parquet"])
+    climate_parser.add_argument(
+        "--variant",
+        default="sensor_upstream_distance_buckets",
+        choices=["sensor_upstream_distance_buckets", "adm2_upstream_yearly"],
+    )
+    climate_parser.add_argument(
+        "--climate-path",
+        default="data/climate/processed/era5_land.parquet",
+    )
+    climate_parser.add_argument(
+        "--water-quality-path",
+        default="data/sensor_data/water_quality.parquet",
+    )
+    climate_parser.add_argument(
+        "--stations-rivers-path",
+        default="data/sensor_data/stations_rivers.parquet",
+    )
+    climate_parser.add_argument("--river-network-path", default="data/river_network")
+    climate_parser.add_argument("--output", default=None)
+    climate_parser.add_argument(
+        "--kernel",
+        default="gaussian",
+        choices=["uniform", "triangular", "epanechnikov", "gaussian", "exponential"],
+    )
+    climate_parser.add_argument("--h", type=float, default=1000000.0)
+    climate_parser.add_argument("--n_jobs", type=int, default=None)
 
     wq_parser = subparsers.add_parser("water-quality", help="Process water quality data")
     wq_parser.set_defaults(**{module_dest: "water-quality"})
@@ -245,6 +287,8 @@ def _run_data_cli(args: argparse.Namespace) -> int:
                 area=args.area,
                 year=args.year,
             )
+        elif data_module == "climate":
+            agent = DataSourceFactory.create(data_module, root_dir=args.root_dir)
         elif data_module == "water-quality":
             agent = DataSourceFactory.create(
                 data_module,
@@ -290,6 +334,23 @@ def _run_data_cli(args: argparse.Namespace) -> int:
                     stations_rivers_path=args.stations_rivers_path,
                     river_network_path=args.river_network_dir,
                     output_path=args.output,
+                    n_jobs=args.n_jobs,
+                )
+        elif data_module == "climate":
+            if args.action == "fetch":
+                agent.fetch(subtype=args.subtype)
+            elif args.action == "preprocess":
+                agent.preprocess(subtype=args.subtype, stage=args.stage, n_jobs=args.n_jobs)
+            elif args.action == "assemble":
+                agent.assemble(
+                    variant=args.variant,
+                    climate_path=args.climate_path,
+                    water_quality_path=args.water_quality_path,
+                    stations_rivers_path=args.stations_rivers_path,
+                    river_network_path=args.river_network_path,
+                    output_path=args.output,
+                    kernel=args.kernel,
+                    h=args.h,
                     n_jobs=args.n_jobs,
                 )
         elif data_module == "land-cover":

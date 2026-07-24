@@ -7,8 +7,6 @@ import numpy as np
 import pandas as pd
 import rioxarray as rxr
 from joblib import Parallel, delayed
-from odc.geo.geom import Geometry
-from odc.geo.xr import ODCExtensionDa
 
 from .constants import (
     LAND_COVER_CLASS_PREFIX,
@@ -16,8 +14,9 @@ from .constants import (
     TRENCH_ID_COLUMN,
     YEAR_COLUMN,
 )
-from .. import river_network as rn_module
+from .river_network_import import rn_module
 from .schema import subclass_summary_id
+from shared.spatial_tabular import geometry_with_crs
 
 
 logger = logging.getLogger(__name__)
@@ -68,10 +67,6 @@ def deduplicate_drainage_polygons(drainage_polygons):
         keep="first",
     )
     return drainage_polygons.reset_index(drop=True)
-
-
-def add_crs(geom, crs=4326):
-    return Geometry(geom, crs)
 
 
 def create_mappers(legend_path):
@@ -141,7 +136,7 @@ def _year_output_data(trench_ids, output_columns):
 
 def _extract_value_counts(lc, geometry):
     """Extract finite raster values and counts for one polygon crop."""
-    cropped = lc.odc.crop(add_crs(geometry))
+    cropped = lc.odc.crop(geometry_with_crs(geometry))
     arr = np.asarray(cropped).reshape(-1)
     arr = arr[np.isfinite(arr)]
 

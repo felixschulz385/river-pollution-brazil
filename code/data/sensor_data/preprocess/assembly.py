@@ -126,6 +126,46 @@ def _prepare_streamflow_features(streamflow):
     ].reset_index(drop=True)
 
 
+def _collapse_same_day_observations(water_quality):
+    _validate_columns(
+        water_quality,
+        [STATION_CODE_COLUMN, DATETIME_COLUMN, DATE_COLUMN],
+        "water-quality",
+    )
+    if water_quality.empty:
+        return water_quality
+
+    collapsed = water_quality.sort_values(
+        [STATION_CODE_COLUMN, DATE_COLUMN, DATETIME_COLUMN],
+        kind="mergesort",
+    )
+    group_columns = [STATION_CODE_COLUMN, DATE_COLUMN]
+    duplicate_mask = collapsed.duplicated(subset=group_columns, keep=False)
+    if not duplicate_mask.any():
+        return collapsed.reset_index(drop=True)
+
+    duplicate_rows = collapsed.loc[duplicate_mask].copy()
+    duplicate_rows = (
+        duplicate_rows.groupby(
+            group_columns,
+            sort=False,
+            observed=True,
+            as_index=False,
+            dropna=False,
+        )
+        .first()
+    )
+
+    collapsed = pd.concat(
+        [collapsed.loc[~duplicate_mask], duplicate_rows],
+        ignore_index=True,
+    ).sort_values(
+        [STATION_CODE_COLUMN, DATE_COLUMN, DATETIME_COLUMN],
+        kind="mergesort",
+    )
+    return collapsed.loc[:, water_quality.columns].reset_index(drop=True)
+
+
 def _validate_network(network):
     if network.trenches is None:
         raise ValueError("River network must include trench data.")
@@ -464,6 +504,14 @@ def assemble_sensor_data(
         errors="coerce",
     )
     assembled[DATE_COLUMN] = assembled[DATETIME_COLUMN].dt.normalize()
+    raw_observation_count = len(assembled)
+    assembled = _collapse_same_day_observations(assembled)
+    collapsed_observation_count = raw_observation_count - len(assembled)
+    if collapsed_observation_count > 0:
+        logger.info(
+            "Collapsed %s duplicate water-quality observation row(s) within station-day groups.",
+            collapsed_observation_count,
+        )
 
     logger.info("Loading cleaned streamflow data from %s.", streamflow_path)
     streamflow = pd.read_parquet(streamflow_path)
@@ -527,9 +575,9 @@ def assemble_sensor_data(
     assembled["streamflow_total_weight"] = assembled["streamflow_total_weight"].fillna(0.0)
 
     assembled = assembled.sort_values(
-        [STATION_CODE_COLUMN, DATETIME_COLUMN],
+        [STATION_CODE_COLUMN, DATE_COLUMN, DATETIME_COLUMN],
         kind="mergesort",
-    ).set_index([STATION_CODE_COLUMN, DATETIME_COLUMN])
+    ).set_index([STATION_CODE_COLUMN, DATE_COLUMN])
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     assembled.to_parquet(output_path, index=True)
