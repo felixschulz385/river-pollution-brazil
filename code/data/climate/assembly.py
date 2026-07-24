@@ -11,6 +11,7 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 
 from .constants import (
+    ADJUSTED_DISTANCE_COLUMN,
     ADM2_ID_COLUMN,
     ADM2_UPSTREAM_YEARLY_VARIANT,
     ANNUAL_MAX_VARIABLES,
@@ -18,6 +19,7 @@ from .constants import (
     ANNUAL_MIN_VARIABLES,
     ANNUAL_SUM_VARIABLES,
     CLIMATE_ASSEMBLE_VARIANTS,
+    CLIMATE_VARIABLE_COLUMN,
     DATE_COLUMN,
     DATETIME_COLUMN,
     DEFAULT_ADM2_UPSTREAM_YEARLY_OUTPUT_PATH,
@@ -43,8 +45,6 @@ from land_cover.preprocess import deduplicate_drainage_polygons
 from river_network import RiverNetwork
 import river_network as rn_module
 from shared.sensor_upstream import (
-    build_target_reachability_lookup,
-    label_values_by_intervals,
     prepare_entity_links,
     prepare_observation_targets,
     prepare_trench_adm2_matches,
@@ -149,27 +149,276 @@ def _annual_aggregate_sql(climate_columns, *, source_alias):
     return ",\n                ".join(expressions)
 
 
-def _assign_distance_buckets(distances):
-    return label_values_by_intervals(distances, SENSOR_DISTANCE_BUCKETS)
+def _normalize_network_frame(frame):
+    """Return a copy with a simple RangeIndex to avoid index/column ambiguity."""
+    if frame is None:
+        return None
+    return frame.reset_index(drop=True).copy()
 
 
-def _sensor_bucket_count_column(bucket_name):
-    return f"cl_{bucket_name}_n"
+def _load_sensor_river_network(river_network_path):
+    """Load the river network and validate tables needed for trench aggregation."""
+    logger.info("Loading river network from %s", river_network_path)
+    network = RiverNetwork()
+    network.load(str(river_network_path))
+    if network.trenches is None:
+        raise ValueError("River network must include trench data.")
+    if not network.trench_reachability_matrices:
+        raise ValueError("River network must have trench reachability data computed.")
+    if not network.trench_distance_matrices:
+        raise ValueError("River network must have trench distance data computed.")
+
+    required_columns = {
+        TRENCH_ID_COLUMN,
+        rn_module.SYSTEM_ID_KEY,
+        rn_module.TRENCH_INDEX_COLUMN,
+        "distance",
+    }
+    missing_columns = required_columns.difference(network.trenches.columns)
+    if missing_columns:
+        raise ValueError(
+            "River trench data is missing matrix index columns: "
+            f"{sorted(missing_columns)}."
+        )
+    network.trenches = _normalize_network_frame(network.trenches)
+    return network
 
 
-def _sensor_bucket_mean_column(bucket_name, variable_name, window_label):
-    return f"cl_{bucket_name}_{variable_name}_mean_{window_label}"
+def _build_system_trench_lookup(rivers):
+    """Build per-system trench id arrays, positions, and valid indices."""
+    system_trench_tables = {
+        int(system_id): system_trenches[
+            [TRENCH_ID_COLUMN, rn_module.TRENCH_INDEX_COLUMN]
+        ]
+        .sort_values(rn_module.TRENCH_INDEX_COLUMN)
+        .reset_index(drop=True)
+        for system_id, system_trenches in rivers.groupby(rn_module.SYSTEM_ID_KEY)
+    }
+    system_trench_id_arrays = {
+        system_id: system_trenches[TRENCH_ID_COLUMN].to_numpy(dtype=np.int64)
+        for system_id, system_trenches in system_trench_tables.items()
+    }
+    system_trench_positions = {
+        system_id: dict(
+            zip(
+                system_trenches[TRENCH_ID_COLUMN].to_numpy(dtype=np.int64),
+                system_trenches[rn_module.TRENCH_INDEX_COLUMN].to_numpy(dtype=np.int64),
+            )
+        )
+        for system_id, system_trenches in system_trench_tables.items()
+    }
+    system_valid_positions = {
+        system_id: set(positions.values())
+        for system_id, positions in system_trench_positions.items()
+    }
+    return system_trench_id_arrays, system_trench_positions, system_valid_positions
 
 
-def _empty_sensor_feature_row(climate_columns):
-    result = {}
-    for bucket_name, _, _ in SENSOR_DISTANCE_BUCKETS:
-        result[_sensor_bucket_count_column(bucket_name)] = 0
-        for variable_name in climate_columns:
-            result[_sensor_bucket_mean_column(bucket_name, variable_name, "day")] = np.nan
-            for window_label in SENSOR_WINDOW_LABELS:
-                result[_sensor_bucket_mean_column(bucket_name, variable_name, window_label)] = np.nan
-    return result
+def _build_trench_system_position_lookup(rivers):
+    """Build an O(1) lookup from trench id to system id and trench index."""
+    trench_rows = rivers[
+        [TRENCH_ID_COLUMN, rn_module.SYSTEM_ID_KEY, rn_module.TRENCH_INDEX_COLUMN]
+    ].drop_duplicates()
+    duplicated = trench_rows[TRENCH_ID_COLUMN].duplicated(keep=False)
+    if duplicated.any():
+        duplicate_ids = trench_rows.loc[duplicated, TRENCH_ID_COLUMN].unique()[:10]
+        raise ValueError(
+            "Expected one river-network row per trench id. "
+            f"Found duplicate trench ids, e.g. {duplicate_ids}."
+        )
+    return {
+        int(trench_id): (int(system_id), int(trench_index))
+        for trench_id, system_id, trench_index in trench_rows.itertuples(
+            index=False,
+            name=None,
+        )
+    }
+
+
+def _build_trench_length_lookup(rivers):
+    """Return trench lengths keyed by trench id."""
+    return (
+        rivers[[TRENCH_ID_COLUMN, "distance"]]
+        .drop_duplicates(subset=[TRENCH_ID_COLUMN], keep="first")
+        .rename(columns={"distance": "trench_length_km"})
+    )
+
+
+def _sparse_row(matrix, row_idx):
+    """Return one sparse row for both csr_matrix and newer csr_array objects."""
+    if hasattr(matrix, "getrow"):
+        return matrix.getrow(row_idx)
+    return matrix[row_idx : row_idx + 1, :]
+
+
+def _resolve_upstream_trench_distances(
+    trench_id,
+    network,
+    system_trench_id_arrays,
+    system_valid_positions,
+    trench_system_position_lookup,
+):
+    """Return raw upstream trench ids and distances for one seed trench."""
+    try:
+        system_id, target_position = trench_system_position_lookup[int(trench_id)]
+    except KeyError as exc:
+        raise KeyError(f"Unknown trench_id in river network: {trench_id}") from exc
+
+    system_trench_ids = system_trench_id_arrays.get(
+        system_id,
+        np.asarray([], dtype=np.int64),
+    )
+    if len(system_trench_ids) == 0:
+        return pd.DataFrame(columns=[TRENCH_ID_COLUMN, UPSTREAM_DISTANCE_COLUMN])
+
+    if target_position not in system_valid_positions[system_id]:
+        raise ValueError(
+            f"Trench index {target_position} for trench_id {trench_id} is invalid."
+        )
+
+    reach_row = _sparse_row(
+        network.trench_reachability_matrices[system_id],
+        target_position,
+    )
+    dist_row = _sparse_row(
+        network.trench_distance_matrices[system_id],
+        target_position,
+    )
+
+    reach_indices = reach_row.indices.astype(np.int64, copy=False)
+    if len(reach_indices) == 0:
+        return pd.DataFrame(
+            {
+                TRENCH_ID_COLUMN: [int(trench_id)],
+                UPSTREAM_DISTANCE_COLUMN: [0.0],
+            }
+        )
+
+    distance_lookup = dict(
+        zip(
+            dist_row.indices.astype(np.int64, copy=False).tolist(),
+            dist_row.data.astype(float, copy=False).tolist(),
+        )
+    )
+    upstream = pd.DataFrame(
+        {
+            TRENCH_ID_COLUMN: system_trench_id_arrays[system_id][reach_indices].astype(
+                np.int64,
+                copy=False,
+            ),
+            UPSTREAM_DISTANCE_COLUMN: np.asarray(
+                [float(distance_lookup.get(int(col_idx), 0.0)) for col_idx in reach_indices],
+                dtype=float,
+            ),
+        }
+    )
+    if int(trench_id) not in set(upstream[TRENCH_ID_COLUMN].tolist()):
+        upstream = pd.concat(
+            [
+                upstream,
+                pd.DataFrame(
+                    {
+                        TRENCH_ID_COLUMN: [int(trench_id)],
+                        UPSTREAM_DISTANCE_COLUMN: [0.0],
+                    }
+                ),
+            ],
+            ignore_index=True,
+        )
+    return upstream.sort_values(
+        [UPSTREAM_DISTANCE_COLUMN, TRENCH_ID_COLUMN]
+    ).reset_index(drop=True)
+
+
+def _shift_upstream_distances(upstream_distances, trench_lengths):
+    """Shift raw distances so zero is the upstream end of the seed trench."""
+    if upstream_distances.empty:
+        return pd.DataFrame(
+            columns=[
+                TRENCH_ID_COLUMN,
+                UPSTREAM_DISTANCE_COLUMN,
+                "trench_length_km",
+                ADJUSTED_DISTANCE_COLUMN,
+            ]
+        )
+
+    shifted = upstream_distances.merge(
+        trench_lengths,
+        on=TRENCH_ID_COLUMN,
+        how="left",
+        validate="one_to_one",
+    )
+    if shifted["trench_length_km"].isna().any():
+        missing_ids = shifted.loc[
+            shifted["trench_length_km"].isna(),
+            TRENCH_ID_COLUMN,
+        ].tolist()
+        raise ValueError(
+            "Missing trench length(s) for shifted upstream-distance calculation: "
+            f"{missing_ids[:10]}"
+        )
+    shifted[ADJUSTED_DISTANCE_COLUMN] = (
+        shifted[UPSTREAM_DISTANCE_COLUMN] - shifted["trench_length_km"]
+    )
+    return shifted
+
+
+def _combine_station_upstream_distances(station_trench_ids, upstream_distance_cache):
+    """Merge all trench-level upstream tables for one station into one min-distance table."""
+    distance_frames = [
+        upstream_distance_cache[int(trench_id)]
+        for trench_id in station_trench_ids
+        if int(trench_id) in upstream_distance_cache
+    ]
+    if not distance_frames:
+        return pd.DataFrame(
+            columns=[
+                TRENCH_ID_COLUMN,
+                UPSTREAM_DISTANCE_COLUMN,
+                "trench_length_km",
+                ADJUSTED_DISTANCE_COLUMN,
+            ]
+        )
+
+    combined = pd.concat(distance_frames, ignore_index=True)
+    return (
+        combined.sort_values(
+            [ADJUSTED_DISTANCE_COLUMN, UPSTREAM_DISTANCE_COLUMN, TRENCH_ID_COLUMN]
+        )
+        .drop_duplicates(subset=[TRENCH_ID_COLUMN], keep="first")
+        .reset_index(drop=True)
+    )
+
+
+def _bucket_label(lower_bound_km):
+    """Return the integer lower bound used to index one bucket."""
+    return int(lower_bound_km)
+
+
+def _assign_sensor_distance_buckets(distances):
+    """Assign shifted upstream distances to lower-bound-indexed 25 km buckets."""
+    distances = pd.Series(distances, copy=False)
+    bucket_values = pd.Series(pd.NA, index=distances.index, dtype="Int64")
+    for lower_bound, upper_bound in SENSOR_DISTANCE_BUCKETS:
+        if np.isinf(upper_bound):
+            mask = distances.ge(lower_bound)
+        else:
+            mask = distances.ge(lower_bound) & distances.lt(upper_bound)
+        bucket_values.loc[mask] = _bucket_label(lower_bound)
+    return bucket_values
+
+
+def _empty_sensor_long_columns():
+    """Return the long-format output column names for the sensor climate variant."""
+    return [
+        STATION_CODE_COLUMN,
+        DATE_COLUMN,
+        DISTANCE_BUCKET_COLUMN,
+        CLIMATE_VARIABLE_COLUMN,
+        REACHABLE_TRENCH_COUNT_COLUMN,
+        "mean_day",
+        *[f"mean_{window_label}" for window_label in SENSOR_WINDOW_LABELS],
+    ]
 
 
 def _iter_sensor_target_batches(targets):
@@ -229,6 +478,113 @@ def _iter_sensor_target_batches(targets):
             batch_start_index = batch_end_index
 
 
+def _build_sensor_targets(water_quality_df, stations_rivers_df):
+    """Return unique station-day targets and the full station-trench map."""
+    station_trenches = prepare_entity_links(
+        stations_rivers_df,
+        entity_column=STATION_CODE_COLUMN,
+        location_column=TRENCH_ID_COLUMN,
+    )
+    targets = prepare_observation_targets(
+        water_quality_df,
+        station_trenches,
+        entity_column=STATION_CODE_COLUMN,
+        date_column=DATE_COLUMN,
+        timestamp_column=DATETIME_COLUMN,
+        location_column=TRENCH_ID_COLUMN,
+    )
+    targets = (
+        targets[[STATION_CODE_COLUMN, DATE_COLUMN]]
+        .drop_duplicates()
+        .sort_values([STATION_CODE_COLUMN, DATE_COLUMN])
+        .reset_index(drop=True)
+    )
+    return targets, station_trenches
+
+
+def _build_station_upstream_bucket_lookup(station_trenches, network, n_jobs):
+    """Resolve a long (station_code, source_trench_id, distance_bucket) lookup.
+
+    Combines all of a station's own trenches into one shifted upstream
+    distance table per station (min adjusted distance per reachable source
+    trench), matching the land_cover long-format approach.
+    """
+    rivers = network.trenches
+    (
+        system_trench_id_arrays,
+        _system_trench_positions,
+        system_valid_positions,
+    ) = _build_system_trench_lookup(rivers)
+    trench_system_position_lookup = _build_trench_system_position_lookup(rivers)
+    trench_lengths = _build_trench_length_lookup(rivers)
+
+    target_trench_ids = (
+        station_trenches[TRENCH_ID_COLUMN].drop_duplicates().astype(np.int64).tolist()
+    )
+    logger.info(
+        "Resolving shifted upstream distances for %d target trench(es) with %s thread(s).",
+        len(target_trench_ids),
+        n_jobs,
+    )
+
+    def resolve_target_trench(trench_id):
+        upstream_distances = _resolve_upstream_trench_distances(
+            int(trench_id),
+            network,
+            system_trench_id_arrays,
+            system_valid_positions,
+            trench_system_position_lookup,
+        )
+        return (
+            int(trench_id),
+            _shift_upstream_distances(upstream_distances, trench_lengths),
+        )
+
+    if n_jobs == 1:
+        upstream_distance_items = [
+            resolve_target_trench(trench_id)
+            for trench_id in tqdm(target_trench_ids, desc="Upstream trenches")
+        ]
+    else:
+        upstream_distance_items = Parallel(n_jobs=n_jobs, backend="threading")(
+            delayed(resolve_target_trench)(trench_id)
+            for trench_id in tqdm(target_trench_ids, desc="Upstream trenches")
+        )
+    upstream_distance_cache = dict(upstream_distance_items)
+
+    logger.info("Combining upstream trench distances into station-level 25 km buckets.")
+    lookup_frames = []
+    for station_code, station_rows in station_trenches.groupby(STATION_CODE_COLUMN):
+        combined = _combine_station_upstream_distances(
+            station_rows[TRENCH_ID_COLUMN].astype(np.int64).tolist(),
+            upstream_distance_cache,
+        )
+        if combined.empty:
+            continue
+        combined = combined.copy()
+        combined[DISTANCE_BUCKET_COLUMN] = _assign_sensor_distance_buckets(
+            combined[ADJUSTED_DISTANCE_COLUMN]
+        )
+        combined = combined.dropna(subset=[DISTANCE_BUCKET_COLUMN])
+        if combined.empty:
+            continue
+        lookup_frames.append(
+            pd.DataFrame(
+                {
+                    STATION_CODE_COLUMN: str(station_code),
+                    "source_trench_id": combined[TRENCH_ID_COLUMN].astype(np.int64),
+                    DISTANCE_BUCKET_COLUMN: combined[DISTANCE_BUCKET_COLUMN].astype(int),
+                }
+            )
+        )
+
+    if not lookup_frames:
+        return pd.DataFrame(
+            columns=[STATION_CODE_COLUMN, "source_trench_id", DISTANCE_BUCKET_COLUMN]
+        )
+    return pd.concat(lookup_frames, ignore_index=True)
+
+
 def _assemble_sensor_upstream_duckdb(
     *,
     climate_path,
@@ -243,61 +599,23 @@ def _assemble_sensor_upstream_duckdb(
     water_quality_df = pd.read_parquet(water_quality_path)
     logger.info("Loading station-river matches from %s", stations_rivers_path)
     stations_rivers_df = pd.read_parquet(stations_rivers_path)
-    station_trenches = prepare_entity_links(
-        stations_rivers_df,
-        entity_column=STATION_CODE_COLUMN,
-        location_column=TRENCH_ID_COLUMN,
-    )
-    targets = prepare_observation_targets(
-        water_quality_df,
-        station_trenches,
-        entity_column=STATION_CODE_COLUMN,
-        date_column=DATE_COLUMN,
-        timestamp_column=DATETIME_COLUMN,
-        location_column=TRENCH_ID_COLUMN,
-    )
+    targets, station_trenches = _build_sensor_targets(water_quality_df, stations_rivers_df)
     logger.info("Found %d climate sensor target row(s).", len(targets))
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if targets.empty:
         empty_df = pd.DataFrame(
-            columns=[
-                STATION_CODE_COLUMN,
-                DATE_COLUMN,
-                TRENCH_ID_COLUMN,
-                *_empty_sensor_feature_row(climate_columns).keys(),
-            ]
+            columns=_empty_sensor_long_columns()
         ).set_index([STATION_CODE_COLUMN, DATE_COLUMN])
         empty_df.to_parquet(output_path, index=True)
         return empty_df
 
-    logger.info("Loading river network from %s", river_network_path)
-    network = RiverNetwork()
-    network.load(str(river_network_path))
-
-    target_trench_ids = (
-        targets[TRENCH_ID_COLUMN].drop_duplicates().astype(np.int64).sort_values().tolist()
-    )
-    upstream_lookup = build_target_reachability_lookup(
-        network,
-        target_trench_ids,
-        location_column=TRENCH_ID_COLUMN,
-        distance_column=UPSTREAM_DISTANCE_COLUMN,
-        category_column=DISTANCE_BUCKET_COLUMN,
-        system_column=rn_module.SYSTEM_ID_KEY,
-        position_column=rn_module.TRENCH_INDEX_COLUMN,
-        categorize_distances=_assign_distance_buckets,
-    )
-    upstream_lookup = upstream_lookup.rename(
-        columns={
-            "target_location_id": "target_trench_id",
-            "source_location_id": "source_trench_id",
-        }
-    )
+    network = _load_sensor_river_network(river_network_path)
+    upstream_lookup = _build_station_upstream_bucket_lookup(station_trenches, network, n_jobs)
     logger.info(
-        "Prepared %d upstream trench mapping row(s) for %d target trench(es).",
+        "Prepared %d station upstream-bucket mapping row(s) for %d station(s).",
         len(upstream_lookup),
-        len(target_trench_ids),
+        station_trenches[STATION_CODE_COLUMN].nunique(),
     )
 
     temp_dir = Path(tempfile.mkdtemp(prefix="climate_sensor_duckdb_"))
@@ -330,20 +648,51 @@ def _assemble_sensor_upstream_duckdb(
             for window_label, window_size in SENSOR_WINDOW_LABELS.items():
                 window_columns.append(
                     f"AVG({_sql_ident(f'{column}_mean_day')}) OVER ("
-                    f"PARTITION BY target_trench_id, {_sql_ident(DISTANCE_BUCKET_COLUMN)} "
+                    f"PARTITION BY {_sql_ident(STATION_CODE_COLUMN)}, {_sql_ident(DISTANCE_BUCKET_COLUMN)} "
                     f"ORDER BY {_sql_ident(DATE_COLUMN)} "
                     f"ROWS BETWEEN {window_size - 1} PRECEDING AND CURRENT ROW"
                     f") AS {_sql_ident(f'{column}_mean_{window_label}')}"
                 )
         window_columns_sql = ",\n            ".join(window_columns)
+
+        window_value_columns = [f"mean_{window_label}" for window_label in SENSOR_WINDOW_LABELS]
+        value_columns_sql = ",\n                    ".join(
+            f"w.{_sql_ident(column)}" for column in ["mean_day", *window_value_columns]
+        )
+        variable_branches = []
+        for column in climate_columns:
+            window_select_sql = ",\n                    ".join(
+                f"{_sql_ident(f'{column}_mean_{window_label}')} AS {_sql_ident(f'mean_{window_label}')}"
+                for window_label in SENSOR_WINDOW_LABELS
+            )
+            variable_branches.append(
+                f"""
+                SELECT
+                    {_sql_ident(STATION_CODE_COLUMN)},
+                    {_sql_ident(DATE_COLUMN)},
+                    {_sql_ident(DISTANCE_BUCKET_COLUMN)},
+                    {_sql_literal(column)} AS {_sql_ident(CLIMATE_VARIABLE_COLUMN)},
+                    {_sql_ident(REACHABLE_TRENCH_COUNT_COLUMN)},
+                    {_sql_ident(f'{column}_mean_day')} AS mean_day,
+                    {window_select_sql}
+                FROM climate_bucket_windowed
+                """
+            )
+        climate_long_sql = " UNION ALL ".join(variable_branches)
+
+        distance_buckets_df = pd.DataFrame(
+            {DISTANCE_BUCKET_COLUMN: [_bucket_label(lower) for lower, _ in SENSOR_DISTANCE_BUCKETS]}
+        )
+        climate_variables_df = pd.DataFrame({CLIMATE_VARIABLE_COLUMN: list(climate_columns)})
+        connection.register("distance_buckets_df", distance_buckets_df)
+        connection.register("climate_variables_df", climate_variables_df)
+
         part_paths = []
 
         for batch_index, (batch_label, batch_targets, batch_start, batch_end) in enumerate(batch_specs):
-            batch_target_trench_ids = (
-                batch_targets[TRENCH_ID_COLUMN].drop_duplicates().astype(np.int64)
-            )
+            batch_station_codes = batch_targets[STATION_CODE_COLUMN].drop_duplicates()
             batch_upstream_lookup = upstream_lookup.loc[
-                upstream_lookup["target_trench_id"].isin(batch_target_trench_ids)
+                upstream_lookup[STATION_CODE_COLUMN].isin(batch_station_codes)
             ].copy()
             if batch_upstream_lookup.empty:
                 logger.info(
@@ -367,7 +716,7 @@ def _assemble_sensor_upstream_duckdb(
             part_path = parts_dir / f"part-{batch_index:04d}-{batch_label}.parquet"
 
             logger.info(
-                "Processing sensor climate batch %s (%d/%d): %d targets, %d upstream trench links, %d source trenches, %d climate partition(s), dates %s to %s",
+                "Processing sensor climate batch %s (%d/%d): %d targets, %d station upstream-bucket links, %d source trenches, %d climate partition(s), dates %s to %s",
                 batch_label,
                 batch_index + 1,
                 len(batch_specs),
@@ -392,7 +741,7 @@ def _assemble_sensor_upstream_duckdb(
                 f"""
                 CREATE TEMP TABLE climate_bucket_daily AS
                 SELECT
-                    u.target_trench_id,
+                    u.{STATION_CODE_COLUMN},
                     CAST(c.{DATE_COLUMN} AS DATE) AS {DATE_COLUMN},
                     u.{DISTANCE_BUCKET_COLUMN},
                     COUNT(DISTINCT c.{TRENCH_ID_COLUMN}) AS {REACHABLE_TRENCH_COUNT_COLUMN},
@@ -412,7 +761,7 @@ def _assemble_sensor_upstream_duckdb(
                 f"""
                 CREATE TEMP TABLE climate_bucket_windowed AS
                 SELECT
-                    target_trench_id,
+                    {STATION_CODE_COLUMN},
                     {DATE_COLUMN},
                     {DISTANCE_BUCKET_COLUMN},
                     {REACHABLE_TRENCH_COUNT_COLUMN},
@@ -421,37 +770,34 @@ def _assemble_sensor_upstream_duckdb(
                 """
             )
 
-            feature_selects = []
-            for bucket_name, _, _ in SENSOR_DISTANCE_BUCKETS:
-                bucket_literal = _sql_literal(bucket_name)
-                feature_selects.append(
-                    f"COALESCE(MAX({REACHABLE_TRENCH_COUNT_COLUMN}) FILTER (WHERE {DISTANCE_BUCKET_COLUMN} = {bucket_literal}), 0) AS {_sensor_bucket_count_column(bucket_name)}"
-                )
-                for variable_name in climate_columns:
-                    feature_selects.append(
-                        f"MAX({_sql_ident(f'{variable_name}_mean_day')}) FILTER (WHERE {DISTANCE_BUCKET_COLUMN} = {bucket_literal}) AS {_sensor_bucket_mean_column(bucket_name, variable_name, 'day')}"
-                    )
-                    for window_label in SENSOR_WINDOW_LABELS:
-                        feature_selects.append(
-                            f"MAX({_sql_ident(f'{variable_name}_mean_{window_label}')}) FILTER (WHERE {DISTANCE_BUCKET_COLUMN} = {bucket_literal}) AS {_sensor_bucket_mean_column(bucket_name, variable_name, window_label)}"
-                        )
-            feature_selects_sql = ",\n                ".join(feature_selects)
             part_sql_path = _sql_literal(str(part_path))
 
             connection.execute(
                 f"""
                 COPY (
                     SELECT
-                        t.{STATION_CODE_COLUMN},
-                        CAST(t.{DATE_COLUMN} AS DATE) AS {DATE_COLUMN},
-                        t.{TRENCH_ID_COLUMN},
-                        {feature_selects_sql}
-                    FROM sensor_targets_batch_df AS t
-                    LEFT JOIN climate_bucket_windowed AS w
-                        ON t.{TRENCH_ID_COLUMN} = w.target_trench_id
-                       AND CAST(t.{DATE_COLUMN} AS DATE) = w.{DATE_COLUMN}
-                    GROUP BY 1, 2, 3
-                    ORDER BY 1, 2, 3
+                        g.{STATION_CODE_COLUMN},
+                        g.{DATE_COLUMN},
+                        g.{DISTANCE_BUCKET_COLUMN},
+                        g.{CLIMATE_VARIABLE_COLUMN},
+                        COALESCE(w.{REACHABLE_TRENCH_COUNT_COLUMN}, 0) AS {REACHABLE_TRENCH_COUNT_COLUMN},
+                        {value_columns_sql}
+                    FROM (
+                        SELECT
+                            t.{STATION_CODE_COLUMN},
+                            CAST(t.{DATE_COLUMN} AS DATE) AS {DATE_COLUMN},
+                            b.{DISTANCE_BUCKET_COLUMN},
+                            v.{CLIMATE_VARIABLE_COLUMN}
+                        FROM sensor_targets_batch_df AS t
+                        CROSS JOIN distance_buckets_df AS b
+                        CROSS JOIN climate_variables_df AS v
+                    ) AS g
+                    LEFT JOIN ({climate_long_sql}) AS w
+                        ON g.{STATION_CODE_COLUMN} = w.{STATION_CODE_COLUMN}
+                       AND g.{DATE_COLUMN} = w.{DATE_COLUMN}
+                       AND g.{DISTANCE_BUCKET_COLUMN} = w.{DISTANCE_BUCKET_COLUMN}
+                       AND g.{CLIMATE_VARIABLE_COLUMN} = w.{CLIMATE_VARIABLE_COLUMN}
+                    ORDER BY 1, 2, 3, 4
                 ) TO {part_sql_path} (FORMAT PARQUET)
                 """
             )
@@ -459,12 +805,7 @@ def _assemble_sensor_upstream_duckdb(
 
         if not part_paths:
             empty_df = pd.DataFrame(
-                columns=[
-                    STATION_CODE_COLUMN,
-                    DATE_COLUMN,
-                    TRENCH_ID_COLUMN,
-                    *_empty_sensor_feature_row(climate_columns).keys(),
-                ]
+                columns=_empty_sensor_long_columns()
             ).set_index([STATION_CODE_COLUMN, DATE_COLUMN])
             empty_df.to_parquet(output_path, index=True)
             return empty_df
@@ -476,7 +817,7 @@ def _assemble_sensor_upstream_duckdb(
             COPY (
                 SELECT *
                 FROM read_parquet({part_glob_sql})
-                ORDER BY 1, 2, 3
+                ORDER BY 1, 2, 3, 4
             ) TO {output_sql_path} (FORMAT PARQUET)
             """
         )
