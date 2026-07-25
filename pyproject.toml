@@ -1,0 +1,50 @@
+[project]
+name = "river-pollution-brazil"
+version = "0.1.0"
+description = "River pollution and land-use/climate/health data pipelines for Brazil"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.2",
+    "pandas>=3.0",
+    "pyarrow>=24.0",
+    "geopandas>=1.1",
+    "shapely>=2.1",
+    "pyproj>=3.7",
+    "rasterio>=1.4",
+    "rioxarray>=0.19",
+    "xarray>=2026.4",
+    "odc-geo>=0.5",
+    "zarr>=3.1",
+    "dask>=2026.3",
+    "networkx>=3.6",
+    "numpy-groupies>=0.11",
+    "sparse",
+    "joblib>=1.5",
+    "tqdm>=4.67",
+    "duckdb>=1.5",
+    "openpyxl>=3.1",
+    "scipy>=1.17",
+    "scikit-learn>=1.8",
+    "pyfixest>=0.50",
+    "statsmodels",
+    "selenium>=4.43",
+    "webdriver-manager>=4.1",
+    "requests",
+    "cdsapi",
+    "ecmwf-datastores-client",
+    "earthkit-data",
+    "pyodbc",
+    "google-cloud-bigquery>=3.41",
+    "pandas-gbq>=0.28",
+    "matplotlib>=3.10",
+    "plotly",
+    "dash",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

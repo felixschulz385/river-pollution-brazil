@@ -2,10 +2,10 @@ import json
 import logging
 from pathlib import Path
 
-from ..fetch.paths import get_sensor_database_path, get_water_quality_dir
+from ..constants import get_sensor_database_path, get_water_quality_dir
 from .clean import clean_measurement_values, resolve_measurement_columns
 from .rename import rename_portuguese_fields
-from .settings import (
+from ..schema import (
     AUXILIARY_WATER_QUALITY_COLUMNS,
     CLEAN_STREAMFLOW_PARQUET,
     CLEAN_WATER_QUALITY_PARQUET,

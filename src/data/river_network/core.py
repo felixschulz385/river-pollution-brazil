@@ -41,57 +41,52 @@ the returned column indices back to trench identifiers using
 `river_trenches.parquet`, and bucket the resulting upstream distances.
 """
 
-import numpy as np
-import pandas as pd
-import geopandas as gpd
-import networkx as nx
-from scipy.sparse import csr_matrix
+import logging
+import pickle
 from pathlib import Path
 from typing import Optional
-import pickle
-import logging
 
+import geopandas as gpd
+import networkx as nx
+import numpy as np
+import pandas as pd
+from scipy.sparse import csr_matrix
 
-TRENCHES_FILENAME = "river_trenches.parquet"
-DRAINAGE_AREAS_FILENAME = "drainage_areas.parquet"
-SYSTEM_MATRICES_FILENAME = "river_system_matrices.pkl"
-TRENCH_ADM2_TABLE_FILENAME = "trench_adm2_matches.parquet"
-ADM2_DOMINANT_SYSTEM_TABLE_FILENAME = "adm2_dominant_systems.parquet"
-DEFAULT_GADM_PATH = "/scicore/home/meiera/schulz0022/projects/river-pollution-brazil/data/gadm/gadm41_BRA.gpkg"
-DEFAULT_ADM2_LAYER = "ADM_ADM_2"
-BRAZIL_PROJECTED_CRS = 5641
-
-TRENCH_ID_COLUMN = "trench_id"
-SYSTEM_ID_KEY = "system_id"
-NODE_ID_INDEX_NAME = "node_id"
-UPSTREAM_NODE_COLUMN = "upstream_node"
-DOWNSTREAM_NODE_COLUMN = "downstream_node"
-DISTANCE_COLUMN = "distance"
-ESTUARY_DISTANCE_COLUMN = "estuary_distance"
-UPSTREAM_NODE_INDEX_COLUMN = "upstream_node_index"
-DOWNSTREAM_NODE_INDEX_COLUMN = "downstream_node_index"
-TRENCH_INDEX_COLUMN = "trench_index"
-NODE_REACHABILITY_KEY = "node_reachability_matrices"
-NODE_DISTANCE_KEY = "node_distance_matrices"
-TRENCH_REACHABILITY_KEY = "trench_reachability_matrices"
-TRENCH_DISTANCE_KEY = "trench_distance_matrices"
-ADM2_COLUMN = "adm2"
+from .constants import (
+    ADM2_COLUMN,
+    ADM2_DOMINANT_SYSTEM_TABLE_FILENAME,
+    BRAZIL_PROJECTED_CRS,
+    DEFAULT_ADM2_LAYER,
+    DEFAULT_GADM_PATH,
+    DISTANCE_COLUMN,
+    DOWNSTREAM_NODE_COLUMN,
+    DOWNSTREAM_NODE_INDEX_COLUMN,
+    DRAINAGE_AREAS_FILENAME,
+    ESTUARY_DISTANCE_COLUMN,
+    NODE_DISTANCE_KEY,
+    NODE_ID_INDEX_NAME,
+    NODE_REACHABILITY_KEY,
+    SYSTEM_ID_KEY,
+    SYSTEM_MATRICES_FILENAME,
+    TRENCH_ADM2_TABLE_FILENAME,
+    TRENCH_DISTANCE_KEY,
+    TRENCH_ID_COLUMN,
+    TRENCH_INDEX_COLUMN,
+    TRENCH_REACHABILITY_KEY,
+    TRENCHES_FILENAME,
+    UPSTREAM_NODE_COLUMN,
+    UPSTREAM_NODE_INDEX_COLUMN,
+)
+from src.data.shared.sensor_upstream import sparse_row
 
 
 logger = logging.getLogger(__name__)
 
 
-def _sparse_row(matrix, row_idx):
-    """Return one sparse row for both csr_matrix and csr_array objects."""
-    if hasattr(matrix, "getrow"):
-        return matrix.getrow(row_idx)
-    return matrix[row_idx : row_idx + 1, :]
-
-
 class RiverNetwork:
     """
     Container for river network data with disk storage utilities.
-    
+
     Attributes
     ----------
     trenches : gpd.GeoDataFrame
@@ -107,7 +102,7 @@ class RiverNetwork:
     trench_distance_matrices : dict
         Trench distance matrices keyed by `system_id`
     """
-    
+
     def __init__(self):
         """Initialize empty river network."""
         self.trenches = None
@@ -328,7 +323,7 @@ class RiverNetwork:
                 "Call build_adm2_dominant_system_table() first."
             )
         return self.adm2_dominant_system_table.copy()
-    
+
     def load_trenches(
         self,
         gpkg_path: str,
@@ -337,7 +332,7 @@ class RiverNetwork:
     ) -> None:
         """
         Load river trench (segment) data from GeoPackage.
-        
+
         Parameters
         ----------
         gpkg_path : str
@@ -349,15 +344,15 @@ class RiverNetwork:
         """
         logger.info("Loading trenches from %s layer %s", gpkg_path, layer)
         trenches = gpd.read_file(gpkg_path, bbox=bbox, layer=layer)
-        
+
         # filter out coastline
         trenches = trenches[~trenches.nuordemcda.isna()]
-        
+
         trenches = trenches[[
             "cotrecho", "nodestino", "noorigem",
             "nucomptrec", "nudistbact", "geometry"
         ]].copy()
-        
+
         trenches.rename(
             columns={
                 "cotrecho": TRENCH_ID_COLUMN,
@@ -368,11 +363,11 @@ class RiverNetwork:
             },
             inplace=True
         )
-        
+
         self.trenches = trenches
         self._deduplicate_trenches()
         logger.info("Loaded %d deduplicated trenches", len(self.trenches))
-    
+
     def load_drainage_areas(
         self,
         gpkg_path: str,
@@ -381,7 +376,7 @@ class RiverNetwork:
     ) -> None:
         """
         Load drainage area polygons from GeoPackage.
-        
+
         Parameters
         ----------
         gpkg_path : str
@@ -393,14 +388,14 @@ class RiverNetwork:
         """
         logger.info("Loading drainage areas from %s layer %s", gpkg_path, layer)
         drainage = gpd.read_file(gpkg_path, bbox=bbox, layer=layer)
-        
+
         drainage = drainage[["cotrecho", "nuareacont", "geometry"]].rename(
             columns={
                 "nuareacont": "drainage_area",
                 "cotrecho": TRENCH_ID_COLUMN,
             }
         )
-        
+
         self.drainage_areas = drainage
         self._deduplicate_drainage_areas()
         logger.info("Loaded %d deduplicated drainage areas", len(self.drainage_areas))
@@ -408,7 +403,7 @@ class RiverNetwork:
     def compute_subsystems(self) -> None:
         """
         Compute subsystem IDs for disconnected river networks.
-        
+
         This method identifies separate river systems by finding connected
         components in the undirected version of the river network graph.
         Adds 'system_id' column to trenches.
@@ -417,7 +412,7 @@ class RiverNetwork:
         components = self._system_components(graph)
         logger.info("Computed %d disconnected river systems", len(components))
         self._assign_system_ids_from_components(components)
-    
+
     def compute_distance_matrices(self) -> None:
         """
         Compute reachability and distance matrices for each river subsystem.
@@ -459,7 +454,7 @@ class RiverNetwork:
 
             # Create sparse adjacency matrix (memory efficient)
             adj_sparse = nx.to_scipy_sparse_array(subgraph, nodelist=nodes, format='csr')
-            
+
             # Use transitive closure to compute reachability.
             reach_sparse = adj_sparse.copy()
             # Compute transitive closure by matrix squaring
@@ -470,10 +465,10 @@ class RiverNetwork:
                 if new_reach.nnz == reach_result.nnz:
                     break
                 reach_result = new_reach.asformat('csr')
-            
+
             reach_sparse = (reach_result > 0).astype(int)
             self.node_reachability_matrices[system_id] = reach_sparse
-            
+
             # Reachability tells us which downstream paths exist. Distance is then
             # just the estuary-distance difference along those valid paths.
             rows, cols = reach_sparse.nonzero()
@@ -482,10 +477,10 @@ class RiverNetwork:
                 for i, j in zip(rows, cols)
             ])
             dist_matrix_sparse = csr_matrix(
-                (distances, (rows, cols)), 
+                (distances, (rows, cols)),
                 shape=reach_sparse.shape
             )
-            
+
             self.node_distance_matrices[system_id] = dist_matrix_sparse
 
             system_trenches = trenches.loc[trenches[SYSTEM_ID_KEY] == system_id].copy()
@@ -575,11 +570,11 @@ class RiverNetwork:
         target_position = int(trench_row.iloc[0][TRENCH_INDEX_COLUMN])
         system_trenches = self._ordered_trenches_for_system(target_system_id)
         trench_ids_arr = system_trenches[TRENCH_ID_COLUMN].to_numpy(dtype=np.int64)
-        reach_row = _sparse_row(
+        reach_row = sparse_row(
             self.trench_reachability_matrices[target_system_id],
             target_position,
         )
-        dist_row = _sparse_row(
+        dist_row = sparse_row(
             self.trench_distance_matrices[target_system_id],
             target_position,
         )
@@ -653,9 +648,9 @@ class RiverNetwork:
                 boundaries[ADM2_COLUMN] = boundaries[selected_adm2_column]
         else:
             boundaries[ADM2_COLUMN] = boundaries[adm2_column]
-        
+
         boundaries["geometry"] = boundaries.simplify(.01)
-        
+
         trenches_projected = self.trenches[[TRENCH_ID_COLUMN, "geometry"]].to_crs(projected_crs)
         boundaries_projected = boundaries[[ADM2_COLUMN, "geometry"]].to_crs(projected_crs)
 
@@ -676,7 +671,7 @@ class RiverNetwork:
             )
 
         logger.info("Computed %d trench-to-ADM2 matches", len(self.trench_adm2_table))
-        
+
         return self.trench_adm2_table
 
     def build_adm2_dominant_system_table(self) -> pd.DataFrame:
@@ -733,20 +728,20 @@ class RiverNetwork:
             len(self.adm2_dominant_system_table),
         )
         return self.adm2_dominant_system_table
-    
+
     def arrange_by_systems(self) -> None:
         """
         Arrange trenches by systems and distances.
-        
+
         Sorts the trenches data by system_id, then by estuary_distance in descending order
         (upstream to downstream). Updates trenches in-place.
         """
         if self.trenches is None:
             raise ValueError("Trenches data not loaded. Call load_trenches() first.")
-        
+
         if 'system_id' not in self.trenches.columns:
             raise ValueError("System IDs not computed. Call compute_subsystems() first.")
-        
+
         # Sort by system_id first, then by estuary_distance descending (upstream to downstream)
         self.trenches = self.trenches.sort_values(
             by=['system_id', 'estuary_distance'],
@@ -756,7 +751,7 @@ class RiverNetwork:
     def sort_trenches_by_system(self) -> None:
         """Sort trenches from upstream to downstream within each system."""
         self.arrange_by_systems()
-    
+
     def annotate_drainage_areas_with_country_membership(
         self,
         gadm_path: str,
@@ -764,7 +759,7 @@ class RiverNetwork:
     ) -> None:
         """
         Add a `within_brazil` flag to drainage areas using the country boundary.
-        
+
         Parameters
         ----------
         gadm_path : str
@@ -777,24 +772,52 @@ class RiverNetwork:
 
         logger.info("Loading country boundary from %s layer %s", gadm_path, layer)
         brazil = gpd.read_file(gadm_path, layer=layer).union_all().simplify(0.01)
-        
+
         logger.info("Annotating %d drainage areas with country membership", len(self.drainage_areas))
         self.drainage_areas['within_brazil'] = self.drainage_areas.intersects(brazil)
-        
+
         n_within = self.drainage_areas['within_brazil'].sum()
         logger.info(
             "Found %d/%d drainage areas within Brazil",
             n_within,
             len(self.drainage_areas),
         )
-    
+
+    def generate(
+        self,
+        gpkg_path: str,
+        output_dir: str,
+        bbox: Optional[gpd.GeoSeries] = None,
+        gadm_path: Optional[str] = None,
+        gadm_layer: str = "ADM_ADM_0",
+        gadm_adm2_layer: str = DEFAULT_ADM2_LAYER,
+    ) -> None:
+        """Run the full trench/drainage/matrix pipeline and save the result.
+
+        Loads trenches and drainage areas from `gpkg_path`, computes subsystems
+        and distance matrices, optionally annotates drainage areas and builds
+        the trench-to-ADM2 table (when `gadm_path` is given), then saves
+        everything to `output_dir`.
+        """
+        self.load_trenches(gpkg_path, bbox=bbox)
+        self.load_drainage_areas(gpkg_path, bbox=bbox)
+        self.compute_subsystems()
+        self.compute_distance_matrices()
+        self.sort_trenches_by_system()
+
+        if gadm_path:
+            self.annotate_drainage_areas_with_country_membership(gadm_path, layer=gadm_layer)
+            self.build_trench_adm2_table(gadm_path=gadm_path, layer=gadm_adm2_layer)
+
+        self.save(output_dir)
+
     def save(self, output_dir: str) -> None:
         """
         Save river network data to disk.
-        
+
         Saves trenches, drainage areas, ADM2 matches, and matrices using
         explicit output file names.
-        
+
         Parameters
         ----------
         output_dir : str
@@ -803,7 +826,7 @@ class RiverNetwork:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
         logger.info("Saving river network outputs to %s", output_path)
-        
+
         if self.trenches is not None:
             self.trenches.to_parquet(output_path / TRENCHES_FILENAME)
 
@@ -814,26 +837,26 @@ class RiverNetwork:
             self.adm2_dominant_system_table.to_parquet(
                 output_path / ADM2_DOMINANT_SYSTEM_TABLE_FILENAME
             )
-        
+
         if self.drainage_areas is not None:
             self._deduplicate_drainage_areas()
             self.drainage_areas.to_parquet(output_path / DRAINAGE_AREAS_FILENAME)
-        
+
         matrices_data = {
             NODE_REACHABILITY_KEY: self.node_reachability_matrices,
             NODE_DISTANCE_KEY: self.node_distance_matrices,
             TRENCH_REACHABILITY_KEY: self.trench_reachability_matrices,
             TRENCH_DISTANCE_KEY: self.trench_distance_matrices,
         }
-        
+
         with open(output_path / SYSTEM_MATRICES_FILENAME, "wb") as f:
             pickle.dump(matrices_data, f)
         logger.info("Saved river network outputs")
-    
+
     def load(self, input_dir: str) -> None:
         """
         Load river network data from disk.
-        
+
         Parameters
         ----------
         input_dir : str
@@ -841,7 +864,7 @@ class RiverNetwork:
         """
         input_path = Path(input_dir)
         logger.info("Loading river network outputs from %s", input_path)
-        
+
         trenches_file = input_path / TRENCHES_FILENAME
         if trenches_file.exists():
             self.trenches = gpd.read_parquet(trenches_file)
@@ -859,12 +882,12 @@ class RiverNetwork:
             )
         else:
             self.adm2_dominant_system_table = self._empty_adm2_dominant_system_table()
-        
+
         drainage_file = input_path / DRAINAGE_AREAS_FILENAME
         if drainage_file.exists():
             self.drainage_areas = gpd.read_parquet(drainage_file)
             self._deduplicate_drainage_areas()
-        
+
         matrices_file = input_path / SYSTEM_MATRICES_FILENAME
         if matrices_file.exists():
             with open(matrices_file, "rb") as f:

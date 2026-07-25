@@ -30,7 +30,7 @@ from ..database import (
     table_exists,
     write_dataframe_table,
 )
-from ..paths import ensure_water_quality_dirs, get_download_log_database_path
+from ...constants import ensure_water_quality_dirs, get_download_log_database_path
 from ..webdriver import ManagedBrowser
 from .station_selection import load_queryable_stations
 

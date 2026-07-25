@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..constants import raw_dir as _raw_dir
+
 
 POPULATION_QUERY = """
 SELECT
@@ -22,16 +24,6 @@ LEFT JOIN (
 """
 
 
-def _population_dir(root_dir: str | Path) -> Path:
-    path = Path(root_dir) / "data" / "population"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-def _raw_dir(root_dir: str | Path) -> Path:
-    path = _population_dir(root_dir) / "raw"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
 
 
 def fetch_population_data(

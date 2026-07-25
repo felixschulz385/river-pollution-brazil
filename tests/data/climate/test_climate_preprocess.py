@@ -1,21 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-import sys
 
 import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
 
-ROOT = Path(__file__).resolve().parents[3]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-DATA_ROOT = ROOT / "src" / "data"
-if str(DATA_ROOT) not in sys.path:
-    sys.path.insert(0, str(DATA_ROOT))
-
-from climate.preprocess.era5_land import (
+from src.data.climate.preprocess.era5_land import (
     ERA5L_VAR_CONFIG,
     ERA5_OUTPUT_TIME_INDEX,
     bootstrap_era5_store,
@@ -26,7 +18,7 @@ from climate.preprocess.era5_land import (
     resample_era5l_hourly_to_daily,
     write_dataset_region,
 )
-from climate.fetch.common import load_download_manifest, write_download_manifest
+from src.data.climate.fetch.common import load_download_manifest, write_download_manifest
 
 
 class _FakeCoord:
@@ -85,15 +77,15 @@ def test_load_or_create_geobox_state_persists_first_dataset_geometry(
     fake_geobox = FakeGeoBox(latitude=[-10.0, -11.0], longitude=[-50.0, -49.0])
 
     monkeypatch.setattr(
-        "climate.preprocess.era5_land._open_era5_dataset",
+        "src.data.climate.preprocess.era5_land._open_era5_dataset",
         lambda path: dataset,
     )
     monkeypatch.setattr(
-        "climate.preprocess.era5_land._extract_geobox_from_dataset",
+        "src.data.climate.preprocess.era5_land._extract_geobox_from_dataset",
         lambda ds: fake_geobox,
     )
     monkeypatch.setattr(
-        "climate.preprocess.era5_land._extract_spatial_ref_from_dataset",
+        "src.data.climate.preprocess.era5_land._extract_spatial_ref_from_dataset",
         lambda ds: 4326,
     )
 
@@ -116,7 +108,7 @@ def test_bootstrap_era5_store_creates_coords_only_store_and_missing_variables(
     }
 
     monkeypatch.setattr(
-        "climate.preprocess.era5_land.load_or_create_geobox_state",
+        "src.data.climate.preprocess.era5_land.load_or_create_geobox_state",
         lambda root_dir=".", sample_path=None: geobox_state,
     )
 
@@ -142,7 +134,7 @@ def test_bootstrap_era5_store_appends_only_missing_variables(
         "spatial_ref": None,
     }
     monkeypatch.setattr(
-        "climate.preprocess.era5_land.load_or_create_geobox_state",
+        "src.data.climate.preprocess.era5_land.load_or_create_geobox_state",
         lambda root_dir=".", sample_path=None: geobox_state,
     )
 
@@ -200,7 +192,7 @@ def test_write_dataset_region_writes_to_matching_month_slice(
         "spatial_ref": None,
     }
     monkeypatch.setattr(
-        "climate.preprocess.era5_land.load_or_create_geobox_state",
+        "src.data.climate.preprocess.era5_land.load_or_create_geobox_state",
         lambda root_dir=".", sample_path=None: geobox_state,
     )
     store_path = bootstrap_era5_store(root_dir=tmp_path)
@@ -238,11 +230,11 @@ def test_preprocess_era5_land_processes_files_and_leaves_store_reusable(
         "spatial_ref": None,
     }
     monkeypatch.setattr(
-        "climate.preprocess.era5_land.load_or_create_geobox_state",
+        "src.data.climate.preprocess.era5_land.load_or_create_geobox_state",
         lambda root_dir=".", sample_path=None: geobox_state,
     )
     monkeypatch.setattr(
-        "climate.preprocess.era5_land._open_era5_dataset",
+        "src.data.climate.preprocess.era5_land._open_era5_dataset",
         lambda path: _hourly_dataset(),
     )
     for month in ("01", "02"):
@@ -288,11 +280,11 @@ def test_preprocess_era5_land_deletes_raw_file_and_updates_manifest(
         "spatial_ref": None,
     }
     monkeypatch.setattr(
-        "climate.preprocess.era5_land.load_or_create_geobox_state",
+        "src.data.climate.preprocess.era5_land.load_or_create_geobox_state",
         lambda root_dir=".", sample_path=None: geobox_state,
     )
     monkeypatch.setattr(
-        "climate.preprocess.era5_land._open_era5_dataset",
+        "src.data.climate.preprocess.era5_land._open_era5_dataset",
         lambda path: _hourly_dataset(),
     )
 
@@ -322,11 +314,11 @@ def test_preprocess_worker_waits_for_new_downloaded_files(
         "spatial_ref": None,
     }
     monkeypatch.setattr(
-        "climate.preprocess.era5_land.load_or_create_geobox_state",
+        "src.data.climate.preprocess.era5_land.load_or_create_geobox_state",
         lambda root_dir=".", sample_path=None: geobox_state,
     )
     monkeypatch.setattr(
-        "climate.preprocess.era5_land._open_era5_dataset",
+        "src.data.climate.preprocess.era5_land._open_era5_dataset",
         lambda path: _hourly_dataset(),
     )
 
@@ -344,9 +336,9 @@ def test_preprocess_worker_waits_for_new_downloaded_files(
                 status="downloaded",
             )
 
-    monkeypatch.setattr("climate.preprocess.era5_land._worker_wait", fake_wait)
+    monkeypatch.setattr("src.data.climate.preprocess.era5_land._worker_wait", fake_wait)
     monkeypatch.setattr(
-        "climate.preprocess.era5_land._active_download_requests_exist",
+        "src.data.climate.preprocess.era5_land._active_download_requests_exist",
         lambda root_dir=".", subtype="era5_land_hourly": waits["count"] == 0,
     )
 

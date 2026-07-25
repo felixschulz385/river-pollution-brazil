@@ -41,8 +41,8 @@ from ..fetch.common import (
     _wait_for_lock_release,
     write_download_manifest,
 )
-from land_cover.preprocess import deduplicate_drainage_polygons
-from river_network import RiverNetwork
+from src.data.river_network import RiverNetwork
+from src.data.shared.spatial_tabular import deduplicate_drainage_polygons
 
 
 logger = logging.getLogger(__name__)

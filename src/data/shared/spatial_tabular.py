@@ -10,10 +10,32 @@ def geometry_with_crs(geometry, crs=4326):
     return Geometry(geometry, crs)
 
 
-def crop_unique_counts(raster, geometry, *, crs=4326):
-    """Crop a raster to one geometry and return unique values with counts."""
+def deduplicate_drainage_polygons(drainage_polygons, *, trench_id_column="trench_id"):
+    """Keep the first drainage polygon for each trench id."""
+    if trench_id_column not in drainage_polygons.columns:
+        raise ValueError(
+            f"Drainage polygons must include `{trench_id_column}` as an explicit column."
+        )
+    drainage_polygons = drainage_polygons.drop_duplicates(
+        subset=[trench_id_column],
+        keep="first",
+    )
+    return drainage_polygons.reset_index(drop=True)
+
+
+def crop_unique_counts(raster, geometry, *, crs=4326, dtype=np.int64):
+    """Crop a raster to one geometry and return unique finite values with counts.
+
+    Non-finite (nodata) pixels are excluded before counting so callers summing
+    ``counts`` for a total-valid-area figure don't silently include nodata area.
+    """
     cropped = raster.odc.crop(geometry_with_crs(geometry, crs=crs))
-    return np.unique(cropped, return_counts=True)
+    arr = np.asarray(cropped).reshape(-1)
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        empty = np.array([], dtype=dtype)
+        return empty, empty
+    return np.unique(arr.astype(dtype, copy=False), return_counts=True)
 
 
 def is_extent_mismatch_error(exc):

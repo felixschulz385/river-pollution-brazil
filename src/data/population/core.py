@@ -1,4 +1,4 @@
-class population:
+class Population:
     """Run population-data fetching and preprocessing workflows."""
 
     def __init__(self, root_dir=".", billing_project="river-pollution-499210"):
@@ -21,4 +21,4 @@ class population:
         return preprocess_population_data(root_dir=self.root_dir)
 
 
-__all__ = ["population"]
+__all__ = ["Population"]

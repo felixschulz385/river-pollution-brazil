@@ -19,13 +19,13 @@ ROOT_DIR="${ROOT_DIR:-.}"
 SENSOR_OUTPUT_PATH="${SENSOR_OUTPUT_PATH:-data/climate/processed/climate_assembled_sensor.parquet}"
 ADM2_OUTPUT_PATH="${ADM2_OUTPUT_PATH:-data/climate/processed/climate_assembled_adm2.parquet}"
 
-PYTHONPATH=src/data python src/data/cli.py climate assemble \
+python -m src.cli data climate assemble \
   --root-dir "${ROOT_DIR}" \
   --variant sensor_upstream_distance_buckets \
   --output "${SENSOR_OUTPUT_PATH}" \
   --n_jobs "${SLURM_CPUS_PER_TASK:-4}"
 
-PYTHONPATH=src/data python src/data/cli.py climate assemble \
+python -m src.cli data climate assemble \
   --root-dir "${ROOT_DIR}" \
   --variant adm2_upstream_yearly \
   --output "${ADM2_OUTPUT_PATH}" \

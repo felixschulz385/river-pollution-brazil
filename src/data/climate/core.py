@@ -1,4 +1,4 @@
-class climate:
+class Climate:
     """Run climate-data workflows."""
 
     def __init__(self, root_dir="."):
@@ -66,4 +66,4 @@ class climate:
         )
 
 
-__all__ = ["climate"]
+__all__ = ["Climate"]

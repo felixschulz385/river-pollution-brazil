@@ -15,7 +15,7 @@ import duckdb
 import geopandas as gpd
 import pandas as pd
 
-from .paths import (
+from ..constants import (
     ensure_water_quality_dirs,
     get_download_log_database_path,
     get_sensor_database_path,

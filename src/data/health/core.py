@@ -1,4 +1,4 @@
-class health:
+class Health:
     """Run health-data fetching and preprocessing workflows."""
 
     def __init__(self, root_dir=".", headless=False, download_dir=None):
@@ -24,4 +24,4 @@ class health:
         return preprocess_health_data(root_dir=self.root_dir, subtype=subtype)
 
 
-__all__ = ["health"]
+__all__ = ["Health"]

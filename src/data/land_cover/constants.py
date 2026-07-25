@@ -1,17 +1,33 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-LAND_COVER_ROOT = PROJECT_ROOT / "data" / "land_cover"
-LAND_COVER_RAW_ROOT = LAND_COVER_ROOT / "raw"
 MAPBIOMAS_COLLECTION = "collection_10"
 MAPBIOMAS_FILENAME_TEMPLATE = "brazil_coverage_{year}.tif"
 
-DATADIR = LAND_COVER_RAW_ROOT / "lc_mapbiomas10_30"
-DRAINAGE_PATH = PROJECT_ROOT / "data" / "river_network" / "drainage_areas.parquet"
-LEGEND_PATH = LAND_COVER_ROOT / "mapbiomas_legend.xlsx"
+
+@dataclass(frozen=True)
+class LandCoverPaths:
+    """Resolved land-cover input paths, rooted at ``root_dir``."""
+
+    datadir: Path
+    drainage_path: Path
+    legend_path: Path
+
+
+def build_paths(root_dir: str | Path = ".") -> LandCoverPaths:
+    """Derive land-cover input paths relative to ``root_dir``."""
+    root = Path(root_dir)
+    land_cover_root = root / "data" / "land_cover"
+    return LandCoverPaths(
+        datadir=land_cover_root / "raw" / "lc_mapbiomas10_30",
+        drainage_path=root / "data" / "river_network" / "drainage_areas.parquet",
+        legend_path=land_cover_root / "mapbiomas_legend.xlsx",
+    )
 
 TRENCH_ID_COLUMN = "trench_id"
 YEAR_COLUMN = "year"

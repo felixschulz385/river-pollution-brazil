@@ -1,6 +1,6 @@
 import pandas as pd
 
-from .settings import (
+from ..schema import (
     EXACT_SENTINELS,
     EXTREME_REVIEW_ONLY_VARIABLES,
     GIANT_VS_P99_REMOVE_MULTIPLIER,

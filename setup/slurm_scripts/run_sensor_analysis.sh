@@ -271,7 +271,7 @@ case "${CLIMATE_INTERACTION_MODE}" in
 esac
 
 COMMAND=(
-  python src/cli.py analysis sensor-data
+  python -m src.cli analysis sensor-data
 )
 
 COMMAND+=(--log-level "${LOG_LEVEL}")

@@ -17,4 +17,4 @@ fi
 eval "$(/scicore/home/meiera/schulz0022/miniforge-pypy3/bin/conda shell.bash hook)"
 conda activate rpb
 cd /scicore/home/meiera/schulz0022/projects/river-pollution-brazil
-python src/cli.py analysis sensor-data merge --run-dir "$1" --expected-shards "$2"
+python -m src.cli analysis sensor-data merge --run-dir "$1" --expected-shards "$2"

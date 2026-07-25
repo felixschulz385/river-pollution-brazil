@@ -184,6 +184,13 @@ def build_location_period_targets(
     )
 
 
+def normalize_network_frame(frame):
+    """Return a copy with a simple RangeIndex to avoid index/column ambiguity."""
+    if frame is None:
+        return None
+    return frame.reset_index(drop=True).copy()
+
+
 def validate_network_index_tables(
     network,
     *,
@@ -237,7 +244,7 @@ def build_group_index_lookup(
     return system_location_arrays, system_positions
 
 
-def _sparse_row(matrix, row_idx):
+def sparse_row(matrix, row_idx):
     if hasattr(matrix, "getrow"):
         return matrix.getrow(row_idx)
     return matrix[row_idx : row_idx + 1, :]
@@ -278,11 +285,11 @@ def resolve_reachable_distances(
             f"Trench index {target_position} for location id {location_id} is invalid."
         )
 
-    reach_row = _sparse_row(
+    reach_row = sparse_row(
         network.trench_reachability_matrices[system_id],
         target_position,
     )
-    dist_row = _sparse_row(
+    dist_row = sparse_row(
         network.trench_distance_matrices[system_id],
         target_position,
     )
@@ -571,12 +578,3 @@ def resolve_multi_seed_reachable_distances(
         .min()
     )
 
-
-prepare_station_trenches = prepare_entity_links
-collapse_same_day_targets = collapse_same_period_observations
-prepare_sensor_targets = prepare_observation_targets
-build_sensor_trench_year_targets = build_location_period_targets
-validate_river_network_for_trench_aggregation = validate_network_index_tables
-build_system_trench_lookup = build_group_index_lookup
-resolve_upstream_trench_distances = resolve_reachable_distances
-build_sensor_upstream_lookup = build_target_reachability_lookup

@@ -1,4 +1,4 @@
-from shared.webdriver import create_chrome_driver as _create_chrome_driver
+from src.data.shared.webdriver import create_chrome_driver as _create_chrome_driver
 
 
 def create_chrome_driver(headless=False, download_dir=None):

@@ -1,4 +1,4 @@
-class sensor_data:
+class SensorData:
     """Run sensor-data fetching, conversion, and cleaning workflows."""
 
     def __init__(
@@ -89,4 +89,5 @@ class sensor_data:
             n_jobs=n_jobs,
         )
 
-__all__ = ["sensor_data"]
+
+__all__ = ["SensorData"]

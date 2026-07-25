@@ -1,3 +1,9 @@
-from .sensor_data import sensor_data
+__all__ = ["SensorData"]
 
-__all__ = ["sensor_data"]
+
+def __getattr__(name):
+    if name == "SensorData":
+        from .core import SensorData as _SensorData
+
+        return _SensorData
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

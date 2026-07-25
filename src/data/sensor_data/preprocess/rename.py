@@ -1,4 +1,4 @@
-from .settings import PORTUGUESE_TO_ENGLISH_COLUMNS
+from ..schema import PORTUGUESE_TO_ENGLISH_COLUMNS
 
 
 def rename_portuguese_fields(frame, column_map=None):

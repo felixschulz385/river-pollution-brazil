@@ -14,9 +14,9 @@ from .constants import (
     TRENCH_ID_COLUMN,
     YEAR_COLUMN,
 )
-from .river_network_import import rn_module
+from src.data import river_network as rn_module
 from .schema import subclass_summary_id
-from shared.spatial_tabular import geometry_with_crs
+from src.data.shared.spatial_tabular import crop_unique_counts, deduplicate_drainage_polygons
 
 
 logger = logging.getLogger(__name__)
@@ -56,17 +56,6 @@ def _mapped_classes_and_weights(values, counts, mapper):
     return mapped[valid].astype(int), counts[valid]
 
 
-def deduplicate_drainage_polygons(drainage_polygons):
-    """Keep the first drainage polygon for each trench_id."""
-    if TRENCH_ID_COLUMN not in drainage_polygons.columns:
-        raise ValueError(
-            f"Drainage polygons must include `{TRENCH_ID_COLUMN}` as an explicit column."
-        )
-    drainage_polygons = drainage_polygons.drop_duplicates(
-        subset=[TRENCH_ID_COLUMN],
-        keep="first",
-    )
-    return drainage_polygons.reset_index(drop=True)
 
 
 def create_mappers(legend_path):
@@ -134,20 +123,6 @@ def _year_output_data(trench_ids, output_columns):
     return np.zeros((len(trench_ids), len(output_columns)), dtype=np.int64)
 
 
-def _extract_value_counts(lc, geometry):
-    """Extract finite raster values and counts for one polygon crop."""
-    cropped = lc.odc.crop(geometry_with_crs(geometry))
-    arr = np.asarray(cropped).reshape(-1)
-    arr = arr[np.isfinite(arr)]
-
-    if arr.size == 0:
-        empty = np.array([], dtype=np.int64)
-        return empty, empty
-
-    values, counts = np.unique(arr.astype(np.int64, copy=False), return_counts=True)
-    return values, counts
-
-
 def _accumulate_mapped_counts(
     row_data,
     values,
@@ -178,7 +153,7 @@ def _accumulate_mapped_counts(
 def _build_row_data(lc, geometry, legend_mappers, column_positions, n_columns):
     """Build one dense output row for a polygon."""
     row_data = np.zeros(n_columns, dtype=np.int64)
-    values, counts = _extract_value_counts(lc, geometry)
+    values, counts = crop_unique_counts(lc, geometry)
     _accumulate_mapped_counts(
         row_data,
         values,

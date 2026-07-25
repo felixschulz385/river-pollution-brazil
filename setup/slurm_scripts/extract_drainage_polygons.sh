@@ -12,4 +12,8 @@
 eval "$(/scicore/home/meiera/schulz0022/miniforge-pypy3/bin/conda shell.bash hook)"
 conda activate 311
 
+# ORPHANED: this script no longer exists in the repo -- it predates the
+# current GeoPackage-based RiverNetwork.generate() pipeline (see
+# generate_river_network.sh), which now handles drainage-area loading
+# directly. Left as-is pending a decision on whether to retire this script.
 python /pfs/work7/workspace/scratch/tu_zxobe27-master_thesis/code/main/02_02_extract_drainage_polygons.py

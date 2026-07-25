@@ -33,7 +33,7 @@ from ..database import (
     append_dataframe_table,
     write_dataframe_table,
 )
-from ..paths import (
+from ...constants import (
     ensure_water_quality_dirs,
     get_download_log_database_path,
     get_raw_dir,

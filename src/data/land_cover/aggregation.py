@@ -22,10 +22,13 @@ from .constants import (
     TRENCH_ID_COLUMN,
     YEAR_COLUMN,
 )
-from .preprocess import deduplicate_drainage_polygons
-from .river_network_import import rn_module
+from src.data import river_network as rn_module
 from .schema import validate_land_cover_output_columns
-from shared.sensor_upstream import prepare_trench_adm2_matches, resolve_multi_seed_reachable_distances
+from src.data.shared.sensor_upstream import (
+    prepare_trench_adm2_matches,
+    resolve_multi_seed_reachable_distances,
+)
+from src.data.shared.spatial_tabular import deduplicate_drainage_polygons
 
 
 logger = logging.getLogger(__name__)

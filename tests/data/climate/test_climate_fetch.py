@@ -1,28 +1,19 @@
 from __future__ import annotations
 
 from pathlib import Path
-import sys
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-DATA_ROOT = ROOT / "src" / "data"
-if str(DATA_ROOT) not in sys.path:
-    sys.path.insert(0, str(DATA_ROOT))
-
-from src.data.cli import main as data_cli_main
-from src.data.climate.climate import climate as _qualified_climate
-from climate.climate import climate
-from climate.fetch.common import ClimateCredentialsError, ERA5_YEARS, load_cds_credentials
-from climate.fetch.common import load_download_manifest, manifest_path_for
-from climate.fetch.era5_land_daily import (
+from src.cli import main as data_cli_main
+from src.data.climate.core import Climate
+from src.data.climate.fetch.common import ClimateCredentialsError, ERA5_YEARS, load_cds_credentials
+from src.data.climate.fetch.common import load_download_manifest, manifest_path_for
+from src.data.climate.fetch.era5_land_daily import (
     DATASET as DAILY_DATASET,
     build_era5_land_daily_request,
     fetch_era5_land_daily,
 )
-from climate.fetch.era5_land_hourly import (
+from src.data.climate.fetch.era5_land_hourly import (
     DATASET as HOURLY_DATASET,
     build_era5_land_hourly_request,
     fetch_era5_land_hourly,
@@ -45,10 +36,10 @@ DAILY_RUNNING_LIMIT = 40
 
 @pytest.fixture(autouse=True)
 def disable_climate_decency_waits(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("climate.fetch.common._decency_wait", lambda *args, **kwargs: None)
-    monkeypatch.setattr("climate.fetch.common._worker_wait", lambda *args, **kwargs: None)
-    monkeypatch.setattr("climate.fetch.common.ENABLE_PERIODIC_RECHECKS", False)
-    monkeypatch.setattr("climate.fetch.common.MAX_ACTIVE_REMOTE_REQUESTS", TOTAL_MONTHLY_BATCHES + 10)
+    monkeypatch.setattr("src.data.climate.fetch.common._decency_wait", lambda *args, **kwargs: None)
+    monkeypatch.setattr("src.data.climate.fetch.common._worker_wait", lambda *args, **kwargs: None)
+    monkeypatch.setattr("src.data.climate.fetch.common.ENABLE_PERIODIC_RECHECKS", False)
+    monkeypatch.setattr("src.data.climate.fetch.common.MAX_ACTIVE_REMOTE_REQUESTS", TOTAL_MONTHLY_BATCHES + 10)
 
 
 def test_load_cds_credentials_reads_project_secret(tmp_path: Path) -> None:
@@ -98,7 +89,7 @@ def test_fetch_era5_land_hourly_builds_expected_yearly_requests(
             return DummyRemote(f"req-{len(submit_calls)}")
 
     monkeypatch.setattr(
-        "climate.fetch.common.create_datastores_client",
+        "src.data.climate.fetch.common.create_datastores_client",
         lambda root_dir=".": DummyClient(),
     )
 
@@ -148,7 +139,7 @@ def test_fetch_era5_land_daily_skips_existing_files(
             return DummyRemote(f"req-{len(submit_calls)}")
 
     monkeypatch.setattr(
-        "climate.fetch.common.create_datastores_client",
+        "src.data.climate.fetch.common.create_datastores_client",
         lambda root_dir=".": DummyClient(),
     )
 
@@ -197,7 +188,7 @@ def test_fetch_era5_land_daily_does_not_skip_without_success_manifest(
             return DummyRemote(f"req-{len(submit_calls)}")
 
     monkeypatch.setattr(
-        "climate.fetch.common.create_datastores_client",
+        "src.data.climate.fetch.common.create_datastores_client",
         lambda root_dir=".": DummyClient(),
     )
 
@@ -267,7 +258,7 @@ def test_fetch_era5_land_daily_resumes_and_downloads_successful_job(
             )()
 
     monkeypatch.setattr(
-        "climate.fetch.common.create_datastores_client",
+        "src.data.climate.fetch.common.create_datastores_client",
         lambda root_dir=".": DummyClient(),
     )
 
@@ -331,7 +322,7 @@ def test_fetch_era5_land_daily_marks_rejected_and_retries_when_queue_allows(
             )()
 
     monkeypatch.setattr(
-        "climate.fetch.common.create_datastores_client",
+        "src.data.climate.fetch.common.create_datastores_client",
         lambda root_dir=".": DummyClient(),
     )
 
@@ -385,7 +376,7 @@ def test_fetch_era5_land_daily_marks_missing_remote_job_rejected_and_retries(
             )()
 
     monkeypatch.setattr(
-        "climate.fetch.common.create_datastores_client",
+        "src.data.climate.fetch.common.create_datastores_client",
         lambda root_dir=".": DummyClient(),
     )
 
@@ -432,16 +423,16 @@ def test_fetch_era5_land_daily_skips_additional_remote_checks_after_running_limi
             raise AssertionError("submit should not be called when 150-slot logic is not under test")
 
     monkeypatch.setattr(
-        "climate.fetch.common.create_datastores_client",
+        "src.data.climate.fetch.common.create_datastores_client",
         lambda root_dir=".": DummyClient(),
     )
-    monkeypatch.setattr("climate.fetch.common.MAX_ACTIVE_REMOTE_REQUESTS", 3)
+    monkeypatch.setattr("src.data.climate.fetch.common.MAX_ACTIVE_REMOTE_REQUESTS", 3)
     monkeypatch.setitem(
-        __import__("climate.fetch.common", fromlist=["DATASET_RUNNING_REMOTE_REQUEST_LIMITS"]).DATASET_RUNNING_REMOTE_REQUEST_LIMITS,
+        __import__("src.data.climate.fetch.common", fromlist=["DATASET_RUNNING_REMOTE_REQUEST_LIMITS"]).DATASET_RUNNING_REMOTE_REQUEST_LIMITS,
         DAILY_DATASET,
         2,
     )
-    monkeypatch.setattr("climate.fetch.common.ENABLE_PERIODIC_RECHECKS", False)
+    monkeypatch.setattr("src.data.climate.fetch.common.ENABLE_PERIODIC_RECHECKS", False)
 
     fetch_era5_land_daily(root_dir=tmp_path)
 
@@ -481,11 +472,11 @@ def test_fetch_era5_land_hourly_stops_remote_checks_after_running_limit(
             raise AssertionError("submit should not be called when remote checks are being short-circuited")
 
     monkeypatch.setattr(
-        "climate.fetch.common.create_datastores_client",
+        "src.data.climate.fetch.common.create_datastores_client",
         lambda root_dir=".": DummyClient(),
     )
-    monkeypatch.setattr("climate.fetch.common.MAX_ACTIVE_REMOTE_REQUESTS", 3)
-    monkeypatch.setattr("climate.fetch.common.ENABLE_PERIODIC_RECHECKS", False)
+    monkeypatch.setattr("src.data.climate.fetch.common.MAX_ACTIVE_REMOTE_REQUESTS", 3)
+    monkeypatch.setattr("src.data.climate.fetch.common.ENABLE_PERIODIC_RECHECKS", False)
 
     fetch_era5_land_hourly(root_dir=tmp_path)
 
@@ -522,12 +513,12 @@ def test_fetch_era5_land_hourly_skips_fresh_remote_checks(
             raise AssertionError("submit should not be called for active requests")
 
     monkeypatch.setattr(
-        "climate.fetch.common.create_datastores_client",
+        "src.data.climate.fetch.common.create_datastores_client",
         lambda root_dir=".": DummyClient(),
     )
-    monkeypatch.setattr("climate.fetch.common.ENABLE_PERIODIC_RECHECKS", False)
+    monkeypatch.setattr("src.data.climate.fetch.common.ENABLE_PERIODIC_RECHECKS", False)
     monkeypatch.setattr(
-        "climate.fetch.common.datetime",
+        "src.data.climate.fetch.common.datetime",
         type(
             "FixedDateTime",
             (),
@@ -578,10 +569,10 @@ def test_fetch_era5_land_daily_defers_new_submissions_when_queue_is_full(
             raise AssertionError("submit should not be called when the queue is full")
 
     monkeypatch.setattr(
-        "climate.fetch.common.create_datastores_client",
+        "src.data.climate.fetch.common.create_datastores_client",
         lambda root_dir=".": DummyClient(),
     )
-    monkeypatch.setattr("climate.fetch.common.MAX_ACTIVE_REMOTE_REQUESTS", 1)
+    monkeypatch.setattr("src.data.climate.fetch.common.MAX_ACTIVE_REMOTE_REQUESTS", 1)
 
     fetch_era5_land_daily(root_dir=tmp_path)
 
@@ -607,15 +598,15 @@ def test_climate_fetch_routes_supported_subtypes(
     daily_output = Sentinel(["daily"])
 
     monkeypatch.setattr(
-        "climate.fetch.era5_land_hourly.fetch_era5_land_hourly",
+        "src.data.climate.fetch.era5_land_hourly.fetch_era5_land_hourly",
         lambda root_dir=".": hourly_output,
     )
     monkeypatch.setattr(
-        "climate.fetch.era5_land_daily.fetch_era5_land_daily",
+        "src.data.climate.fetch.era5_land_daily.fetch_era5_land_daily",
         lambda root_dir=".": daily_output,
     )
 
-    agent = climate(root_dir=tmp_path)
+    agent = Climate(root_dir=tmp_path)
 
     assert agent.fetch(subtype="era5_land_hourly") is hourly_output
     assert agent.fetch(subtype="era5_land_daily") is daily_output
@@ -630,13 +621,13 @@ def test_climate_preprocess_routes_supported_subtypes(
     daily_output = object()
 
     monkeypatch.setattr(
-        "climate.preprocess.era5_land.preprocess_era5_land_worker",
-        lambda root_dir=".", subtype="era5_land_hourly": hourly_output
-        if subtype == "era5_land_hourly"
-        else daily_output,
+        "src.data.climate.preprocess.era5_land.preprocess_era5_land_worker",
+        lambda root_dir=".", subtype="era5_land_hourly", stage="all", n_jobs=None: (
+            hourly_output if subtype == "era5_land_hourly" else daily_output
+        ),
     )
 
-    agent = climate(root_dir=tmp_path)
+    agent = Climate(root_dir=tmp_path)
 
     assert agent.preprocess(subtype="era5_land_hourly") is hourly_output
     assert agent.preprocess(subtype="era5_land_daily") is daily_output
@@ -662,8 +653,7 @@ def test_cli_climate_fetch_routes_subtype(
         seen["root_dir"] = self.root_dir
         return []
 
-    monkeypatch.setattr(climate, "fetch", fake_fetch)
-    monkeypatch.setattr(_qualified_climate, "fetch", fake_fetch)
+    monkeypatch.setattr(Climate, "fetch", fake_fetch)
 
     exit_code = data_cli_main(
         [
@@ -685,12 +675,12 @@ def test_cli_climate_preprocess_routes_subtype(
 ) -> None:
     seen = {}
 
-    def fake_preprocess(self, subtype="cloud_cover"):
+    def fake_preprocess(self, subtype="cloud_cover", stage="all", n_jobs=None):
         seen["subtype"] = subtype
         seen["root_dir"] = self.root_dir
         return []
 
-    monkeypatch.setattr(climate, "preprocess", fake_preprocess)
+    monkeypatch.setattr(Climate, "preprocess", fake_preprocess)
 
     exit_code = data_cli_main(
         [

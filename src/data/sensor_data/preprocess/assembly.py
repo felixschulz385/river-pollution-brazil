@@ -6,8 +6,8 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
-from ..fetch.paths import get_water_quality_dir
-from .settings import (
+from ..constants import get_water_quality_dir
+from ..schema import (
     ASSEMBLED_SENSOR_DATA_PARQUET,
     CLEAN_STREAMFLOW_PARQUET,
     CLEAN_WATER_QUALITY_PARQUET,
@@ -17,12 +17,9 @@ from .settings import (
     STREAMFLOW_ROLLING_WINDOWS,
 )
 
-try:
-    from ...river_network import RiverNetwork
-    from ... import river_network as rn_module
-except ImportError:
-    from river_network import RiverNetwork
-    import river_network as rn_module
+from src.data.river_network import RiverNetwork
+from src.data import river_network as rn_module
+from src.data.shared.sensor_upstream import prepare_entity_links, sparse_row
 
 
 logger = logging.getLogger(__name__)
@@ -72,23 +69,10 @@ def _validate_columns(frame, columns, frame_name):
 
 
 def _prepare_station_trenches(stations_rivers):
-    _validate_columns(
+    return prepare_entity_links(
         stations_rivers,
-        [STATION_CODE_COLUMN, TRENCH_ID_COLUMN],
-        "stations-rivers",
-    )
-    station_trenches = stations_rivers[
-        [STATION_CODE_COLUMN, TRENCH_ID_COLUMN]
-    ].dropna().copy()
-    station_trenches[STATION_CODE_COLUMN] = station_trenches[
-        STATION_CODE_COLUMN
-    ].astype(str)
-    station_trenches[TRENCH_ID_COLUMN] = station_trenches[TRENCH_ID_COLUMN].astype(
-        np.int64
-    )
-    return station_trenches.drop_duplicates(
-        subset=[STATION_CODE_COLUMN, TRENCH_ID_COLUMN],
-        keep="first",
+        entity_column=STATION_CODE_COLUMN,
+        location_column=TRENCH_ID_COLUMN,
     )
 
 
@@ -230,12 +214,6 @@ def _sparse_indices(sparse_row_or_col):
     return [int(index) for index in index_values.tolist()]
 
 
-def _sparse_row(sparse_matrix, row_index):
-    if hasattr(sparse_matrix, "getrow"):
-        return sparse_matrix.getrow(row_index)
-    return sparse_matrix[row_index : row_index + 1, :]
-
-
 def _sparse_col(sparse_matrix, col_index):
     if hasattr(sparse_matrix, "getcol"):
         return sparse_matrix.getcol(col_index)
@@ -264,8 +242,8 @@ def _candidate_trench_distances(
     if reachability is None or distances is None:
         return pd.DataFrame(columns=[TRENCH_ID_COLUMN, "distance_m"])
 
-    upstream_reach = _sparse_row(reachability, target_position)
-    upstream_distances = _sparse_distance_lookup(_sparse_row(distances, target_position))
+    upstream_reach = sparse_row(reachability, target_position)
+    upstream_distances = _sparse_distance_lookup(sparse_row(distances, target_position))
     downstream_reach = _sparse_col(reachability, target_position)
     downstream_distances = _sparse_distance_lookup(_sparse_col(distances, target_position))
 

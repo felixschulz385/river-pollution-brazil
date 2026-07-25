@@ -11,7 +11,7 @@ from tqdm import tqdm
 import xarray as xr
 from odc.geo.geobox import GeoBox
 
-from shared.spatial_tabular import mapping_to_long_frame, rasterize_feature_values
+from src.data.shared.spatial_tabular import mapping_to_long_frame, rasterize_feature_values
 
 
 MONTH_DICT = {

@@ -4,11 +4,11 @@ import unicodedata
 
 import pandas as pd
 from pandas.api.types import is_numeric_dtype
-from shared.batches import load_manifest
-from health.fetch.datasus import SIH_CHANNEL_METRICS, SIH_SELECTED_MORBIDITY_CHANNELS
-from health.fetch.datasus import SIH_ALL_METRICS_KEY
+from src.data.shared.batches import load_manifest
+from src.data.health.fetch.datasus import SIH_CHANNEL_METRICS, SIH_SELECTED_MORBIDITY_CHANNELS
+from src.data.health.fetch.datasus import SIH_ALL_METRICS_KEY
+from ..constants import HEALTH_DATASET_NAME
 
-HEALTH_DATASET_NAME = "health"
 SIH_METRIC_NAMES = {
     "hospitalizations": "hospitalizations_count",
     "aih_paid": "aih_paid_count",

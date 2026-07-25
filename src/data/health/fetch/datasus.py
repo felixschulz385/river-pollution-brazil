@@ -5,14 +5,14 @@ import hashlib
 import pandas as pd
 
 from .forms import DatasusTabnetForm
-from shared.batches import batch_output_path
-from shared.batches import batch_table_dir
-from shared.batches import initialize_manifest
-from shared.batches import manifest_path
-from shared.batches import update_manifest_entry
+from ..constants import HEALTH_DATASET_NAME
+from src.data.shared.batches import batch_output_path
+from src.data.shared.batches import batch_table_dir
+from src.data.shared.batches import initialize_manifest
+from src.data.shared.batches import manifest_path
+from src.data.shared.batches import update_manifest_entry
 
 logger = logging.getLogger(__name__)
-HEALTH_DATASET_NAME = "health"
 DATASUS_NO_SELECTED_RECORDS = "DATASUS returned no selected records"
 
 MORTALITY_URLS = {

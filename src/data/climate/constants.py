@@ -38,19 +38,6 @@ DEFAULT_ADM2_UPSTREAM_YEARLY_OUTPUT_PATH = Path(
     "data/climate/processed/era5_land/climate_adm2_upstream_yearly.parquet"
 )
 
-SENSOR_WINDOW_LABELS = {
-    "7d": 7,
-    "30d": 30,
-    "90d": 90,
-    "180d": 180,
-    "365d": 365,
-}
-
-ANNUAL_SUM_VARIABLES = {"tp", "sro", "ssro", "pev"}
-ANNUAL_MEAN_VARIABLES = {"2t", "2d", "swvl1", "swvl2"}
-ANNUAL_MIN_VARIABLES = {"2t_daily_min"}
-ANNUAL_MAX_VARIABLES = {"2t_daily_max"}
-
 # River-network distances are stored in kilometers. Buckets are 25 km wide,
 # labeled by integer lower bound, and computed on the shifted/adjusted
 # distance (see ADJUSTED_DISTANCE_COLUMN) so that 0 is the upstream end of

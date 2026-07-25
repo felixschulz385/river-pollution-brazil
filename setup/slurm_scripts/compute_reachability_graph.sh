@@ -14,5 +14,10 @@ conda activate 311
 
 cd /scicore/home/meiera/schulz0022/projects/river-pollution-brazil
 
-# Run land-cover preprocessing using the CLI
+# NON-FUNCTIONAL against the current CLI/RiverNetwork: `compute-reachability` is
+# not a registered river-network action (only `generate` is), and RiverNetwork
+# has no method taking shapefile-path/topology-path/distance-path parquet
+# inputs -- this predates the current GeoPackage-based RiverNetwork.generate()
+# pipeline and was never updated. Left as-is pending a decision on whether this
+# workflow should be reimplemented against the current API or retired.
 python src/data/cli.py river-network compute-reachability --shapefile-path "data/river_network/shapefile.parquet" --topology-path "data/river_network/topology.parquet" --distance-path "data/river_network/distance_from_estuary.parquet" --output-dir "data/river_network/"

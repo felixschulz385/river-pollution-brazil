@@ -10,7 +10,7 @@ from ..database import (
     read_geodataframe_table,
     write_geodataframe_table,
 )
-from ..paths import (
+from ...constants import (
     ensure_water_quality_dirs,
     get_root_path,
 )
@@ -104,10 +104,7 @@ def preprocess_station_inventory(
     brazil_boundary_path=None,
     river_network_dir=None,
 ):
-    try:
-        from ...river_network import RiverNetwork
-    except ImportError:
-        from river_network import RiverNetwork
+    from src.data.river_network import RiverNetwork
 
     # The fetch step populates the raw station inventory in DuckDB. Preprocess
     # narrows that raw feed down to a single curated station-to-trench table.

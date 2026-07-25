@@ -46,7 +46,9 @@ This exposes two styles of commands:
 - grouped commands under `data` and `analysis`
 - flat compatibility aliases such as `health`, `water-quality`, `land-cover`, `population`, and `river-network`
 
-There is also a compatibility wrapper at `src/data/cli.py` for older invocations.
+Each data submodule also owns its own standalone entry point, e.g.
+`python3 -m src.data.climate --help`; `src/cli.py` delegates to these rather
+than duplicating their argument parsing.
 
 ## Data Workflows
 
@@ -269,12 +271,8 @@ Run the test suite with:
 pytest
 ```
 
-The tests are concentrated in `tests/`, especially:
-
-- `tests/analysis/sensor_data/`
-- `tests/data/population/`
-- `tests/test_land_cover_assembly.py`
-- `tests/test_land_cover_core.py`
+The tests are concentrated in `tests/data/<submodule>/` (mirroring `src/data/`),
+plus `tests/analysis/sensor_data/` for the analysis layer.
 
 ## Status And Conventions
 
