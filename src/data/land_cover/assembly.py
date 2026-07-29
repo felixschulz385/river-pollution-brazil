@@ -424,8 +424,7 @@ def _aggregate_sensor_station_year(
         on=TRENCH_ID_COLUMN,
         how="left",
     )
-    fill_columns = [LAND_COVER_TOTAL_COLUMN, *lc_columns]
-    matched[fill_columns] = matched[fill_columns].fillna(0.0)
+    matched[lc_columns] = matched[lc_columns].fillna(0.0)
 
     bucket_summaries = {}
     for lower_bound, _ in SENSOR_DISTANCE_BUCKETS:
