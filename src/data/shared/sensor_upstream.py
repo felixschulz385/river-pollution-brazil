@@ -315,6 +315,33 @@ def resolve_reachable_distances(
     ).reset_index(drop=True)
 
 
+DISTANCE_KERNELS = ("uniform", "triangular", "epanechnikov", "gaussian", "exponential")
+
+
+def distance_kernel_weights(distances, *, kernel, bandwidth):
+    """Convert upstream distances into continuous kernel-decayed weights.
+
+    Where `label_values_by_intervals` assigns each distance to one discrete
+    bucket, this assigns a continuous weight that decays with `bandwidth`
+    under the chosen `kernel` -- used for ADM2 upstream aggregation that
+    blends contributions across trenches rather than binning them.
+    """
+    if kernel not in DISTANCE_KERNELS:
+        raise ValueError(f"Unknown kernel: {kernel}. Available: {DISTANCE_KERNELS}")
+
+    distances = np.asarray(distances, dtype=float)
+    scaled = distances / bandwidth
+    if kernel == "uniform":
+        return (distances <= bandwidth).astype(float)
+    if kernel == "triangular":
+        return np.clip(1 - scaled, 0, None)
+    if kernel == "epanechnikov":
+        return np.clip(1 - scaled**2, 0, None)
+    if kernel == "gaussian":
+        return np.exp(-(scaled**2))
+    return np.exp(-scaled)  # exponential
+
+
 def label_values_by_intervals(values, intervals):
     """Assign values to configured closed/open interval labels."""
     values = pd.Series(values, copy=False)
@@ -498,19 +525,29 @@ def resolve_multi_seed_reachable_distances(
     distance_column,
     system_column,
     position_column,
+    system_location_arrays=None,
+    system_positions=None,
 ):
-    validate_network_index_tables(
-        network,
-        location_column=location_column,
-        system_column=system_column,
-        position_column=position_column,
-    )
-    system_location_arrays, system_positions = build_group_index_lookup(
-        network.trenches,
-        location_column=location_column,
-        system_column=system_column,
-        position_column=position_column,
-    )
+    """Resolve min-distance-reachable locations from a set of seed locations.
+
+    `system_location_arrays`/`system_positions` may be precomputed once via
+    `build_group_index_lookup` and reused across many calls (e.g. one call per
+    ADM2 unit) -- rebuilding them from `network.trenches` on every call means
+    redoing a full-network groupby per unit instead of once overall.
+    """
+    if system_location_arrays is None or system_positions is None:
+        validate_network_index_tables(
+            network,
+            location_column=location_column,
+            system_column=system_column,
+            position_column=position_column,
+        )
+        system_location_arrays, system_positions = build_group_index_lookup(
+            network.trenches,
+            location_column=location_column,
+            system_column=system_column,
+            position_column=position_column,
+        )
 
     distance_frames = []
     for system_id, system_seed_rows in seed_assignments.groupby(system_column):

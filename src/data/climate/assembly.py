@@ -42,11 +42,12 @@ from .schema import (
     ANNUAL_SUM_VARIABLES,
     SENSOR_WINDOW_LABELS,
 )
-from src.data.land_cover.aggregation import AVAILABLE_KERNELS, distance_weights
 from src.data.river_network import RiverNetwork
 import src.data.river_network as rn_module
 from src.data.shared.sensor_upstream import (
+    DISTANCE_KERNELS,
     build_group_index_lookup,
+    distance_kernel_weights,
     normalize_network_frame,
     prepare_entity_links,
     prepare_observation_targets,
@@ -841,6 +842,19 @@ def _build_adm2_upstream_weights(
     ).dropna(subset=[rn_module.SYSTEM_ID_KEY])
 
     adm2_units = trench_lookup["adm2"].dropna().unique()
+    validate_network_index_tables(
+        network,
+        location_column=TRENCH_ID_COLUMN,
+        system_column=rn_module.SYSTEM_ID_KEY,
+        position_column=rn_module.TRENCH_INDEX_COLUMN,
+    )
+    system_location_arrays, system_positions = build_group_index_lookup(
+        network.trenches,
+        location_column=TRENCH_ID_COLUMN,
+        system_column=rn_module.SYSTEM_ID_KEY,
+        position_column=rn_module.TRENCH_INDEX_COLUMN,
+    )
+
     def process_adm2(adm2_id):
         adm2_trenches = trench_lookup.loc[
             trench_lookup["adm2"] == adm2_id,
@@ -856,13 +870,15 @@ def _build_adm2_upstream_weights(
             distance_column=UPSTREAM_DISTANCE_COLUMN,
             system_column=rn_module.SYSTEM_ID_KEY,
             position_column=rn_module.TRENCH_INDEX_COLUMN,
+            system_location_arrays=system_location_arrays,
+            system_positions=system_positions,
         )
         if trench_distance_lookup.empty:
             return None
-        trench_distance_lookup["weight"] = distance_weights(
+        trench_distance_lookup["weight"] = distance_kernel_weights(
             trench_distance_lookup[UPSTREAM_DISTANCE_COLUMN].to_numpy(),
             kernel=kernel,
-            h=h,
+            bandwidth=h,
         )
         trench_distance_lookup[ADM2_ID_COLUMN] = adm2_id
         return trench_distance_lookup[[ADM2_ID_COLUMN, TRENCH_ID_COLUMN, "weight"]]
@@ -890,8 +906,8 @@ def _assemble_adm2_upstream_duckdb(
     h,
     n_jobs,
 ):
-    if kernel not in AVAILABLE_KERNELS:
-        raise ValueError(f"Unknown kernel: {kernel}. Available: {AVAILABLE_KERNELS}")
+    if kernel not in DISTANCE_KERNELS:
+        raise ValueError(f"Unknown kernel: {kernel}. Available: {DISTANCE_KERNELS}")
 
     logger.info("Loading river network from %s", river_network_path)
     network = RiverNetwork()

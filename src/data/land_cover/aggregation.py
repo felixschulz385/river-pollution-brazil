@@ -25,8 +25,10 @@ from .constants import (
 from src.data import river_network as rn_module
 from .schema import validate_land_cover_output_columns
 from src.data.shared.sensor_upstream import (
+    build_group_index_lookup,
     prepare_trench_adm2_matches,
     resolve_multi_seed_reachable_distances,
+    validate_network_index_tables,
 )
 from src.data.shared.spatial_tabular import deduplicate_drainage_polygons
 
@@ -197,6 +199,19 @@ def aggregate_along_rivers(
             "Recompute river matrices with RiverNetwork.compute_distance_matrices()."
         )
 
+    validate_network_index_tables(
+        network,
+        location_column=TRENCH_ID_COLUMN,
+        system_column=rn_module.SYSTEM_ID_KEY,
+        position_column=rn_module.TRENCH_INDEX_COLUMN,
+    )
+    system_location_arrays, system_positions = build_group_index_lookup(
+        network.trenches,
+        location_column=TRENCH_ID_COLUMN,
+        system_column=rn_module.SYSTEM_ID_KEY,
+        position_column=rn_module.TRENCH_INDEX_COLUMN,
+    )
+
     def process_adm2(adm2_id):
         """Process a single ADM2 unit for all years."""
         try:
@@ -212,6 +227,8 @@ def aggregate_along_rivers(
                 distance_column="upstream_distance",
                 system_column=rn_module.SYSTEM_ID_KEY,
                 position_column=rn_module.TRENCH_INDEX_COLUMN,
+                system_location_arrays=system_location_arrays,
+                system_positions=system_positions,
             )
             if trench_distance_lookup.empty:
                 return None
