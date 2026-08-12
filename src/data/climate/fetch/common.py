@@ -23,6 +23,7 @@ FILE_LOCK_POLL_SECONDS = 2
 FILE_LOCK_TIMEOUT_SECONDS = 900
 REMOTE_RECHECK_ACCEPTED_SECONDS = 900
 REMOTE_RECHECK_RUNNING_SECONDS = 300
+MAX_VERIFICATION_ATTEMPTS = 3
 DATASET_RUNNING_REMOTE_REQUEST_LIMITS = {
     "reanalysis-era5-land": 1,
     "derived-era5-land-daily-statistics": 1,
@@ -192,6 +193,8 @@ def should_skip_download(target_path: Path):
     if lock_path_for(target_path).exists():
         return False
     download_status = _manifest_download_status(manifest)
+    if download_status == "verification_failed":
+        return True
     return download_status == "downloaded" and target_path.exists()
 
 
@@ -257,17 +260,22 @@ def _remote_is_running(remote):
     return getattr(remote, "status", None) == "running"
 
 
-def _manifest_remote_is_running(manifest):
-    if manifest is None:
-        return False
-    return manifest.get("remote_status") == "running"
-
-
 def _manifest_remote_is_active(manifest):
     if manifest is None:
         return False
     download_status = _manifest_download_status(manifest)
     return download_status in {"submitted", "downloading"}
+
+
+def _manifest_remote_is_running(manifest):
+    # "running" is only meaningful for a batch that's still active (submitted/
+    # downloading). Without this guard, a stale remote_status: "running" left
+    # over from an old check can permanently occupy the dataset's running-slot
+    # budget even after the batch has long since downloaded/processed,
+    # starving every other batch of remote rechecks.
+    if not _manifest_remote_is_active(manifest):
+        return False
+    return manifest.get("remote_status") == "running"
 
 
 def _manifest_check_cooldown_seconds(manifest):
@@ -329,6 +337,7 @@ def _check_existing_request(
     dataset,
     request,
     output_path: Path,
+    verify_batch=None,
 ):
     manifest = load_download_manifest(output_path)
     if should_skip_download(output_path):
@@ -434,6 +443,7 @@ def _check_existing_request(
             results = remote.get_results()
             results.download(str(output_path))
     except Exception as exc:
+        output_path.unlink(missing_ok=True)
         write_download_manifest(
             output_path,
             dataset=dataset,
@@ -444,7 +454,60 @@ def _check_existing_request(
             receipt=_receipt_or_none(remote),
             error=str(exc),
         )
-        raise
+        logger.warning(
+            "Climate batch %s failed to download from request_id=%s and will be resubmitted. %s",
+            output_path.name,
+            remote.request_id,
+            exc,
+        )
+        _decency_wait()
+        return {"is_active": False, "is_running": False}
+
+    if verify_batch is not None:
+        result = verify_batch(output_path)
+        if not result.ok:
+            verification_attempts = manifest.get("verification_attempts", 0) + 1 if manifest else 1
+            error_message = "Verification failed: " + "; ".join(result.errors)
+            if verification_attempts < MAX_VERIFICATION_ATTEMPTS:
+                output_path.unlink(missing_ok=True)
+                write_download_manifest(
+                    output_path,
+                    dataset=dataset,
+                    request=request,
+                    status="failed",
+                    request_id=remote.request_id,
+                    remote_status=remote_status,
+                    remote_checked_at=_timestamp(),
+                    verification_attempts=verification_attempts,
+                    error=error_message,
+                )
+                logger.warning(
+                    "Climate batch %s failed verification (attempt %s/%s); rescheduling. %s",
+                    output_path.name,
+                    verification_attempts,
+                    MAX_VERIFICATION_ATTEMPTS,
+                    error_message,
+                )
+            else:
+                write_download_manifest(
+                    output_path,
+                    dataset=dataset,
+                    request=request,
+                    status="verification_failed",
+                    request_id=remote.request_id,
+                    remote_status=remote_status,
+                    remote_checked_at=_timestamp(),
+                    verification_attempts=verification_attempts,
+                    error=error_message,
+                )
+                logger.error(
+                    "Climate batch %s failed verification %s times and will not be retried automatically. %s",
+                    output_path.name,
+                    verification_attempts,
+                    error_message,
+                )
+            _decency_wait()
+            return {"is_active": False, "is_running": False}
 
     write_download_manifest(
         output_path,
@@ -483,6 +546,8 @@ def _submit_request(
     output_path: Path,
 ):
     logger.info("Submitting climate batch %s for dataset %s.", output_path.name, dataset)
+    existing_manifest = load_download_manifest(output_path)
+    verification_attempts = existing_manifest.get("verification_attempts", 0) if existing_manifest else 0
     remote = client.submit(dataset, request)
     write_download_manifest(
         output_path,
@@ -492,6 +557,7 @@ def _submit_request(
         request_id=remote.request_id,
         remote_status=getattr(remote, "status", None),
         remote_checked_at=_timestamp(),
+        verification_attempts=verification_attempts,
     )
     logger.info(
         "Submitted climate batch %s with request_id=%s and remote_status=%s.",
@@ -510,6 +576,7 @@ def _manifest_status_counts(batch_payloads):
         "downloading": 0,
         "failed": 0,
         "rejected": 0,
+        "verification_failed": 0,
         "not_started": 0,
     }
     for _, output_path, _ in batch_payloads:
@@ -559,6 +626,7 @@ def _log_worker_summary_box(
         f"Downloading       : {counts['downloading']}",
         f"Rejected          : {counts['rejected']}",
         f"Failed            : {counts['failed']}",
+        f"Verification failed: {counts['verification_failed']}",
         f"Not started       : {counts['not_started']}",
     ]
     content_width = max(len(line) for line in lines + ["Climate Worker"])
@@ -579,6 +647,7 @@ def retrieve_yearly_dataset(
     file_prefix,
     years=None,
     max_running_remote_requests=None,
+    verify_batch=None,
 ):
     years = years or ERA5_YEARS
     return retrieve_batched_dataset(
@@ -590,6 +659,7 @@ def retrieve_yearly_dataset(
         batches=[{"year": year} for year in years],
         output_name_factory=lambda batch: f"{file_prefix}_{batch['year']}.grib",
         max_running_remote_requests=max_running_remote_requests,
+        verify_batch=verify_batch,
     )
 
 
@@ -603,6 +673,7 @@ def retrieve_batched_dataset(
     batches,
     output_name_factory,
     max_running_remote_requests=None,
+    verify_batch=None,
 ):
     output_dir = climate_raw_dir(root_dir) / output_subdir
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -656,6 +727,7 @@ def retrieve_batched_dataset(
                 dataset=dataset,
                 request=request,
                 output_path=output_path,
+                verify_batch=verify_batch,
             )
             active_requests += int(status["is_active"]) - int(manifest_state["is_active"])
             running_requests += int(status["is_running"]) - int(manifest_state["is_running"])
@@ -705,6 +777,7 @@ def retrieve_batched_dataset(
                 dataset=dataset,
                 request=request,
                 output_path=output_path,
+                verify_batch=verify_batch,
             )
             active_requests += int(status["is_active"]) - int(manifest_state["is_active"])
             running_requests += int(status["is_running"]) - int(manifest_state["is_running"])
@@ -784,6 +857,7 @@ def retrieve_yearly_dataset_in_monthly_batches(
     years=None,
     months=None,
     max_running_remote_requests=None,
+    verify_batch=None,
 ):
     years = years or ERA5_YEARS
     months = months or ERA5_MONTHS
@@ -800,4 +874,5 @@ def retrieve_yearly_dataset_in_monthly_batches(
         batches=batches,
         output_name_factory=lambda batch: f"{file_prefix}_{batch['year']}_{batch['month']}.grib",
         max_running_remote_requests=max_running_remote_requests,
+        verify_batch=verify_batch,
     )
