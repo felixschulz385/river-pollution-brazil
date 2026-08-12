@@ -18,6 +18,10 @@ class climate:
             from .fetch.era5_land_daily import fetch_era5_land_daily
 
             return fetch_era5_land_daily(root_dir=self.root_dir)
+        if subtype == "era5_land_arco":
+            from .fetch.era5_land_arco import fetch_era5_land_arco
+
+            return fetch_era5_land_arco(root_dir=self.root_dir)
         raise ValueError(f"Unsupported climate fetch subtype: {subtype}")
 
     def preprocess(self, subtype="cloud_cover"):

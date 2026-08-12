@@ -4,19 +4,22 @@ from .common import (
     ERA5_HOURS,
     retrieve_yearly_dataset_in_monthly_batches,
 )
+from .verify import verify_era5_grib_batch
 
 
 DATASET = "reanalysis-era5-land"
+# total_precipitation, 2m_temperature, 2m_dewpoint_temperature, and the two
+# volumetric_soil_water_layer variables are sourced from CDS's ARCO Zarr store
+# instead (see fetch/era5_land_arco.py + preprocess/era5_land_arco.py) - they
+# aren't offered there, so surface_runoff/sub_surface_runoff/potential_evaporation
+# still go through this GRIB job-submission path.
 VARIABLES = [
-    "total_precipitation",
     "surface_runoff",
     "sub_surface_runoff",
     "potential_evaporation",
-    "2m_temperature",
-    "2m_dewpoint_temperature",
-    "volumetric_soil_water_layer_1",
-    "volumetric_soil_water_layer_2",
 ]
+# GRIB short names for the variables above, as read back by _open_era5_dataset.
+VERIFICATION_BANDS = ["sro", "ssro", "pev"]
 
 
 def build_era5_land_hourly_request(year, month):
@@ -39,4 +42,5 @@ def fetch_era5_land_hourly(root_dir="."):
         output_subdir="era5_land_hourly",
         file_prefix="era5_land_hourly",
         max_running_remote_requests=1,
+        verify_batch=lambda path: verify_era5_grib_batch(path, bands=VERIFICATION_BANDS),
     )

@@ -40,6 +40,7 @@ Examples:
   python cli.py climate fetch --subtype cloud_cover
   python cli.py climate fetch --subtype era5_land_hourly
   python cli.py climate fetch --subtype era5_land_daily
+  python cli.py climate fetch --subtype era5_land_arco
   python cli.py climate preprocess --root-dir .
   python cli.py water-quality fetch
   python cli.py water-quality preprocess
@@ -146,6 +147,7 @@ def main(argv=None):
         python cli.py climate fetch --subtype cloud_cover
         python cli.py climate fetch --subtype era5_land_hourly
         python cli.py climate fetch --subtype era5_land_daily
+        python cli.py climate fetch --subtype era5_land_arco
         python cli.py climate preprocess --root-dir .
         python cli.py water-quality fetch
         python cli.py water-quality preprocess
@@ -193,7 +195,7 @@ def main(argv=None):
     climate_parser.add_argument(
         "--subtype",
         default="cloud_cover",
-        choices=["cloud_cover", "era5_land_hourly", "era5_land_daily"],
+        choices=["cloud_cover", "era5_land_hourly", "era5_land_daily", "era5_land_arco"],
         help="Climate fetch subtype (default: cloud_cover)",
     )
 
