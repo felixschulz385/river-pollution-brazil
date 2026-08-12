@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import os
 import json
 import logging
 from pathlib import Path
@@ -11,11 +12,27 @@ import shutil
 import tempfile
 from time import sleep
 
+import dask
 import dask.array as da
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
+import rioxarray  # noqa: F401
 import xarray as xr
+from joblib import Parallel, delayed
 
+from ..constants import (
+    DATE_COLUMN,
+    DEFAULT_ERA5_LAND_STORE_PATH,
+    DEFAULT_ERA5_LAND_TRENCH_DAY_PATH,
+    DEFAULT_RIVER_NETWORK_PATH,
+    ERA5_LAND_PREPROCESS_STAGES,
+    ERA5_LAND_PREPROCESS_SUBTYPES,
+    MONTH_COLUMN,
+    TRENCH_ID_COLUMN,
+    YEAR_COLUMN,
+)
 from ..fetch.common import (
     _timestamp,
     _worker_wait,
@@ -26,6 +43,8 @@ from ..fetch.common import (
     _wait_for_lock_release,
     write_download_manifest,
 )
+from land_cover.preprocess import deduplicate_drainage_polygons
+from river_network import RiverNetwork
 
 
 logger = logging.getLogger(__name__)
@@ -37,11 +56,17 @@ ERA5_OUTPUT_FREQ = "1D"
 ERA5_OUTPUT_TIME_INDEX = pd.date_range(ERA5_OUTPUT_START, ERA5_OUTPUT_END, freq=ERA5_OUTPUT_FREQ)
 ERA5_OUTPUT_DIMS = ("time", "latitude", "longitude")
 ERA5_OUTPUT_CHUNKS = (365, -1, -1)
-SUPPORTED_ERA5_PREPROCESS_SUBTYPES = {"era5_land_hourly", "era5_land_daily"}
+SUPPORTED_ERA5_PREPROCESS_SUBTYPES = ERA5_LAND_PREPROCESS_SUBTYPES
 GEObOX_FILENAME = "geobox.pickle"
 ERA5_FILENAME_PATTERN = re.compile(r"era5_land_(hourly|daily)_(?P<year>\d{4})_(?P<month>\d{2})\.grib$")
 EARTHKIT_TEMP_DIR_PREFIX = "tmp"
 EARTHKIT_TEMP_RETENTION_SECONDS = 6 * 3600
+ERA5_TABULAR_TIME_CHUNK_DAYS = 7
+ERA5_PARQUET_TIME_SLICE_DAYS = 7
+ERA5_TRENCH_SUBBATCH_SIZE = 1000
+ERA5_POINT_SELECTION_TOLERANCE_DEGREES = 0.1
+TRENCH_CENTROID_AREA_CRS = "EPSG:5880"
+DEFAULT_ERA5_PARQUET_N_JOBS = 2
 ERA5_DAILY_VARIABLE_NAME_MAP = {
     "2m_dewpoint_temperature": "2d",
     "2m_temperature": "2t",
@@ -160,7 +185,6 @@ ERA5L_VAR_CONFIG = {
     },
 }
 
-
 def _root(root_dir=".") -> Path:
     return Path(root_dir)
 
@@ -173,12 +197,24 @@ def _era5_processed_dir(root_dir=".") -> Path:
     return _root(root_dir) / "data" / "climate" / "processed" / "era5_land"
 
 
+def _era5_cache_dir(root_dir=".") -> Path:
+    return _root(root_dir) / "data" / "climate" / "processed" / "cache_nobackup"
+
+
 def _era5_store_path(root_dir=".") -> Path:
-    return _era5_processed_dir(root_dir) / "era5_land.zarr"
+    return _root(root_dir) / DEFAULT_ERA5_LAND_STORE_PATH
+
+
+def _era5_trench_day_path(root_dir=".") -> Path:
+    return _root(root_dir) / DEFAULT_ERA5_LAND_TRENCH_DAY_PATH
 
 
 def _era5_geobox_path(root_dir=".") -> Path:
     return _era5_raw_dir(root_dir, "era5_land_hourly") / GEObOX_FILENAME
+
+
+def _river_network_path(root_dir=".") -> Path:
+    return _root(root_dir) / DEFAULT_RIVER_NETWORK_PATH
 
 
 def _dataset_name_for_subtype(subtype: str) -> str:
@@ -219,6 +255,376 @@ def _expected_output_var_attrs() -> dict[str, dict]:
                 "offset_applied": agg.get("offset", 0.0),
             }
     return expected
+
+
+def _available_era5_output_variables(dataset: xr.Dataset) -> list[str]:
+    expected = set(_expected_output_var_attrs())
+    return [var_name for var_name in dataset.data_vars if var_name in expected]
+
+
+def _load_drainage_polygons(root_dir=".", geobox_state: dict | None = None):
+    network_path = _river_network_path(root_dir)
+    logger.info("Loading river network drainage areas from %s", network_path)
+    network = RiverNetwork()
+    network.load(str(network_path))
+    if network.drainage_areas is None:
+        raise ValueError("River network must include drainage_areas for climate tabularization.")
+
+    drainage_polygons = network.drainage_areas.to_crs(4326)
+    if "within_brazil" not in drainage_polygons.columns:
+        raise ValueError(
+            "Drainage areas missing 'within_brazil' column. "
+            "Run river-network generate with --gadm-path to annotate this column."
+        )
+
+    if geobox_state is None:
+        geobox_state = load_or_create_geobox_state(root_dir=root_dir)
+
+    centroid_points = (
+        drainage_polygons
+        .to_crs(TRENCH_CENTROID_AREA_CRS)
+        .geometry
+        .centroid
+        .to_crs(4326)
+    )
+    within_geobox = centroid_points.within(
+        geobox_state["geobox"].extent.geom.buffer(0.01)
+    )
+    drainage_polygons = drainage_polygons[
+        drainage_polygons["within_brazil"] & within_geobox
+    ]
+    drainage_polygons = deduplicate_drainage_polygons(drainage_polygons).reset_index(drop=True)
+    return drainage_polygons[[TRENCH_ID_COLUMN, "geometry"]].copy().reset_index(drop=True)
+
+
+def _empty_trench_day_frame(climate_columns: list[str]) -> pd.DataFrame:
+    return pd.DataFrame(columns=[TRENCH_ID_COLUMN, DATE_COLUMN, *climate_columns])
+
+
+def _trench_centroid_coordinates(drainage_polygons: pd.DataFrame) -> pd.DataFrame:
+    centroid_points = (
+        drainage_polygons
+        .to_crs(TRENCH_CENTROID_AREA_CRS)
+        .geometry
+        .centroid
+        .to_crs(4326)
+    )
+    coordinates = centroid_points.get_coordinates().reset_index(drop=True)
+    trench_coordinates = pd.DataFrame(
+        {
+            TRENCH_ID_COLUMN: drainage_polygons[TRENCH_ID_COLUMN].to_numpy(dtype=np.int64),
+            "latitude": coordinates["y"].to_numpy(dtype=np.float64),
+            "longitude": coordinates["x"].to_numpy(dtype=np.float64),
+        }
+    )
+    return (
+        trench_coordinates.dropna(subset=["latitude", "longitude"])
+        .drop_duplicates(subset=[TRENCH_ID_COLUMN], keep="first")
+        .sort_values(TRENCH_ID_COLUMN)
+        .reset_index(drop=True)
+    )
+
+
+def _time_windows(total_size: int, window_size: int):
+    for start in range(0, total_size, window_size):
+        yield start, min(start + window_size, total_size)
+
+
+def _chunk_layout(dataset: xr.Dataset) -> dict[str, tuple[int, ...]]:
+    chunk_map = getattr(dataset, "chunks", None) or getattr(dataset, "chunksizes", None)
+    if chunk_map is None:
+        raise ValueError("ERA5-Land tabularization requires chunked xarray data.")
+    return {name: tuple(int(size) for size in sizes) for name, sizes in chunk_map.items()}
+
+
+def _effective_era5_parquet_n_jobs(n_jobs: int | None) -> int:
+    if n_jobs is None:
+        return max(1, min(os.cpu_count() or 1, DEFAULT_ERA5_PARQUET_N_JOBS))
+    return max(1, int(n_jobs))
+
+
+def _time_chunk_windows(dataset: xr.Dataset) -> list[tuple[int, int]]:
+    chunk_layout = _chunk_layout(dataset)
+    total_time = dataset.sizes["time"]
+    source_time_chunk_size = chunk_layout["time"][0]
+    return list(_time_windows(total_time, source_time_chunk_size))
+
+
+def _extract_trench_subbatch(
+    climate_chunk: xr.Dataset,
+    *,
+    trench_batch: pd.DataFrame,
+    climate_columns: list[str],
+) -> pd.DataFrame:
+    trench_ids = trench_batch[TRENCH_ID_COLUMN].to_numpy(dtype=np.int64)
+    latitudes = xr.DataArray(
+        trench_batch["latitude"].to_numpy(dtype=np.float64),
+        dims=("trench",),
+        coords={TRENCH_ID_COLUMN: ("trench", trench_ids)},
+    )
+    longitudes = xr.DataArray(
+        trench_batch["longitude"].to_numpy(dtype=np.float64),
+        dims=("trench",),
+        coords={TRENCH_ID_COLUMN: ("trench", trench_ids)},
+    )
+    selected = climate_chunk[climate_columns].sel(
+        latitude=latitudes,
+        longitude=longitudes,
+        method="nearest",
+        tolerance=ERA5_POINT_SELECTION_TOLERANCE_DEGREES,
+    )
+    frame = selected.to_dataframe().reset_index()
+    if frame.empty:
+        return _empty_trench_day_frame(climate_columns)
+
+    if "time" not in frame.columns:
+        raise ValueError("Expected `time` column after ERA5-Land trench extraction.")
+
+    frame = frame.rename(columns={"time": DATE_COLUMN})
+    frame[DATE_COLUMN] = pd.to_datetime(frame[DATE_COLUMN], errors="coerce").dt.normalize()
+    frame[TRENCH_ID_COLUMN] = frame[TRENCH_ID_COLUMN].astype(np.int64, copy=False)
+    frame = frame.drop(columns=["trench", "latitude", "longitude"], errors="ignore")
+    return frame[[TRENCH_ID_COLUMN, DATE_COLUMN, *climate_columns]]
+
+
+def _extract_time_slice(
+    climate_chunk: xr.Dataset,
+    *,
+    time_start: int,
+    time_stop: int,
+    trench_coordinates: pd.DataFrame,
+    climate_columns: list[str],
+) -> pd.DataFrame:
+    logger.debug(
+        "Selecting ERA5-Land time slice %s:%s within loaded chunk of %s day(s)",
+        time_start,
+        time_stop,
+        climate_chunk.sizes["time"],
+    )
+    chunk_frames = []
+    n_trenches = len(trench_coordinates)
+    climate_slice = climate_chunk.isel(time=slice(time_start, time_stop))
+    for batch_start, batch_stop in _time_windows(n_trenches, ERA5_TRENCH_SUBBATCH_SIZE):
+        logger.debug(
+            "Selecting ERA5-Land trench subbatch %s:%s for days %s:%s",
+            batch_start,
+            batch_stop,
+            time_start,
+            time_stop,
+        )
+        trench_batch = trench_coordinates.iloc[batch_start:batch_stop].reset_index(drop=True)
+        chunk_frames.append(
+            _extract_trench_subbatch(
+                climate_slice,
+                trench_batch=trench_batch,
+                climate_columns=climate_columns,
+            )
+        )
+
+    if not chunk_frames:
+        return _empty_trench_day_frame(climate_columns)
+
+    return (
+        pd.concat(chunk_frames, ignore_index=True)
+        .sort_values([TRENCH_ID_COLUMN, DATE_COLUMN], kind="mergesort")
+        .reset_index(drop=True)
+    )
+
+
+def _write_time_chunk_parts(
+    dataset: xr.Dataset,
+    *,
+    time_start: int,
+    time_stop: int,
+    trench_coordinates: pd.DataFrame,
+    climate_columns: list[str],
+    output_dir: Path,
+) -> int:
+    logger.info(
+        "Selecting ERA5-Land time chunk %s:%s of %s",
+        time_start,
+        time_stop,
+        dataset.sizes["time"],
+    )
+    with dask.config.set(scheduler="single-threaded"):
+        climate_chunk = dataset.isel(time=slice(time_start, time_stop)).load()
+
+    parts_written = 0
+    try:
+        for local_start, local_stop in _time_windows(
+            climate_chunk.sizes["time"],
+            ERA5_PARQUET_TIME_SLICE_DAYS,
+        ):
+            global_start = time_start + local_start
+            global_stop = time_start + local_stop
+            frame = _extract_time_slice(
+                climate_chunk,
+                time_start=local_start,
+                time_stop=local_stop,
+                trench_coordinates=trench_coordinates,
+                climate_columns=climate_columns,
+            )
+            if frame.empty:
+                del frame
+                continue
+
+            _write_partitioned_time_slice_frame(
+                frame,
+                output_dir=output_dir,
+                basename=f"part-{global_start:05d}-{global_stop:05d}.parquet",
+            )
+            parts_written += 1
+            del frame
+            gc.collect()
+    finally:
+        close = getattr(climate_chunk, "close", None)
+        if callable(close):
+            close()
+        del climate_chunk
+        gc.collect()
+
+    return parts_written
+
+
+def _remove_path(path: Path) -> None:
+    if not path.exists():
+        return
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
+def _partition_path(output_dir: Path, *, year: int, month: int) -> Path:
+    return output_dir / f"{YEAR_COLUMN}={year:04d}" / f"{MONTH_COLUMN}={month:02d}"
+
+
+def _write_partitioned_time_slice_frame(
+    frame: pd.DataFrame,
+    *,
+    output_dir: Path,
+    basename: str,
+) -> None:
+    partition_index = pd.DataFrame(
+        {
+            YEAR_COLUMN: frame[DATE_COLUMN].dt.year.to_numpy(dtype=np.int16, copy=False),
+            MONTH_COLUMN: frame[DATE_COLUMN].dt.month.to_numpy(dtype=np.int8, copy=False),
+        }
+    )
+    group_indices = partition_index.groupby([YEAR_COLUMN, MONTH_COLUMN], sort=False).indices
+    for (year, month), indices in group_indices.items():
+        partition_dir = _partition_path(output_dir, year=int(year), month=int(month))
+        partition_dir.mkdir(parents=True, exist_ok=True)
+        pq.write_table(
+            pa.Table.from_pandas(frame.iloc[indices].copy(), preserve_index=False),
+            partition_dir / basename,
+        )
+
+
+def _write_chunked_trench_day_table(
+    dataset: xr.Dataset,
+    *,
+    climate_columns: list[str],
+    trench_coordinates: pd.DataFrame,
+    output_path: Path,
+    n_jobs: int | None = None,
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = output_path.with_suffix(output_path.suffix + ".tmp")
+    _remove_path(temp_path)
+    temp_path.mkdir(parents=True, exist_ok=True)
+
+    effective_n_jobs = _effective_era5_parquet_n_jobs(n_jobs)
+    chunk_windows = _time_chunk_windows(dataset)
+    logger.info(
+        "Extracting %d ERA5-Land time chunk(s) with %d worker(s).",
+        len(chunk_windows),
+        effective_n_jobs,
+    )
+
+    if effective_n_jobs == 1:
+        parts_written = sum(
+            _write_time_chunk_parts(
+                dataset,
+                time_start=chunk_start,
+                time_stop=chunk_stop,
+                trench_coordinates=trench_coordinates,
+                climate_columns=climate_columns,
+                output_dir=temp_path,
+            )
+            for chunk_start, chunk_stop in chunk_windows
+        )
+    else:
+        parts_written = sum(
+            Parallel(
+                n_jobs=effective_n_jobs,
+                backend="threading",
+                pre_dispatch=effective_n_jobs,
+                batch_size=1,
+            )(
+                delayed(_write_time_chunk_parts)(
+                    dataset,
+                    time_start=chunk_start,
+                    time_stop=chunk_stop,
+                    trench_coordinates=trench_coordinates,
+                    climate_columns=climate_columns,
+                    output_dir=temp_path,
+                )
+                for chunk_start, chunk_stop in chunk_windows
+            )
+        )
+
+    if parts_written == 0:
+        empty = _empty_trench_day_frame(climate_columns)
+        pq.write_table(
+            pa.Table.from_pandas(empty, preserve_index=False),
+            temp_path / "part-00000.parquet",
+        )
+
+    _remove_path(output_path)
+    temp_path.replace(output_path)
+
+
+def tabularize_era5_land_by_trench(root_dir=".", n_jobs: int | None = None) -> Path:
+    store_path = _era5_store_path(root_dir)
+    if not store_path.exists():
+        raise FileNotFoundError(f"Processed ERA5-Land store not found at {store_path}.")
+
+    geobox_state = load_or_create_geobox_state(root_dir=root_dir)
+    drainage_polygons = _load_drainage_polygons(root_dir, geobox_state=geobox_state)
+    logger.info("Opening processed ERA5-Land store for trench/day tabularization: %s", store_path)
+    dataset = xr.open_zarr(
+        store_path,
+        consolidated=False,
+    )
+    try:
+        climate_columns = _available_era5_output_variables(dataset)
+        if not climate_columns:
+            raise ValueError("Processed ERA5-Land store does not contain any supported variables.")
+
+        trench_coordinates = _trench_centroid_coordinates(drainage_polygons)
+        omitted_trenches = len(drainage_polygons) - len(trench_coordinates)
+        logger.info(
+            "Prepared centroid coordinates for %s/%s drainage polygons; omitting %s trench(es) without valid coordinates",
+            len(trench_coordinates),
+            len(drainage_polygons),
+            omitted_trenches,
+        )
+        output_path = _era5_trench_day_path(root_dir)
+        _write_chunked_trench_day_table(
+            dataset[climate_columns],
+            climate_columns=climate_columns,
+            trench_coordinates=trench_coordinates,
+            output_path=output_path,
+            n_jobs=n_jobs,
+        )
+    finally:
+        close = getattr(dataset, "close", None)
+        if callable(close):
+            close()
+
+    logger.info("Saved ERA5-Land trench/day table to %s", output_path)
+    return output_path
 
 
 def _time_index() -> pd.DatetimeIndex:
@@ -542,6 +948,19 @@ def load_or_create_geobox_state(root_dir=".", sample_path: Path | None = None) -
     geobox_path = _era5_geobox_path(root_dir)
     if geobox_path.exists():
         return _load_geobox_state(geobox_path)
+
+    store_path = _era5_store_path(root_dir)
+    if sample_path is None and store_path.exists():
+        dataset = xr.open_zarr(store_path, consolidated=False)
+        try:
+            geobox_state = _build_geobox_state(
+                _extract_geobox_from_dataset(dataset),
+                spatial_ref=_extract_spatial_ref_from_dataset(dataset),
+            )
+        finally:
+            _close_dataset(dataset)
+        _save_geobox_state(geobox_path, geobox_state)
+        return geobox_state
 
     if sample_path is None:
         hourly_files = discover_era5_input_files(root_dir=root_dir, subtype="era5_land_hourly")
@@ -874,23 +1293,51 @@ def process_era5_input_file(path: Path, *, root_dir=".", subtype="era5_land_hour
         return store_path
 
 
-def preprocess_era5_land(root_dir=".", subtype="era5_land_hourly") -> Path:
+def preprocess_era5_land(root_dir=".", subtype="era5_land_hourly", stage="all", n_jobs: int | None = None) -> Path:
     if subtype not in SUPPORTED_ERA5_PREPROCESS_SUBTYPES:
         raise ValueError(f"Unsupported ERA5 preprocess subtype: {subtype}")
+    if stage not in ERA5_LAND_PREPROCESS_STAGES:
+        raise ValueError(
+            f"Unsupported ERA5 preprocess stage: {stage}. "
+            f"Available stages: {sorted(ERA5_LAND_PREPROCESS_STAGES)}"
+        )
 
-    input_files = discover_era5_input_files(root_dir=root_dir, subtype=subtype)
-    if not input_files:
-        raise FileNotFoundError(f"No ERA5 GRIB files found for subtype {subtype!r}.")
+    if stage in {"all", "zarr"}:
+        input_files = discover_era5_input_files(root_dir=root_dir, subtype=subtype)
+        if not input_files:
+            raise FileNotFoundError(f"No ERA5 GRIB files found for subtype {subtype!r}.")
 
-    store_path = bootstrap_era5_store(root_dir=root_dir, sample_path=input_files[0])
-    for input_file in input_files:
-        store_path = process_era5_input_file(input_file, root_dir=root_dir, subtype=subtype)
-    return store_path
+        store_path = bootstrap_era5_store(root_dir=root_dir, sample_path=input_files[0])
+        for input_file in input_files:
+            store_path = process_era5_input_file(input_file, root_dir=root_dir, subtype=subtype)
+    else:
+        store_path = _era5_store_path(root_dir)
+
+    if stage == "zarr":
+        return store_path
+
+    if not store_path.exists():
+        raise FileNotFoundError(f"Processed ERA5-Land store not found at {store_path}.")
+    return tabularize_era5_land_by_trench(root_dir=root_dir, n_jobs=n_jobs)
 
 
-def preprocess_era5_land_worker(root_dir=".", subtype="era5_land_hourly", poll_seconds=120) -> Path:
+def preprocess_era5_land_worker(
+    root_dir=".",
+    subtype="era5_land_hourly",
+    poll_seconds=120,
+    stage="all",
+    n_jobs: int | None = None,
+) -> Path:
     if subtype not in SUPPORTED_ERA5_PREPROCESS_SUBTYPES:
         raise ValueError(f"Unsupported ERA5 preprocess subtype: {subtype}")
+    if stage not in ERA5_LAND_PREPROCESS_STAGES:
+        raise ValueError(
+            f"Unsupported ERA5 preprocess stage: {stage}. "
+            f"Available stages: {sorted(ERA5_LAND_PREPROCESS_STAGES)}"
+        )
+
+    if stage == "parquet":
+        return tabularize_era5_land_by_trench(root_dir=root_dir, n_jobs=n_jobs)
 
     last_store_path = _era5_store_path(root_dir)
     while True:
@@ -909,7 +1356,9 @@ def preprocess_era5_land_worker(root_dir=".", subtype="era5_land_hourly", poll_s
 
         if not _active_download_requests_exist(root_dir=root_dir, subtype=subtype):
             if last_store_path.exists():
-                return last_store_path
+                if stage == "zarr":
+                    return last_store_path
+                return tabularize_era5_land_by_trench(root_dir=root_dir, n_jobs=n_jobs)
             raise FileNotFoundError(
                 f"No downloaded or active ERA5 files found for subtype {subtype!r}."
             )

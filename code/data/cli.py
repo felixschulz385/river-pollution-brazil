@@ -41,7 +41,8 @@ Examples:
   python cli.py climate fetch --subtype era5_land_hourly
   python cli.py climate fetch --subtype era5_land_daily
   python cli.py climate fetch --subtype era5_land_arco
-  python cli.py climate preprocess --root-dir .
+  python cli.py climate preprocess --root-dir . --subtype era5_land_hourly --stage all
+  python cli.py climate assemble --variant sensor_upstream_distance_buckets
   python cli.py water-quality fetch
   python cli.py water-quality preprocess
   python cli.py water-quality assemble
@@ -148,7 +149,8 @@ def main(argv=None):
         python cli.py climate fetch --subtype era5_land_hourly
         python cli.py climate fetch --subtype era5_land_daily
         python cli.py climate fetch --subtype era5_land_arco
-        python cli.py climate preprocess --root-dir .
+        python cli.py climate preprocess --root-dir . --subtype era5_land_daily --stage parquet
+        python cli.py climate assemble --variant adm2_upstream_yearly
         python cli.py water-quality fetch
         python cli.py water-quality preprocess
         python cli.py land-cover fetch
@@ -184,7 +186,7 @@ def main(argv=None):
     climate_parser = subparsers.add_parser("climate", help="Process climate data")
     climate_parser.add_argument(
         "action",
-        choices=["fetch", "preprocess"],
+        choices=["fetch", "preprocess", "assemble"],
         help="Action to perform"
     )
     climate_parser.add_argument(
@@ -197,6 +199,64 @@ def main(argv=None):
         default="cloud_cover",
         choices=["cloud_cover", "era5_land_hourly", "era5_land_daily", "era5_land_arco"],
         help="Climate fetch subtype (default: cloud_cover)",
+    )
+    climate_parser.add_argument(
+        "--stage",
+        default="all",
+        choices=["all", "zarr", "parquet"],
+        help="ERA5-Land preprocess stage (default: all)",
+    )
+    climate_parser.add_argument(
+        "--variant",
+        default="sensor_upstream_distance_buckets",
+        choices=["sensor_upstream_distance_buckets", "adm2_upstream_yearly"],
+        help="Climate assembly variant (default: sensor_upstream_distance_buckets)",
+    )
+    climate_parser.add_argument(
+        "--climate-path",
+        default="data/climate/processed/era5_land.parquet",
+        help="Preprocessed trench/day climate parquet path for assemble",
+    )
+    climate_parser.add_argument(
+        "--water-quality-path",
+        default="data/sensor_data/water_quality.parquet",
+        help="Cleaned water-quality parquet path for climate sensor assembly",
+    )
+    climate_parser.add_argument(
+        "--stations-rivers-path",
+        default="data/sensor_data/stations_rivers.parquet",
+        help="Station-to-river parquet path for climate sensor assembly",
+    )
+    climate_parser.add_argument(
+        "--river-network-path",
+        default="data/river_network",
+        help="River network directory path for climate preprocess/assemble",
+    )
+    climate_parser.add_argument(
+        "--output",
+        default=None,
+        help="Assembled climate parquet output path",
+    )
+    climate_parser.add_argument(
+        "--kernel",
+        default="gaussian",
+        choices=["uniform", "triangular", "epanechnikov", "gaussian", "exponential"],
+        help="Kernel for climate ADM2 upstream aggregation (default: gaussian)",
+    )
+    climate_parser.add_argument(
+        "--h",
+        type=float,
+        default=1000000.0,
+        help="Bandwidth for climate ADM2 upstream aggregation (default: 1000000)",
+    )
+    climate_parser.add_argument(
+        "--n_jobs",
+        type=int,
+        default=None,
+        help=(
+            "Number of parallel jobs for climate preprocess/assembly "
+            "(default: conservative cap for ERA5 parquet preprocess; all CPUs for assembly)"
+        ),
     )
 
     # Water quality module
@@ -479,19 +539,38 @@ def main(argv=None):
                     agent.fetch()
             elif action == "preprocess":
                 if args.module == "climate":
-                    logger.info(f"Preprocessing climate data (subtype: {args.subtype})")
-                    agent.preprocess(subtype=args.subtype)
+                    logger.info(
+                        "Preprocessing climate data (subtype: %s, stage: %s, n_jobs: %s)",
+                        args.subtype,
+                        args.stage,
+                        args.n_jobs,
+                    )
+                    agent.preprocess(subtype=args.subtype, stage=args.stage, n_jobs=args.n_jobs)
                 else:
                     agent.preprocess()
             elif action == "assemble":
-                agent.assemble(
-                    water_quality_path=args.water_quality_path,
-                    streamflow_path=args.streamflow_path,
-                    stations_rivers_path=args.stations_rivers_path,
-                    river_network_path=args.river_network_dir,
-                    output_path=args.output,
-                    n_jobs=args.n_jobs,
-                )
+                if args.module == "climate":
+                    logger.info(f"Assembling climate data (variant: {args.variant})")
+                    agent.assemble(
+                        variant=args.variant,
+                        climate_path=args.climate_path,
+                        water_quality_path=args.water_quality_path,
+                        stations_rivers_path=args.stations_rivers_path,
+                        river_network_path=args.river_network_path,
+                        output_path=args.output,
+                        kernel=args.kernel,
+                        h=args.h,
+                        n_jobs=args.n_jobs,
+                    )
+                else:
+                    agent.assemble(
+                        water_quality_path=args.water_quality_path,
+                        streamflow_path=args.streamflow_path,
+                        stations_rivers_path=args.stations_rivers_path,
+                        river_network_path=args.river_network_dir,
+                        output_path=args.output,
+                        n_jobs=args.n_jobs,
+                    )
         
         elif args.module == "land-cover":
             action = args.action

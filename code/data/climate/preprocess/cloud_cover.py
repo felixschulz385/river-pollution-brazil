@@ -2,13 +2,16 @@ from pathlib import Path
 import pickle
 import re
 
-from geocube.api.core import make_geocube
 import geopandas as gpd
 import numpy as np
+import odc.geo.xr  # noqa: F401
 import pandas as pd
 import rioxarray  # noqa: F401
 from tqdm import tqdm
 import xarray as xr
+from odc.geo.geobox import GeoBox
+
+from shared.spatial_tabular import mapping_to_long_frame, rasterize_feature_values
 
 
 MONTH_DICT = {
@@ -74,10 +77,26 @@ def _climate_raw_dir(root_dir="."):
 
 
 def _load_boundaries(root_dir="."):
-    boundaries = gpd.read_file(
-        _root(root_dir) / "data" / "misc" / "raw" / "gadm" / "gadm41_BRA_2.json",
-        engine="pyogrio",
-    )
+    gpkg_path = _root(root_dir) / "data" / "gadm" / "gadm41_BRA.gpkg"
+    json_path = _root(root_dir) / "data" / "misc" / "raw" / "gadm" / "gadm41_BRA_2.json"
+
+    if gpkg_path.exists():
+        boundaries = gpd.read_file(
+            gpkg_path,
+            layer="ADM_ADM_2",
+            engine="pyogrio",
+        )
+    elif json_path.exists():
+        boundaries = gpd.read_file(
+            json_path,
+            engine="pyogrio",
+        )
+    else:
+        raise FileNotFoundError(
+            "Could not find GADM ADM2 boundaries. Checked "
+            f"{gpkg_path} and {json_path}."
+        )
+
     boundaries["CC_2r"] = boundaries.CC_2.str.slice(0, 6).astype(int)
     return boundaries
 
@@ -192,17 +211,25 @@ def _build_deter_cloud_cover(root_dir="."):
         cloud_cover["cloud_cover"] = 1
         cloud_cover = cloud_cover[["cloud_cover", "geometry"]]
 
-        cloud_cover_grid = make_geocube(
-            vector_data=cloud_cover,
-            measurements=["cloud_cover"],
-            fill=0,
-            output_crs="epsg:4326",
-            resolution=(-0.01, 0.01),
+        geobox = GeoBox.from_bbox(
+            tuple(cloud_cover.total_bounds),
+            crs="EPSG:4326",
+            resolution=0.01,
         )
-        boundaries_grid = make_geocube(
-            vector_data=boundaries[["CC_2r", "geometry"]],
-            like=cloud_cover_grid,
-        ).CC_2r
+        cloud_cover_grid = rasterize_feature_values(
+            cloud_cover,
+            geobox,
+            value_column="cloud_cover",
+            dtype=np.uint8,
+            fill_value=0,
+        ).to_dataset(name="cloud_cover")
+        boundaries_grid = rasterize_feature_values(
+            boundaries[["CC_2r", "geometry"]],
+            geobox,
+            value_column="CC_2r",
+            dtype=float,
+            fill_value=np.nan,
+        )
         cloud_cover_grid["CC_2r"] = boundaries_grid
         out_dict[file] = (
             cloud_cover_grid.set_coords("CC_2r").groupby("CC_2r").mean().cloud_cover.to_pandas()
@@ -211,8 +238,10 @@ def _build_deter_cloud_cover(root_dir="."):
     with (_root(root_dir) / "data" / "climate" / "DETER_cc2r.pkl").open("wb") as handle:
         pickle.dump(out_dict, handle)
 
-    out_df = pd.DataFrame(out_dict).transpose().reset_index(names="file").melt(
-        ["file"],
+    out_df = mapping_to_long_frame(
+        out_dict,
+        index_name="file",
+        column_name="CC_2r",
         value_name="cloud_cover",
     )
     out_df = pd.merge(files[["file", "year", "month"]], out_df, on="file")
@@ -244,10 +273,15 @@ def preprocess_cloud_cover(root_dir="."):
     ).persist()
     weather_data = weather_data.resample(time="1Y").mean().load()
 
-    boundaries_grid = make_geocube(
-        vector_data=boundaries[["CC_2r", "geometry"]],
-        like=weather_data,
-    ).CC_2r.rename({"x": "lon", "y": "lat"})
+    geobox = weather_data[list(weather_data.data_vars)[0]].odc.geobox
+    boundaries_grid = rasterize_feature_values(
+        boundaries[["CC_2r", "geometry"]],
+        geobox,
+        value_column="CC_2r",
+        dtype=float,
+        fill_value=np.nan,
+    )
+    boundaries_grid = boundaries_grid.rename({"latitude": "lat", "longitude": "lon"})
     weather_data["CC_2r"] = boundaries_grid
 
     weather_data_df = weather_data.groupby("CC_2r").mean().to_dataframe().reset_index()

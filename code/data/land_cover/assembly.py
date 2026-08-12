@@ -26,197 +26,22 @@ from .constants import (
     YEAR_COLUMN,
 )
 from .river_network_import import rn_module
-from .schema import land_cover_assembly_columns, validate_required_columns
+from .schema import land_cover_assembly_columns
+from shared.sensor_upstream import (
+    build_group_index_lookup,
+    build_location_period_targets,
+    label_values_by_intervals,
+    resolve_reachable_distances,
+    validate_network_index_tables,
+)
 
 
 logger = logging.getLogger(__name__)
 
 
-def _derive_water_quality_years(water_quality_df):
-    """Add a year column from cleaned water-quality timestamps."""
-    if DATETIME_COLUMN in water_quality_df.columns:
-        date_source_column = DATETIME_COLUMN
-    elif DATE_COLUMN in water_quality_df.columns:
-        date_source_column = DATE_COLUMN
-    else:
-        raise ValueError(
-            "Cleaned water-quality data must include either "
-            f"`{DATETIME_COLUMN}` or `{DATE_COLUMN}` to derive `{YEAR_COLUMN}`."
-        )
-
-    water_quality = water_quality_df.copy()
-    water_quality[YEAR_COLUMN] = pd.to_datetime(
-        water_quality[date_source_column],
-        errors="coerce",
-    ).dt.year
-    water_quality = water_quality.dropna(subset=[YEAR_COLUMN])
-    water_quality[YEAR_COLUMN] = water_quality[YEAR_COLUMN].astype(int)
-    return water_quality
-
-
-def _build_sensor_trench_year_targets(water_quality_df, stations_rivers_df):
-    """Return unique trench-year pairs observed in cleaned water quality."""
-    validate_required_columns(
-        water_quality_df,
-        {STATION_CODE_COLUMN},
-        "Cleaned water-quality data",
-    )
-    validate_required_columns(
-        stations_rivers_df,
-        {STATION_CODE_COLUMN, TRENCH_ID_COLUMN},
-        "Stations-rivers data",
-    )
-
-    water_quality = _derive_water_quality_years(water_quality_df)
-    water_quality[STATION_CODE_COLUMN] = water_quality[STATION_CODE_COLUMN].astype(str)
-
-    stations_rivers = stations_rivers_df[
-        [STATION_CODE_COLUMN, TRENCH_ID_COLUMN]
-    ].dropna().copy()
-    stations_rivers[STATION_CODE_COLUMN] = stations_rivers[STATION_CODE_COLUMN].astype(str)
-    stations_rivers = stations_rivers.drop_duplicates(
-        subset=[STATION_CODE_COLUMN, TRENCH_ID_COLUMN],
-        keep="first",
-    )
-
-    targets = water_quality[[STATION_CODE_COLUMN, YEAR_COLUMN]].merge(
-        stations_rivers,
-        on=STATION_CODE_COLUMN,
-        how="inner",
-        validate="many_to_many",
-    )
-    targets = targets.dropna(subset=[TRENCH_ID_COLUMN])
-    targets[TRENCH_ID_COLUMN] = targets[TRENCH_ID_COLUMN].astype(np.int64)
-    return (
-        targets[[TRENCH_ID_COLUMN, YEAR_COLUMN]]
-        .drop_duplicates()
-        .sort_values([TRENCH_ID_COLUMN, YEAR_COLUMN])
-        .reset_index(drop=True)
-    )
-
-
-def _validate_river_network_for_trench_aggregation(network):
-    """Validate river-network tables and matrices for upstream trench lookup."""
-    if network.trenches is None:
-        raise ValueError("River network must include trench data.")
-    if not network.trench_reachability_matrices:
-        raise ValueError("River network must have trench reachability data computed.")
-    if not network.trench_distance_matrices:
-        raise ValueError("River network must have trench distance data computed.")
-
-    validate_required_columns(
-        network.trenches,
-        {TRENCH_ID_COLUMN, rn_module.SYSTEM_ID_KEY, rn_module.TRENCH_INDEX_COLUMN},
-        "River trench data",
-    )
-
-
-def _build_system_trench_lookup(rivers):
-    """Build per-system trench id arrays and target-position lookups."""
-    system_trench_tables = {
-        int(system_id): system_trenches[
-            [TRENCH_ID_COLUMN, rn_module.TRENCH_INDEX_COLUMN]
-        ]
-        .sort_values(rn_module.TRENCH_INDEX_COLUMN)
-        .reset_index(drop=True)
-        for system_id, system_trenches in rivers.groupby(rn_module.SYSTEM_ID_KEY)
-    }
-    system_trench_id_arrays = {
-        system_id: system_trenches[TRENCH_ID_COLUMN].to_numpy(dtype=np.int64)
-        for system_id, system_trenches in system_trench_tables.items()
-    }
-    system_trench_positions = {
-        system_id: dict(
-            zip(
-                system_trenches[TRENCH_ID_COLUMN].to_numpy(dtype=np.int64),
-                system_trenches[rn_module.TRENCH_INDEX_COLUMN].to_numpy(dtype=np.int64),
-            )
-        )
-        for system_id, system_trenches in system_trench_tables.items()
-    }
-    return system_trench_id_arrays, system_trench_positions
-
-
-def _sparse_row(matrix, row_idx):
-    """Return one sparse row for both csr_matrix and newer csr_array objects."""
-    if hasattr(matrix, "getrow"):
-        return matrix.getrow(row_idx)
-    return matrix[row_idx : row_idx + 1, :]
-
-
-def _resolve_upstream_trench_distances(
-    trench_id,
-    network,
-    system_trench_id_arrays,
-    system_trench_positions,
-):
-    """Return upstream trench ids and distances for one target trench."""
-    trench_row = network.trenches.loc[
-        network.trenches[TRENCH_ID_COLUMN] == trench_id,
-        [rn_module.SYSTEM_ID_KEY, rn_module.TRENCH_INDEX_COLUMN],
-    ].drop_duplicates()
-    if len(trench_row) == 0:
-        raise KeyError(f"Unknown trench_id in river network: {trench_id}")
-    if len(trench_row) > 1:
-        raise ValueError(f"Expected one trench row for trench_id {trench_id}.")
-
-    system_id = int(trench_row.iloc[0][rn_module.SYSTEM_ID_KEY])
-    target_position = int(trench_row.iloc[0][rn_module.TRENCH_INDEX_COLUMN])
-    system_trench_ids = system_trench_id_arrays.get(
-        system_id,
-        np.asarray([], dtype=np.int64),
-    )
-    if len(system_trench_ids) == 0:
-        return pd.DataFrame(columns=[TRENCH_ID_COLUMN, UPSTREAM_DISTANCE_COLUMN])
-
-    if target_position not in set(system_trench_positions[system_id].values()):
-        raise ValueError(
-            f"Trench index {target_position} for trench_id {trench_id} is invalid."
-        )
-
-    reach_row = _sparse_row(
-        network.trench_reachability_matrices[system_id],
-        target_position,
-    )
-    dist_row = _sparse_row(
-        network.trench_distance_matrices[system_id],
-        target_position,
-    )
-    distance_lookup = dict(zip(dist_row.indices.tolist(), dist_row.data.tolist()))
-
-    upstream_records = [
-        {
-            TRENCH_ID_COLUMN: int(system_trench_ids[col_idx]),
-            UPSTREAM_DISTANCE_COLUMN: float(distance_lookup.get(col_idx, 0.0)),
-        }
-        for col_idx in reach_row.indices.tolist()
-    ]
-    if trench_id not in [record[TRENCH_ID_COLUMN] for record in upstream_records]:
-        upstream_records.append(
-            {
-                TRENCH_ID_COLUMN: int(trench_id),
-                UPSTREAM_DISTANCE_COLUMN: 0.0,
-            }
-        )
-
-    return pd.DataFrame(upstream_records).sort_values(
-        [UPSTREAM_DISTANCE_COLUMN, TRENCH_ID_COLUMN]
-    ).reset_index(drop=True)
-
-
 def _assign_sensor_distance_buckets(distances):
     """Assign upstream distances to the configured sensor buckets."""
-    distances = pd.Series(distances, copy=False)
-    bucket_values = pd.Series(pd.NA, index=distances.index, dtype="object")
-    for bucket_name, lower_bound, upper_bound in SENSOR_DISTANCE_BUCKETS:
-        if lower_bound == 0:
-            mask = distances.ge(lower_bound) & distances.le(upper_bound)
-        elif np.isinf(upper_bound):
-            mask = distances.gt(lower_bound)
-        else:
-            mask = distances.gt(lower_bound) & distances.le(upper_bound)
-        bucket_values.loc[mask] = bucket_name
-    return bucket_values
+    return label_values_by_intervals(distances, SENSOR_DISTANCE_BUCKETS)
 
 
 def _sensor_bucket_total_column(bucket_name):
@@ -334,7 +159,15 @@ def assemble_land_cover(
     water_quality_df = pd.read_parquet(water_quality_path)
     logger.info("Loading station-river matches from %s", stations_rivers_path)
     stations_rivers_df = pd.read_parquet(stations_rivers_path)
-    targets = _build_sensor_trench_year_targets(water_quality_df, stations_rivers_df)
+    targets = build_location_period_targets(
+        water_quality_df,
+        stations_rivers_df,
+        entity_column=STATION_CODE_COLUMN,
+        date_column=DATE_COLUMN,
+        timestamp_column=DATETIME_COLUMN,
+        location_column=TRENCH_ID_COLUMN,
+        period_value_column=YEAR_COLUMN,
+    )
     logger.info(
         "Found %d observed trench-year target(s) for sensor-matched assembly.",
         len(targets),
@@ -353,9 +186,17 @@ def assemble_land_cover(
     logger.info("Loading river network from %s", river_network_path)
     network = rn_module.RiverNetwork()
     network.load(str(river_network_path))
-    _validate_river_network_for_trench_aggregation(network)
-    system_trench_id_arrays, system_trench_positions = _build_system_trench_lookup(
+    validate_network_index_tables(
+        network,
+        location_column=TRENCH_ID_COLUMN,
+        system_column=rn_module.SYSTEM_ID_KEY,
+        position_column=rn_module.TRENCH_INDEX_COLUMN,
+    )
+    system_trench_id_arrays, system_trench_positions = build_group_index_lookup(
         network.trenches,
+        location_column=TRENCH_ID_COLUMN,
+        system_column=rn_module.SYSTEM_ID_KEY,
+        position_column=rn_module.TRENCH_INDEX_COLUMN,
     )
 
     target_trench_ids = targets[TRENCH_ID_COLUMN].drop_duplicates().astype(np.int64).tolist()
@@ -368,11 +209,15 @@ def assemble_land_cover(
     def resolve_target_trench(trench_id):
         return (
             int(trench_id),
-            _resolve_upstream_trench_distances(
+            resolve_reachable_distances(
                 int(trench_id),
                 network,
                 system_trench_id_arrays,
                 system_trench_positions,
+                location_column=TRENCH_ID_COLUMN,
+                distance_column=UPSTREAM_DISTANCE_COLUMN,
+                system_column=rn_module.SYSTEM_ID_KEY,
+                position_column=rn_module.TRENCH_INDEX_COLUMN,
             ),
         )
 

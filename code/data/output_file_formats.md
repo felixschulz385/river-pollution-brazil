@@ -1,7 +1,8 @@
 # Output File Formats
 
 This document describes the persisted files written by
-`code/data/river_network.py` and `code/data/land_cover.py`.
+`code/data/river_network.py`, `code/data/land_cover.py`, and climate assembly
+outputs.
 
 ## River Network Storage
 
@@ -112,3 +113,37 @@ Semantics:
   them.
 - Matrix lookup uses `system_id` and `trench_index` from
   `river_trenches.parquet`.
+
+## Climate Outputs
+
+### `data/climate/processed/era5_land.parquet`
+
+One row per (`trench_id`, `date`) produced from the processed ERA5-Land store.
+
+Semantics:
+
+- The Zarr store remains the internal daily raster intermediate.
+- This parquet is the analysis-facing preprocess output.
+- Values are polygon means over drainage areas for each trench and day.
+
+### `data/climate/processed/era5_land/climate_sensor_upstream.parquet`
+
+One row per station-day sensor observation, indexed by (`station_code`, `datetime`).
+
+Semantics:
+
+- Same-day duplicate water-quality rows are collapsed before assembly.
+- Includes a single matched `trench_id` per station plus upstream distance-bucket
+  climate features.
+- Daily and trailing 7/30/90/180/365 day means are computed from the trench/day
+  climate table.
+
+### `data/climate/processed/era5_land/climate_adm2_upstream_yearly.parquet`
+
+One row per (`adm2_id`, `year`) produced by upstream aggregation.
+
+Semantics:
+
+- Daily trench climate is first rolled up to trench/year using variable-specific
+  annual summaries.
+- Upstream aggregation then uses the saved river-network trench matrices.
