@@ -14,6 +14,9 @@
 # climate's `climate_variable` x `distance_bucket`); `filter` narrows to one
 # row per (join_keys, category value) and `pivot_column`/`value_columns`
 # pivot the category's values into `{category_value}_{value_column}` columns.
+# Every variable is coerced to float dtype unless listed under a source's
+# `categorical_variables` (e.g. population's `sex`/`age_group`); this catches
+# upstream columns that round-tripped through parquet as strings.
 
 datasets:
   - id: sensor_panel
@@ -277,6 +280,14 @@ datasets:
           - 2t_daily_max_mean_90d
           - 2t_daily_max_mean_180d
           - 2t_daily_max_mean_365d
+      - name: biome_sensor
+        path: data/biomes/biome_sensor.parquet
+        join_keys: [station_code]
+        variables:
+          - biome
+        # A station's biome is a fixed label from its point location, not a
+        # measurement -- exclude it from numeric-dtype enforcement.
+        categorical_variables: [biome]
 
   - id: adm2_panel
     mode: adm2
@@ -341,6 +352,17 @@ datasets:
           - sex
           - age_group
           - population
+        # sex/age_group are categorical labels, not measurements -- exclude
+        # them from the numeric-dtype enforcement applied to other variables.
+        categorical_variables: [sex, age_group]
+      - name: biome_adm2
+        path: data/biomes/biome_adm2.parquet
+        join_keys: [mun_id]
+        variables:
+          - biome
+        # A municipality's dominant biome is a fixed label by intersecting
+        # area, not a measurement -- exclude it from numeric-dtype enforcement.
+        categorical_variables: [biome]
 
 # Deferred: health outputs (data/health/hospitalizations.parquet and related
 # tables) are long `metric_name`/`metric_value` tables rather than one wide

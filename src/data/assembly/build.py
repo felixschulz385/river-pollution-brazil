@@ -164,7 +164,52 @@ def _load_source_frame(source, *, root_dir):
     canonical_join_keys = list(dict.fromkeys(canonical_join_keys))
     selected_columns = list(dict.fromkeys([*canonical_join_keys, *source.variables]))
     validate_required_columns(frame, selected_columns, source.name)
-    return frame[selected_columns], canonical_join_keys
+    selected_frame = frame[selected_columns].copy()
+
+    numeric_columns = [
+        column
+        for column in source.variables
+        if column not in source.categorical_variables
+        and column not in (DATE_COLUMN, DATETIME_COLUMN)
+    ]
+    for column in numeric_columns:
+        if pd.api.types.is_numeric_dtype(selected_frame[column]):
+            continue
+        coerced = pd.to_numeric(selected_frame[column], errors="coerce")
+        newly_unparsable = coerced.isna() & selected_frame[column].notna()
+        if newly_unparsable.any():
+            logger.warning(
+                "Source '%s' column '%s' has %d non-numeric value(s) that were "
+                "coerced to NaN while enforcing float dtype.",
+                source.name,
+                column,
+                int(newly_unparsable.sum()),
+            )
+        selected_frame[column] = coerced.astype(float)
+
+    return selected_frame, canonical_join_keys
+
+
+def _order_assembled_columns(df, dataset_config):
+    """Reorder assembled columns so they read as index, then source-by-source.
+
+    Merge order (and thus raw column order) depends on incidental details like
+    dict/list ordering inside `_load_source_frame`; this makes the output
+    columns deterministic and grouped by the config's declared source order
+    instead, which is far more useful for a human skimming the table: the
+    dataset index first, any derived date/year helper columns next, then each
+    source's variables in the order it lists them.
+    """
+    ordered_columns = list(dataset_config.index)
+    for helper_column in (YEAR_COLUMN, DATE_COLUMN, DATETIME_COLUMN):
+        if helper_column in df.columns and helper_column not in ordered_columns:
+            ordered_columns.append(helper_column)
+    for source in dataset_config.sources:
+        for variable in source.variables:
+            if variable in df.columns and variable not in ordered_columns:
+                ordered_columns.append(variable)
+    remaining_columns = [column for column in df.columns if column not in ordered_columns]
+    return df[[*ordered_columns, *remaining_columns]]
 
 
 def assemble_dataset(dataset_config, *, root_dir="."):
@@ -199,6 +244,7 @@ def assemble_dataset(dataset_config, *, root_dir="."):
         frames[0][0],
     )
     merged = merged.sort_values(list(dataset_config.index)).reset_index(drop=True)
+    merged = _order_assembled_columns(merged, dataset_config)
     return merged
 
 

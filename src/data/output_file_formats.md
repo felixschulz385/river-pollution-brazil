@@ -184,3 +184,25 @@ Semantics:
   annual summaries.
 - Upstream aggregation then uses the saved river-network trench matrices.
 
+## Biome Outputs
+
+### `data/biomes/biome_adm2.parquet`
+
+One row per `mun_id` with a `biome` label, produced by `src.data.biomes`
+intersecting IBGE's terrestrial biome polygons with GADM ADM2 boundaries.
+
+Semantics:
+
+- `biome` is the biome with the largest intersecting area within the
+  municipality (dominant biome by area, not a fractional composition).
+
+### `data/biomes/biome_sensor.parquet`
+
+One row per `station_code` with a `biome` label, produced by a point-in-polygon
+join between monitoring-station coordinates and the same biome polygons.
+
+Semantics:
+
+- Stations that fall just outside every polygon (e.g. coastline
+  simplification) are assigned the nearest biome instead of a missing value.
+

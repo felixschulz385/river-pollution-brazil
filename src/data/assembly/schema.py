@@ -40,6 +40,10 @@ class AssemblySource:
     # cover, the shared Gaussian ADM2 default for climate) when omitted.
     kernel: str | None = None
     bandwidth: float | None = None
+    # Variables that are categorical/identifiers rather than measurements
+    # (e.g. population's `sex`/`age_group`) and must be excluded from the
+    # numeric-dtype coercion `build._load_source_frame` applies to variables.
+    categorical_variables: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -79,6 +83,7 @@ def _parse_source(raw_source, *, dataset_id):
         value_columns=tuple(raw_source.get("value_columns", ())),
         kernel=raw_source.get("kernel"),
         bandwidth=raw_source.get("bandwidth"),
+        categorical_variables=tuple(raw_source.get("categorical_variables", ())),
     )
 
 
