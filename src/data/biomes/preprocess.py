@@ -107,11 +107,57 @@ def build_adm2_biomes(
     return result
 
 
-def _load_station_points(root_dir="."):
-    from src.data.sensor_data.fetch.database import STATIONS_TABLE, read_geodataframe_table
+STATION_LONGITUDE_COLUMN_CANDIDATES = ("Longitude", "longitude", "LONGITUDE")
+STATION_LATITUDE_COLUMN_CANDIDATES = ("Latitude", "latitude", "LATITUDE")
 
-    stations = read_geodataframe_table(root_dir, STATIONS_TABLE)
-    station_code_column = "Codigo" if "Codigo" in stations.columns else "codigo"
+
+def _first_present_column(frame, candidates):
+    return next((candidate for candidate in candidates if candidate in frame.columns), None)
+
+
+def _load_station_points(root_dir="."):
+    from src.data.sensor_data.fetch.database import (
+        STATIONS_TABLE,
+        read_dataframe_table,
+        read_geodataframe_table,
+    )
+
+    try:
+        stations = read_geodataframe_table(root_dir, STATIONS_TABLE)
+    except KeyError:
+        # Some `stations` tables were written without geometry metadata (e.g.
+        # by an older pipeline run); fall back to building points from raw
+        # latitude/longitude columns in that case.
+        logger.warning(
+            "'%s' table has no recorded geometry column; deriving station "
+            "points from latitude/longitude columns instead.",
+            STATIONS_TABLE,
+        )
+        raw_stations = read_dataframe_table(root_dir, STATIONS_TABLE)
+        longitude_column = _first_present_column(raw_stations, STATION_LONGITUDE_COLUMN_CANDIDATES)
+        latitude_column = _first_present_column(raw_stations, STATION_LATITUDE_COLUMN_CANDIDATES)
+        if longitude_column is None or latitude_column is None:
+            raise ValueError(
+                f"'{STATIONS_TABLE}' table has neither a recorded geometry column nor "
+                f"latitude/longitude columns among {STATION_LATITUDE_COLUMN_CANDIDATES} / "
+                f"{STATION_LONGITUDE_COLUMN_CANDIDATES}; available columns: "
+                f"{list(raw_stations.columns)}."
+            ) from None
+        longitude = pd.to_numeric(raw_stations[longitude_column], errors="coerce")
+        latitude = pd.to_numeric(raw_stations[latitude_column], errors="coerce")
+        stations = gpd.GeoDataFrame(
+            raw_stations,
+            geometry=gpd.points_from_xy(longitude, latitude),
+            crs=4326,
+        )
+
+    station_code_column = _first_present_column(stations, ("Codigo", "codigo", STATION_CODE_COLUMN))
+    if station_code_column is None:
+        raise ValueError(
+            f"'{STATIONS_TABLE}' table has no station-code column among "
+            f"('Codigo', 'codigo', '{STATION_CODE_COLUMN}'); available columns: "
+            f"{list(stations.columns)}."
+        )
     stations = stations.rename(columns={station_code_column: STATION_CODE_COLUMN})
     return stations[[STATION_CODE_COLUMN, "geometry"]]
 
