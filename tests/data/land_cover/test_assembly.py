@@ -73,6 +73,7 @@ def test_assemble_land_cover_adm2_uses_bucketed_upstream_output(
         "n",
         "cnt",
         "share",
+        "bucket_intersects_adm2",
     ]
 
     # adm2 ids are truncated by one trailing character (a check-digit-style
@@ -91,13 +92,17 @@ def test_assemble_land_cover_adm2_uses_bucketed_upstream_output(
     seed = _row("1001", -25, -1)  # land_cover_class -1 == the "land_cover_total" column
     assert seed["cnt"] == 10.0
     assert seed["share"] == 1.0
+    assert bool(seed["bucket_intersects_adm2"]) is True
     seed_c41 = _row("1001", -25, 41)
     assert seed_c41["cnt"] == 6.0
     assert seed_c41["share"] == 0.6
 
+    # bucket 0 for mun_id "1001" only contains trench 102, reached purely
+    # upstream -- 102 is not itself a trench matched to adm2 "1001A".
     upstream = _row("1001", 0, -1)
     assert upstream["cnt"] == 4.0
     assert upstream["share"] == 1.0
+    assert bool(upstream["bucket_intersects_adm2"]) is False
     upstream_c41 = _row("1001", 0, 41)
     assert upstream_c41["cnt"] == 2.0
     assert upstream_c41["share"] == 0.5
@@ -106,6 +111,7 @@ def test_assemble_land_cover_adm2_uses_bucketed_upstream_output(
     other_seed = _row("1002", -25, -1)
     assert other_seed["cnt"] == 4.0
     assert other_seed["share"] == 1.0
+    assert bool(other_seed["bucket_intersects_adm2"]) is True
     other_seed_c41 = _row("1002", -25, 41)
     assert other_seed_c41["cnt"] == 2.0
     assert other_seed_c41["share"] == 0.5

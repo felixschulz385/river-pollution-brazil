@@ -21,10 +21,12 @@ from .constants import (
     SENSOR_DISTANCE_BUCKET_WIDTH_KM,
     TRENCH_ID_COLUMN,
     YEAR_COLUMN,
+    derive_mun_id_from_adm2_id,
 )
 from src.data import river_network as rn_module
 from .schema import validate_land_cover_output_columns
 from src.data.shared.sensor_upstream import (
+    BUCKET_INTERSECTS_ADM2_COLUMN,
     build_group_index_lookup,
     prepare_trench_adm2_matches,
     resolve_multi_seed_reachable_distances,
@@ -219,6 +221,7 @@ def aggregate_along_rivers(
 
             if adm2_trenches is None or adm2_trenches.empty:
                 return None
+            intersecting_trench_ids = set(adm2_trenches[TRENCH_ID_COLUMN])
 
             trench_distance_lookup = resolve_multi_seed_reachable_distances(
                 network,
@@ -272,11 +275,14 @@ def aggregate_along_rivers(
 
                     bucket_sums = df_bucket[lc_columns].sum()
                     bucket_total = float(bucket_sums.get(LAND_COVER_TOTAL_COLUMN, 0.0))
+                    bucket_intersects_adm2 = bool(
+                        df_bucket[TRENCH_ID_COLUMN].isin(intersecting_trench_ids).any()
+                    )
                     for lc_column in lc_columns:
                         count_value = float(bucket_sums.get(lc_column, 0.0))
                         results.append(
                             {
-                                MUN_ID_COLUMN: str(adm2_id)[:-1],
+                                MUN_ID_COLUMN: derive_mun_id_from_adm2_id(adm2_id),
                                 YEAR_COLUMN: int(year),
                                 DISTANCE_BUCKET_COLUMN: int(bucket),
                                 LAND_COVER_CLASS_COLUMN: _land_cover_feature_stem(lc_column),
@@ -285,6 +291,7 @@ def aggregate_along_rivers(
                                 BUCKET_SHARE_COLUMN: (
                                     count_value / bucket_total if bucket_total > 0 else np.nan
                                 ),
+                                BUCKET_INTERSECTS_ADM2_COLUMN: bucket_intersects_adm2,
                             }
                         )
                 except Exception as e:
@@ -326,6 +333,7 @@ def aggregate_along_rivers(
         BUCKET_REACHABLE_COUNT_COLUMN,
         BUCKET_COUNT_COLUMN,
         BUCKET_SHARE_COLUMN,
+        BUCKET_INTERSECTS_ADM2_COLUMN,
     ]
     result_df = result_df.loc[:, ordered_columns]
     result_df = result_df.sort_values(

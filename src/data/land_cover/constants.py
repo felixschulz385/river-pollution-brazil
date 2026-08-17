@@ -76,3 +76,54 @@ SENSOR_DISTANCE_BUCKETS = tuple(
     )
     for lower_bound in SENSOR_DISTANCE_BUCKET_STARTS_KM
 )
+
+# Leaf-level land-cover classes used by `composition.compute_kernel_weighted_composition`,
+# after resolving the c3 (-> pasture/agriculture) and c4 (-> urban/mining/other)
+# parent-child mismatches present in the raw MapBiomas class codes.
+LAND_COVER_LEAF_CLASSES = (
+    "forest",
+    "nonforest_nat",
+    "pasture",
+    "agriculture",
+    "farming_unclassified",
+    "urban",
+    "mining",
+    "other",
+    "water",
+)
+LAND_COVER_ALR_CLASSES = (
+    "pasture",
+    "agriculture",
+    "farming_unclassified",
+    "urban",
+    "mining",
+    "other",
+)
+# Raw MapBiomas class codes feeding the bucket pivot, keyed by leaf/parent name.
+LAND_COVER_CLASS_CODE_FOREST = 1
+LAND_COVER_CLASS_CODE_NONFOREST_NAT = 2
+LAND_COVER_CLASS_CODE_FARMING_PARENT = 3  # "c3": pasture + agriculture
+LAND_COVER_CLASS_CODE_PASTURE = 30
+LAND_COVER_CLASS_CODE_AGRICULTURE = 31
+LAND_COVER_CLASS_CODE_URBAN_PARENT = 4  # "c4": urban + mining + other
+LAND_COVER_CLASS_CODE_URBAN = 40
+LAND_COVER_CLASS_CODE_MINING = 41
+LAND_COVER_CLASS_CODE_OTHER_RAW = 42
+LAND_COVER_CLASS_CODE_WATER = 5
+
+# 25 km-wide upstream rings out to 500 km, plus an open-ended tail beyond that,
+# used to derive inverse-sqrt-distance kernel weights per (entity, bucket).
+LAND_COVER_COMPOSITION_RING_WIDTH_KM = 25
+LAND_COVER_COMPOSITION_BUCKET_MAP = {
+    bucket: (f"{bucket}_{bucket + LAND_COVER_COMPOSITION_RING_WIDTH_KM}km", bucket + LAND_COVER_COMPOSITION_RING_WIDTH_KM / 2)
+    for bucket in range(0, 500, LAND_COVER_COMPOSITION_RING_WIDTH_KM)
+}
+LAND_COVER_COMPOSITION_BUCKET_MAP[500] = ("500km_plus", 750.0)
+LAND_COVER_COMPOSITION_PSEUDOCOUNT = 1e-4
+
+ADM2_ID_TO_MUN_ID_TRUNCATION = 1  # trailing digits dropped from `adm2_id` to derive `mun_id`
+
+
+def derive_mun_id_from_adm2_id(adm2_id):
+    """Derive the 6-digit IBGE `mun_id` by dropping `adm2_id`'s trailing check digit."""
+    return str(adm2_id)[:-ADM2_ID_TO_MUN_ID_TRUNCATION]

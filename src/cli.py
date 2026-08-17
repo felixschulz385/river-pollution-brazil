@@ -23,6 +23,7 @@ DATA_MODULES = (
     "land-cover",
     "population",
     "river-network",
+    "assembly",
     "download",
 )
 
@@ -51,6 +52,7 @@ def _add_data_module_parsers(subparsers, module_dest: str) -> None:
     from src.data.population.__main__ import configure_parser as configure_population_parser
     from src.data.river_network.__main__ import configure_parser as configure_river_network_parser
     from src.data.sensor_data.__main__ import configure_parser as configure_sensor_data_parser
+    from src.data.assembly.__main__ import configure_parser as configure_assembly_parser
 
     health_parser = subparsers.add_parser("health", help="Process health data")
     health_parser.set_defaults(**{module_dest: "health"})
@@ -86,6 +88,12 @@ def _add_data_module_parsers(subparsers, module_dest: str) -> None:
     river_parser = subparsers.add_parser("river-network", help="Process river network data")
     river_parser.set_defaults(**{module_dest: "river-network"})
     configure_river_network_parser(river_parser)
+
+    assembly_parser = subparsers.add_parser(
+        "assembly", help="Assemble analysis-ready sensor- or ADM2-indexed tables"
+    )
+    assembly_parser.set_defaults(**{module_dest: "assembly"})
+    configure_assembly_parser(assembly_parser)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -162,6 +170,10 @@ def _run_data_cli(args: argparse.Namespace) -> int:
             from src.data.river_network.__main__ import run as run_river_network
 
             run_river_network(args)
+        elif data_module == "assembly":
+            from src.data.assembly.__main__ import run as run_assembly
+
+            run_assembly(args)
         else:
             raise ValueError(f"Unknown data module: {data_module}")
 

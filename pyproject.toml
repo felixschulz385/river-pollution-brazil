@@ -39,6 +39,7 @@ dependencies = [
     "matplotlib>=3.10",
     "plotly",
     "dash",
+    "pyyaml>=6.0",
 ]
 
 [tool.setuptools.packages.find]

@@ -1,0 +1,348 @@
+# Declares analysis-ready output datasets built by `src.data.assembly`.
+#
+# Each dataset lists the final table's `index` columns and, per source, the
+# join keys used to attach that source plus the variables pulled from it.
+# `type: land_cover_bucketed` marks sources in the long
+# `[*join_keys, bucket, land_cover_class, n, cnt, share]` schema produced by
+# the land-cover sensor/ADM2 assembly variants; these are collapsed into
+# distance-kernel-weighted composition shares (`lc_*`/`lc_nat`) and
+# additive-log-ratio variables (`alr_*`) via
+# `src.data.land_cover.composition.compute_kernel_weighted_composition`
+# before joining. `id_map` renames a source's raw id column (e.g. the
+# 7-digit `adm2_id`) to the canonical join key used elsewhere (`mun_id`).
+# `type: long_pivot` marks sources long over a category column (e.g.
+# climate's `climate_variable` x `distance_bucket`); `filter` narrows to one
+# row per (join_keys, category value) and `pivot_column`/`value_columns`
+# pivot the category's values into `{category_value}_{value_column}` columns.
+
+datasets:
+  - id: sensor_panel
+    mode: sensor
+    index: [station_code, datetime]
+    output_path: data/assembly/sensor_panel.parquet
+    sources:
+      - name: water_quality_streamflow
+        path: data/sensor_data/water_quality_streamflow.parquet
+        join_keys: [station_code, datetime]
+        variables:
+          - rained
+          - depth
+          - air_temperature
+          - sample_temperature
+          - ph
+          - color
+          - turbidity
+          - electrical_conductivity
+          - total_hardness
+          - hardness
+          - chemical_oxygen_demand
+          - biochemical_oxygen_demand
+          - dissolved_oxygen
+          - total_solids
+          - fixed_solids
+          - volatile_solids
+          - total_suspended_solids
+          - fixed_suspended_solids
+          - volatile_suspended_solids
+          - total_dissolved_solids
+          - fixed_dissolved_solids
+          - volatile_dissolved_solids
+          - settleable_solids
+          - detergents
+          - carbonate_alkalinity
+          - bicarbonate_alkalinity
+          - hydroxide_alkalinity
+          - chlorides
+          - sulfates
+          - sulfides
+          - fluorides
+          - total_phosphate
+          - cyanides
+          - total_nitrogen
+          - unionized_ammonia
+          - ammoniacal_nitrogen
+          - nitrates
+          - nitrites
+          - organochlorine_compounds
+          - organophosphorus_compounds
+          - aluminum
+          - arsenic
+          - cadmium
+          - lead
+          - copper
+          - trivalent_chromium
+          - hexavalent_chromium
+          - manganese
+          - mercury
+          - nickel
+          - zinc
+          - phenols_index
+          - total_coliforms
+          - fecal_coliforms
+          - residual_chlorine
+          - barium
+          - beryllium
+          - boron
+          - cobalt
+          - tin
+          - lithium
+          - silver
+          - selenium
+          - total_uranium
+          - vanadium
+          - benzene
+          - benzo_a_pyrene
+          - 1_1_dichloroethene
+          - 1_2_dichloroethane
+          - pentachlorophenol
+          - tetrachloroethene
+          - trichloroethene
+          - carbon_tetrachloride
+          - 2_4_6_trichlorophenol
+          - aldrin
+          - chlordane
+          - ddt
+          - dieldrin
+          - endrin
+          - endosulfan
+          - heptachlor_epoxide
+          - heptachlor
+          - lindane
+          - methoxychlor
+          - dodecachlorononachlor
+          - polychlorinated_biphenyls
+          - toxaphene
+          - demeton
+          - guthion
+          - malathion
+          - parathion
+          - carbaryl
+          - 2_4_dichlorophenoxyacetic_acid
+          - 2_4_5_tp
+          - 2_4_5_t
+          - bhc
+          - ethion
+          - disulfoton
+          - phosdrin
+          - ddepp
+          - ethyl_azinphos
+          - diazinon
+          - fecal_streptococci
+          - salmonella
+          - coliphages
+          - heterotrophic_bacteria
+          - protozoa
+          - fungi
+          - algae
+          - plate_bacteria_count
+          - chlorophyll
+          - oils_and_grease
+          - total_alkalinity
+          - total_organic_carbon
+          - hydrocarbons
+          - total_orthophosphate
+          - total_chromium
+          - methyl_parathion
+          - organic_nitrogen
+          - total_sodium
+          - total_magnesium
+          - dissolved_silica
+          - total_potassium
+          - total_calcium
+          - total_iron
+          - liquid_discharge
+          - total_phosphorus
+          - total_bismuth
+          - acidity
+          - total_kjeldahl_nitrogen
+          - albuminoid_nitrogen
+          - transparency
+          - enteropathogenic_bacteria
+          - total_zooplankton
+          - ammonia
+          - water_quality_index
+          - thermotolerant_coliforms
+          - escherichia
+          - dissolved_aluminum
+          - dissolved_boron
+          - free_cyanide
+          - dissolved_copper
+          - specific_conductivity
+          - cyanobacteria_density
+          - magnesium_hardness
+          - dissolved_iron
+          - quantitative_phytoplankton
+          - oxygen_saturation
+          - depth_parameter
+          - trench_id
+          - streamflow_discharge_day
+          - streamflow_discharge_mean_7d
+          - streamflow_discharge_mean_31d
+          - streamflow_match_count
+          - streamflow_nonnull_day_count
+          - streamflow_total_weight
+          - streamflow_nearest_distance_m
+      - name: land_cover_sensor_upstream
+        path: data/land_cover/land_cover_sensor_upstream.parquet
+        type: land_cover_bucketed
+        join_keys: [station_code, year]
+        variables:
+          - lc_forest
+          - lc_nonforest_nat
+          - lc_pasture
+          - lc_agriculture
+          - lc_farming_unclassified
+          - lc_urban
+          - lc_mining
+          - lc_other
+          - lc_water
+          - lc_nat
+          - alr_pasture
+          - alr_agriculture
+          - alr_farming_unclassified
+          - alr_urban
+          - alr_mining
+          - alr_other
+      - name: climate_sensor_upstream
+        path: data/climate/processed/era5_land/climate_sensor_upstream.parquet
+        type: long_pivot
+        join_keys: [station_code, date]
+        # Nearest 25km upstream ring (bucket lower bound 0) -- the local
+        # catchment's climate, matching how land-cover buckets are anchored.
+        filter: {distance_bucket: 0}
+        pivot_column: climate_variable
+        value_columns: [mean_day, mean_7d, mean_30d, mean_90d, mean_180d, mean_365d]
+        # Raw ERA5-Land variable codes referenced by src/data/climate/schema.py's
+        # ANNUAL_* aggregation-rule sets; confirm/extend against the actual
+        # `climate_sensor_upstream.parquet` `climate_variable` values at
+        # assembly time before relying on this exact list.
+        variables:
+          - 2t_mean_day
+          - 2t_mean_7d
+          - 2t_mean_30d
+          - 2t_mean_90d
+          - 2t_mean_180d
+          - 2t_mean_365d
+          - 2d_mean_day
+          - 2d_mean_7d
+          - 2d_mean_30d
+          - 2d_mean_90d
+          - 2d_mean_180d
+          - 2d_mean_365d
+          - tp_mean_day
+          - tp_mean_7d
+          - tp_mean_30d
+          - tp_mean_90d
+          - tp_mean_180d
+          - tp_mean_365d
+          - sro_mean_day
+          - sro_mean_7d
+          - sro_mean_30d
+          - sro_mean_90d
+          - sro_mean_180d
+          - sro_mean_365d
+          - ssro_mean_day
+          - ssro_mean_7d
+          - ssro_mean_30d
+          - ssro_mean_90d
+          - ssro_mean_180d
+          - ssro_mean_365d
+          - pev_mean_day
+          - pev_mean_7d
+          - pev_mean_30d
+          - pev_mean_90d
+          - pev_mean_180d
+          - pev_mean_365d
+          - swvl1_mean_day
+          - swvl1_mean_7d
+          - swvl1_mean_30d
+          - swvl1_mean_90d
+          - swvl1_mean_180d
+          - swvl1_mean_365d
+          - swvl2_mean_day
+          - swvl2_mean_7d
+          - swvl2_mean_30d
+          - swvl2_mean_90d
+          - swvl2_mean_180d
+          - swvl2_mean_365d
+          - 2t_daily_min_mean_day
+          - 2t_daily_min_mean_7d
+          - 2t_daily_min_mean_30d
+          - 2t_daily_min_mean_90d
+          - 2t_daily_min_mean_180d
+          - 2t_daily_min_mean_365d
+          - 2t_daily_max_mean_day
+          - 2t_daily_max_mean_7d
+          - 2t_daily_max_mean_30d
+          - 2t_daily_max_mean_90d
+          - 2t_daily_max_mean_180d
+          - 2t_daily_max_mean_365d
+
+  - id: adm2_panel
+    mode: adm2
+    index: [mun_id, year]
+    output_path: data/assembly/adm2_panel.parquet
+    sources:
+      # Both land-cover and climate ADM2 sources are long over discrete 25km
+      # upstream distance buckets (produced by aggregate_along_rivers /
+      # _assemble_adm2_upstream_duckdb respectively); `kernel`/`bandwidth`
+      # collapse them into per-entity values the same way -- explicit here so
+      # both weight distance identically, matching
+      # shared.DEFAULT_ADM2_DISTANCE_KERNEL/DEFAULT_ADM2_KERNEL_BANDWIDTH_KM.
+      - name: land_cover_adm2_upstream
+        path: data/land_cover/land_cover_adm2_upstream.parquet
+        type: land_cover_bucketed
+        join_keys: [mun_id, year]
+        kernel: gaussian
+        bandwidth: 1000000
+        variables:
+          - lc_forest
+          - lc_nonforest_nat
+          - lc_pasture
+          - lc_agriculture
+          - lc_farming_unclassified
+          - lc_urban
+          - lc_mining
+          - lc_other
+          - lc_water
+          - lc_nat
+          - alr_pasture
+          - alr_agriculture
+          - alr_farming_unclassified
+          - alr_urban
+          - alr_mining
+          - alr_other
+      - name: climate_adm2_upstream_yearly
+        path: data/climate/processed/era5_land/climate_adm2_upstream_yearly.parquet
+        type: climate_bucketed
+        join_keys: [adm2_id, year]
+        id_map: {adm2_id: mun_id}
+        kernel: gaussian
+        bandwidth: 1000000
+        # Raw ERA5-Land variable codes referenced by
+        # src/data/climate/schema.py's ANNUAL_* aggregation-rule sets; confirm
+        # against the actual `climate_variable` values in
+        # `climate_adm2_upstream_yearly.parquet` before relying on this list.
+        variables:
+          - "2t"
+          - "2d"
+          - tp
+          - sro
+          - ssro
+          - pev
+          - swvl1
+          - swvl2
+          - 2t_daily_min
+          - 2t_daily_max
+      - name: population
+        path: data/population/population.parquet
+        join_keys: [mun_id, year]
+        variables:
+          - sex
+          - age_group
+          - population
+
+# Deferred: health outputs (data/health/hospitalizations.parquet and related
+# tables) are long `metric_name`/`metric_value` tables rather than one wide
+# table per municipality-year, so wiring them in needs pivot support that
+# this config format does not yet have.

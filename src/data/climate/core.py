@@ -49,8 +49,6 @@ class Climate:
         stations_rivers_path=None,
         river_network_path=None,
         output_path=None,
-        kernel="gaussian",
-        h=1000000,
         n_jobs=None,
     ):
         """Assemble the requested climate variant."""
@@ -64,8 +62,6 @@ class Climate:
             stations_rivers_path=stations_rivers_path,
             river_network_path=river_network_path,
             output_path=output_path,
-            kernel=kernel,
-            h=h,
             n_jobs=n_jobs,
         )
 

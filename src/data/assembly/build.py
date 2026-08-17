@@ -1,0 +1,195 @@
+from __future__ import annotations
+
+import logging
+from functools import reduce
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+from src.data.land_cover.composition import compute_kernel_weighted_composition
+from src.data.land_cover.constants import (
+    LAND_COVER_COMPOSITION_BUCKET_MAP,
+    derive_mun_id_from_adm2_id,
+)
+from src.data.shared.sensor_upstream import (
+    DEFAULT_ADM2_DISTANCE_KERNEL,
+    DEFAULT_ADM2_KERNEL_BANDWIDTH_KM,
+    bucket_kernel_weights,
+)
+
+from .constants import (
+    CLIMATE_BUCKETED_SOURCE_TYPE,
+    DATE_COLUMN,
+    DATETIME_COLUMN,
+    LAND_COVER_BUCKETED_SOURCE_TYPE,
+    LONG_PIVOT_SOURCE_TYPE,
+    SENSOR_MODE,
+    YEAR_COLUMN,
+)
+from .schema import validate_required_columns
+
+
+logger = logging.getLogger(__name__)
+
+
+def _compute_kernel_weighted_bucket_values(
+    long_df,
+    *,
+    entity_columns,
+    category_column,
+    value_column,
+    kernel,
+    bandwidth,
+    bucket_column="bucket",
+    bucket_map=None,
+):
+    """Collapse a table long over a distance `bucket_column` into one weighted value
+    per (entity, category), e.g. climate's ADM2 output long over `distance_bucket`
+    x `climate_variable`. Weights use the same bucket-kernel machinery as
+    land-cover composition (`src.data.shared.sensor_upstream.bucket_kernel_weights`),
+    renormalized per (entity, category) across the buckets that have a value.
+    """
+    bucket_map = LAND_COVER_COMPOSITION_BUCKET_MAP if bucket_map is None else bucket_map
+    raw_weights = dict(
+        zip(
+            bucket_map,
+            bucket_kernel_weights(
+                [midpoint for _label, midpoint in bucket_map.values()],
+                kernel=kernel,
+                bandwidth=bandwidth,
+            ),
+        )
+    )
+
+    df = long_df.copy()
+    df["_raw_weight"] = df[bucket_column].map(raw_weights).astype(float)
+    df.loc[df[value_column].isna(), "_raw_weight"] = 0.0
+    group_columns = [*entity_columns, category_column]
+    weight_sum = df.groupby(group_columns)["_raw_weight"].transform("sum")
+    df["_weight"] = np.where(weight_sum > 0, df["_raw_weight"] / weight_sum, 0.0)
+    df["_weighted_value"] = df[value_column].fillna(0.0) * df["_weight"]
+
+    weighted = df.groupby(group_columns, as_index=False)["_weighted_value"].sum()
+    wide = weighted.pivot(
+        index=list(entity_columns), columns=category_column, values="_weighted_value"
+    ).reset_index()
+    wide.columns.name = None
+    return wide
+
+
+def _pivot_long_source(frame, source):
+    """Filter a long table and pivot `pivot_column`'s values into wide columns.
+
+    Used for sources like climate's sensor-bucketed output, which is long over
+    both `distance_bucket` and `climate_variable`; `source.filter` narrows to a
+    single row per (join_keys, pivot value) (e.g. one distance bucket) before
+    the pivot, and `source.value_columns` are the measurement columns pivoted
+    out per value of `pivot_column`, named `{pivot_value}_{value_column}`.
+    """
+    for column, value in source.filter.items():
+        frame = frame[frame[column] == value]
+
+    wide = frame.pivot(
+        index=list(source.join_keys),
+        columns=source.pivot_column,
+        values=list(source.value_columns),
+    )
+    wide.columns = [
+        f"{pivot_value}_{value_column}" for value_column, pivot_value in wide.columns
+    ]
+    return wide.reset_index()
+
+
+def _load_source_frame(source, *, root_dir):
+    """Load one configured source and return it alongside its canonical join keys.
+
+    `source.join_keys` names the join columns as they exist in the raw source
+    table; `source.id_map` (if set) renames a raw id column (e.g. `adm2_id`) to
+    the canonical column used across sources (e.g. `mun_id`). The returned join
+    keys reflect that renaming so callers can merge on a consistent key set.
+    """
+    source_path = Path(root_dir) / source.path
+    logger.info("Loading assembly source '%s' from %s", source.name, source_path)
+    frame = pd.read_parquet(source_path)
+
+    if source.type == LAND_COVER_BUCKETED_SOURCE_TYPE:
+        kwargs = {"entity_columns": source.join_keys}
+        if source.kernel is not None:
+            kwargs["kernel"] = source.kernel
+        if source.bandwidth is not None:
+            kwargs["bandwidth"] = source.bandwidth
+        frame = compute_kernel_weighted_composition(frame, **kwargs)
+    elif source.type == CLIMATE_BUCKETED_SOURCE_TYPE:
+        frame = _compute_kernel_weighted_bucket_values(
+            frame,
+            entity_columns=source.join_keys,
+            category_column="climate_variable",
+            value_column="mean_value",
+            kernel=source.kernel or DEFAULT_ADM2_DISTANCE_KERNEL,
+            bandwidth=(
+                source.bandwidth if source.bandwidth is not None else DEFAULT_ADM2_KERNEL_BANDWIDTH_KM
+            ),
+        )
+    elif source.type == LONG_PIVOT_SOURCE_TYPE:
+        frame = _pivot_long_source(frame, source)
+
+    canonical_join_keys = list(source.join_keys)
+    if source.id_map:
+        for from_column, to_column in source.id_map.items():
+            frame[to_column] = frame[from_column].map(derive_mun_id_from_adm2_id)
+            canonical_join_keys = [
+                to_column if key == from_column else key for key in canonical_join_keys
+            ]
+
+    canonical_join_keys = list(dict.fromkeys(canonical_join_keys))
+    selected_columns = list(dict.fromkeys([*canonical_join_keys, *source.variables]))
+    validate_required_columns(frame, selected_columns, source.name)
+    return frame[selected_columns], canonical_join_keys
+
+
+def assemble_dataset(dataset_config, *, root_dir="."):
+    """Join the configured sources for one assembly dataset into a single wide table."""
+    if not dataset_config.sources:
+        raise ValueError(f"Dataset '{dataset_config.id}' has no sources configured.")
+
+    frames = [
+        _load_source_frame(source, root_dir=root_dir) for source in dataset_config.sources
+    ]
+
+    if dataset_config.mode == SENSOR_MODE:
+        primary_frame, primary_keys = frames[0]
+        if DATETIME_COLUMN in primary_frame.columns:
+            primary_datetime = pd.to_datetime(primary_frame[DATETIME_COLUMN])
+            primary_frame = primary_frame.copy()
+            if YEAR_COLUMN not in primary_frame.columns:
+                primary_frame[YEAR_COLUMN] = primary_datetime.dt.year
+            if DATE_COLUMN not in primary_frame.columns:
+                primary_frame[DATE_COLUMN] = primary_datetime.dt.floor("D")
+            frames[0] = (primary_frame, primary_keys)
+
+    merged = reduce(
+        lambda left, right: pd.merge(
+            left,
+            right[0],
+            on=right[1],
+            how="left",
+            validate="many_to_one",
+        ),
+        frames[1:],
+        frames[0][0],
+    )
+    merged = merged.sort_values(list(dataset_config.index)).reset_index(drop=True)
+    return merged
+
+
+def write_dataset(df, output_path):
+    """Persist an assembled dataset, honoring the output path's file suffix."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.suffix == ".feather":
+        df.to_feather(output_path)
+    else:
+        df.to_parquet(output_path, index=False)
+    logger.info("Assembled dataset written to %s (shape=%s)", output_path, df.shape)
+    return output_path

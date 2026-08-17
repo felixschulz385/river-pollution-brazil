@@ -317,6 +317,38 @@ def resolve_reachable_distances(
 
 DISTANCE_KERNELS = ("uniform", "triangular", "epanechnikov", "gaussian", "exponential")
 
+# Shared default continuous-kernel settings for ADM2 upstream aggregation, so
+# climate and land-cover ADM2 outputs weight upstream distance the same way
+# unless a caller deliberately overrides one of them.
+DEFAULT_ADM2_DISTANCE_KERNEL = "gaussian"
+DEFAULT_ADM2_KERNEL_BANDWIDTH_KM = 1_000_000
+
+# The notebook-derived kernel (weight = 1/sqrt(distance)), kept as an
+# alternative to the continuous DISTANCE_KERNELS for bucketed aggregation.
+INV_SQRT_DISTANCE_KERNEL = "inv_sqrt_distance"
+BUCKET_DISTANCE_KERNELS = (INV_SQRT_DISTANCE_KERNEL, *DISTANCE_KERNELS)
+
+# Both land-cover and climate ADM2 aggregation flag, per discrete upstream
+# distance bucket, whether any trench in that bucket directly intersects the
+# ADM2 polygon (as opposed to being purely upstream of it).
+BUCKET_INTERSECTS_ADM2_COLUMN = "bucket_intersects_adm2"
+
+
+def bucket_kernel_weights(bucket_midpoints_km, *, kernel, bandwidth=None):
+    """Return raw (unnormalized) kernel weights for a set of bucket midpoint distances.
+
+    Used to weight discrete upstream distance buckets (rather than individual
+    trench distances) when collapsing a bucketed table into one value per
+    entity -- shared between land-cover composition and climate ADM2 assembly
+    so both weight distance the same way for a given `kernel`/`bandwidth`.
+    """
+    midpoints = np.asarray(bucket_midpoints_km, dtype=float)
+    if kernel == INV_SQRT_DISTANCE_KERNEL:
+        return 1.0 / np.sqrt(midpoints)
+    if bandwidth is None:
+        raise ValueError(f"kernel={kernel!r} requires a bandwidth.")
+    return distance_kernel_weights(midpoints, kernel=kernel, bandwidth=bandwidth)
+
 
 def distance_kernel_weights(distances, *, kernel, bandwidth):
     """Convert upstream distances into continuous kernel-decayed weights.

@@ -38,12 +38,6 @@ def configure_parser(parser):
     parser.add_argument("--stations-rivers-path", default=None)
     parser.add_argument("--river-network-path", default=None)
     parser.add_argument("--output", default=None)
-    parser.add_argument(
-        "--kernel",
-        default="gaussian",
-        choices=["uniform", "triangular", "epanechnikov", "gaussian", "exponential"],
-    )
-    parser.add_argument("--h", type=float, default=1000000.0)
     parser.add_argument("--n_jobs", type=int, default=None)
     return parser
 
@@ -63,8 +57,6 @@ def run(args):
             stations_rivers_path=args.stations_rivers_path,
             river_network_path=args.river_network_path,
             output_path=args.output,
-            kernel=args.kernel,
-            h=args.h,
             n_jobs=args.n_jobs,
         )
 

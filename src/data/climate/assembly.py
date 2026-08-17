@@ -30,7 +30,6 @@ from .constants import (
     SENSOR_DISTANCE_BUCKETS,
     SENSOR_UPSTREAM_DISTANCE_BUCKETS_VARIANT,
     STATION_CODE_COLUMN,
-    TOTAL_WEIGHT_COLUMN,
     TRENCH_ID_COLUMN,
     UPSTREAM_DISTANCE_COLUMN,
     YEAR_COLUMN,
@@ -42,12 +41,16 @@ from .schema import (
     ANNUAL_SUM_VARIABLES,
     SENSOR_WINDOW_LABELS,
 )
+from src.data.land_cover.aggregation import (
+    _apply_shifted_origin,
+    _assign_distance_bucket,
+    _build_trench_length_lookup,
+)
 from src.data.river_network import RiverNetwork
 import src.data.river_network as rn_module
 from src.data.shared.sensor_upstream import (
-    DISTANCE_KERNELS,
+    BUCKET_INTERSECTS_ADM2_COLUMN,
     build_group_index_lookup,
-    distance_kernel_weights,
     normalize_network_frame,
     prepare_entity_links,
     prepare_observation_targets,
@@ -812,13 +815,18 @@ def _assemble_sensor_upstream_duckdb(
     return output_path
 
 
-def _build_adm2_upstream_weights(
+def _build_adm2_upstream_buckets(
     *,
     network,
-    kernel,
-    h,
     n_jobs,
 ):
+    """Bin each ADM2 unit's upstream trenches into discrete 25 km distance buckets.
+
+    Mirrors `land_cover.aggregation.aggregate_along_rivers`'s ADM2 binning exactly
+    (same shifted-origin + bucket-width scheme) so climate and land-cover ADM2
+    outputs share one upstream-distance representation; any distance weighting
+    across buckets happens downstream, at assembly time.
+    """
     if not network.trench_reachability_matrices:
         raise ValueError("River network must have trench reachability data computed.")
     if network.trenches is None:
@@ -854,6 +862,7 @@ def _build_adm2_upstream_weights(
         system_column=rn_module.SYSTEM_ID_KEY,
         position_column=rn_module.TRENCH_INDEX_COLUMN,
     )
+    trench_lengths = _build_trench_length_lookup(network.trenches)
 
     def process_adm2(adm2_id):
         adm2_trenches = trench_lookup.loc[
@@ -862,6 +871,7 @@ def _build_adm2_upstream_weights(
         ].drop_duplicates()
         if adm2_trenches.empty:
             return None
+        intersecting_trench_ids = set(adm2_trenches[TRENCH_ID_COLUMN])
 
         trench_distance_lookup = resolve_multi_seed_reachable_distances(
             network,
@@ -875,25 +885,34 @@ def _build_adm2_upstream_weights(
         )
         if trench_distance_lookup.empty:
             return None
-        trench_distance_lookup["weight"] = distance_kernel_weights(
-            trench_distance_lookup[UPSTREAM_DISTANCE_COLUMN].to_numpy(),
-            kernel=kernel,
-            bandwidth=h,
-        )
-        trench_distance_lookup[ADM2_ID_COLUMN] = adm2_id
-        return trench_distance_lookup[[ADM2_ID_COLUMN, TRENCH_ID_COLUMN, "weight"]]
+        trench_distance_lookup = trench_distance_lookup.set_index(TRENCH_ID_COLUMN)[
+            UPSTREAM_DISTANCE_COLUMN
+        ]
+        trench_distance_lookup = _apply_shifted_origin(trench_distance_lookup, trench_lengths)
 
-    logger.info("Preparing ADM2 upstream weights for %d ADM2 unit(s) with %s worker(s).", len(adm2_units), n_jobs)
+        buckets = trench_distance_lookup.reset_index()[[TRENCH_ID_COLUMN]]
+        buckets[ADM2_ID_COLUMN] = adm2_id
+        buckets[DISTANCE_BUCKET_COLUMN] = _assign_distance_bucket(
+            trench_distance_lookup[ADJUSTED_DISTANCE_COLUMN].to_numpy()
+        )
+        buckets[BUCKET_INTERSECTS_ADM2_COLUMN] = buckets[TRENCH_ID_COLUMN].isin(
+            intersecting_trench_ids
+        )
+        return buckets[[ADM2_ID_COLUMN, TRENCH_ID_COLUMN, DISTANCE_BUCKET_COLUMN, BUCKET_INTERSECTS_ADM2_COLUMN]]
+
+    logger.info("Preparing ADM2 upstream buckets for %d ADM2 unit(s) with %s worker(s).", len(adm2_units), n_jobs)
     results = Parallel(n_jobs=n_jobs, backend="threading")(
         delayed(process_adm2)(adm2_id)
-        for adm2_id in tqdm(adm2_units, desc="Climate ADM2 weights")
+        for adm2_id in tqdm(adm2_units, desc="Climate ADM2 buckets")
     )
-    weight_frames = [result for result in results if result is not None and not result.empty]
-    if not weight_frames:
-        return pd.DataFrame(columns=[ADM2_ID_COLUMN, TRENCH_ID_COLUMN, "weight"])
-    weights_df = pd.concat(weight_frames, ignore_index=True)
-    logger.info("Prepared %d ADM2 upstream weight row(s).", len(weights_df))
-    return weights_df
+    bucket_frames = [result for result in results if result is not None and not result.empty]
+    if not bucket_frames:
+        return pd.DataFrame(
+            columns=[ADM2_ID_COLUMN, TRENCH_ID_COLUMN, DISTANCE_BUCKET_COLUMN, BUCKET_INTERSECTS_ADM2_COLUMN]
+        )
+    buckets_df = pd.concat(bucket_frames, ignore_index=True)
+    logger.info("Prepared %d ADM2 upstream bucket row(s).", len(buckets_df))
+    return buckets_df
 
 
 def _assemble_adm2_upstream_duckdb(
@@ -902,33 +921,31 @@ def _assemble_adm2_upstream_duckdb(
     climate_columns,
     river_network_path,
     output_path,
-    kernel,
-    h,
     n_jobs,
 ):
-    if kernel not in DISTANCE_KERNELS:
-        raise ValueError(f"Unknown kernel: {kernel}. Available: {DISTANCE_KERNELS}")
+    """Bin climate into 25 km upstream distance buckets per ADM2 unit/year/variable.
 
+    Long output, structurally aligned with `land_cover.aggregation.aggregate_along_rivers`'s
+    ADM2 output (same bucket scheme, plus a `bucket_intersects_adm2` flag); any
+    distance-kernel weighting across buckets happens downstream, at assembly time,
+    via `src.data.assembly`.
+    """
     logger.info("Loading river network from %s", river_network_path)
     network = RiverNetwork()
     network.load(str(river_network_path))
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    weights_df = _build_adm2_upstream_weights(
-        network=network,
-        kernel=kernel,
-        h=h,
-        n_jobs=n_jobs,
-    )
-    if weights_df.empty:
-        pd.DataFrame(
-            columns=[
-                ADM2_ID_COLUMN,
-                YEAR_COLUMN,
-                *climate_columns,
-                REACHABLE_TRENCH_COUNT_COLUMN,
-                TOTAL_WEIGHT_COLUMN,
-            ]
-        ).to_parquet(output_path, index=False)
+    buckets_df = _build_adm2_upstream_buckets(network=network, n_jobs=n_jobs)
+    empty_columns = [
+        ADM2_ID_COLUMN,
+        YEAR_COLUMN,
+        DISTANCE_BUCKET_COLUMN,
+        CLIMATE_VARIABLE_COLUMN,
+        "mean_value",
+        REACHABLE_TRENCH_COUNT_COLUMN,
+        BUCKET_INTERSECTS_ADM2_COLUMN,
+    ]
+    if buckets_df.empty:
+        pd.DataFrame(columns=empty_columns).to_parquet(output_path, index=False)
         logger.info("Saved climate ADM2 assembly to %s", output_path)
         return output_path
 
@@ -937,17 +954,10 @@ def _assemble_adm2_upstream_duckdb(
     try:
         connection.execute(f"PRAGMA threads={int(max(1, n_jobs))}")
         connection.execute(f"PRAGMA temp_directory={_sql_literal(str(temp_dir))}")
-        connection.register("adm2_upstream_weights_df", weights_df)
+        connection.register("adm2_upstream_buckets_df", buckets_df)
 
         climate_sql_path = _sql_literal(str(climate_path))
         annual_aggregate_sql = _annual_aggregate_sql(climate_columns, source_alias="c")
-        weighted_columns_sql = ",\n                    ".join(
-            [
-                f"SUM(y.{_sql_ident(column)} * w.weight) AS {_sql_ident(column)}"
-                for column in climate_columns
-            ]
-        )
-
         connection.execute(
             f"""
             CREATE TEMP TABLE climate_by_trench_year AS
@@ -960,21 +970,34 @@ def _assemble_adm2_upstream_duckdb(
             """
         )
 
+        long_branches_sql = " UNION ALL ".join(
+            f"""
+            SELECT
+                {TRENCH_ID_COLUMN}, {YEAR_COLUMN},
+                {_sql_literal(column)} AS {_sql_ident(CLIMATE_VARIABLE_COLUMN)},
+                {_sql_ident(column)} AS value
+            FROM climate_by_trench_year
+            """
+            for column in climate_columns
+        )
+
         output_sql_path = _sql_literal(str(output_path))
         connection.execute(
             f"""
             COPY (
                 SELECT
-                    w.{ADM2_ID_COLUMN},
+                    b.{ADM2_ID_COLUMN},
                     y.{YEAR_COLUMN},
-                    {weighted_columns_sql},
+                    b.{DISTANCE_BUCKET_COLUMN},
+                    y.{CLIMATE_VARIABLE_COLUMN},
+                    AVG(y.value) AS mean_value,
                     COUNT(*) AS {REACHABLE_TRENCH_COUNT_COLUMN},
-                    SUM(w.weight) AS {TOTAL_WEIGHT_COLUMN}
-                FROM climate_by_trench_year AS y
-                INNER JOIN adm2_upstream_weights_df AS w
-                    ON y.{TRENCH_ID_COLUMN} = w.{TRENCH_ID_COLUMN}
-                GROUP BY 1, 2
-                ORDER BY 1, 2
+                    BOOL_OR(b.{BUCKET_INTERSECTS_ADM2_COLUMN}) AS {BUCKET_INTERSECTS_ADM2_COLUMN}
+                FROM ({long_branches_sql}) AS y
+                INNER JOIN adm2_upstream_buckets_df AS b
+                    ON y.{TRENCH_ID_COLUMN} = b.{TRENCH_ID_COLUMN}
+                GROUP BY 1, 2, 3, 4
+                ORDER BY 1, 2, 3, 4
             ) TO {output_sql_path} (FORMAT PARQUET)
             """
         )
@@ -996,8 +1019,6 @@ def assemble_climate(
     stations_rivers_path=DEFAULT_STATIONS_RIVERS_PATH,
     river_network_path=DEFAULT_RIVER_NETWORK_PATH,
     output_path=None,
-    kernel="gaussian",
-    h=1000000,
     n_jobs=None,
 ):
     """Assemble preprocessed climate data into sensor or ADM2 outputs."""
@@ -1041,7 +1062,5 @@ def assemble_climate(
         climate_columns=climate_columns,
         river_network_path=river_network_path,
         output_path=output_path,
-        kernel=kernel,
-        h=h,
         n_jobs=n_jobs,
     )
