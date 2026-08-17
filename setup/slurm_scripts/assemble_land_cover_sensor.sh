@@ -20,5 +20,5 @@ python -m src.cli data land-cover assemble \
   --water-quality-path data/sensor_data/water_quality.parquet \
   --stations-rivers-path data/sensor_data/stations_rivers.parquet \
   --river-network-path data/river_network \
-  --output data/land_cover/land_cover_assembled_sensor.parquet \
+  --output data/land_cover/land_cover_sensor_upstream.parquet \
   --n_jobs "${SLURM_CPUS_PER_TASK:-4}"

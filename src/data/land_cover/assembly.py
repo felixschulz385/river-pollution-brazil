@@ -617,16 +617,12 @@ def _assemble_sensor_land_cover(
             ]
         ).reset_index(drop=True)
 
-    indexed_result_df = result_df.set_index(
-        [STATION_CODE_COLUMN, YEAR_COLUMN],
-        drop=False,
-    )
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    indexed_result_df.to_parquet(output_path)
+    result_df.to_parquet(output_path, index=False)
     logger.info("Saved sensor-matched upstream land cover to %s", output_path)
-    logger.info("Output shape: %s", indexed_result_df.shape)
-    return indexed_result_df
+    logger.info("Output shape: %s", result_df.shape)
+    return result_df
 
 
 def assemble_land_cover(

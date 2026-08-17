@@ -588,10 +588,8 @@ def _assemble_sensor_upstream_duckdb(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if targets.empty:
-        empty_df = pd.DataFrame(
-            columns=_empty_sensor_long_columns()
-        ).set_index([STATION_CODE_COLUMN, DATE_COLUMN])
-        empty_df.to_parquet(output_path, index=True)
+        empty_df = pd.DataFrame(columns=_empty_sensor_long_columns())
+        empty_df.to_parquet(output_path, index=False)
         return empty_df
 
     network = _load_sensor_river_network(river_network_path)
@@ -788,10 +786,8 @@ def _assemble_sensor_upstream_duckdb(
             part_paths.append(part_path)
 
         if not part_paths:
-            empty_df = pd.DataFrame(
-                columns=_empty_sensor_long_columns()
-            ).set_index([STATION_CODE_COLUMN, DATE_COLUMN])
-            empty_df.to_parquet(output_path, index=True)
+            empty_df = pd.DataFrame(columns=_empty_sensor_long_columns())
+            empty_df.to_parquet(output_path, index=False)
             return empty_df
 
         output_sql_path = _sql_literal(str(output_path))

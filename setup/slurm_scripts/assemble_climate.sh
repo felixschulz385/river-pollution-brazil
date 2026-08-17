@@ -16,8 +16,8 @@ cd /scicore/home/meiera/schulz0022/projects/river-pollution-brazil
 mkdir -p log/assemble_climate_era5_land
 
 ROOT_DIR="${ROOT_DIR:-.}"
-SENSOR_OUTPUT_PATH="${SENSOR_OUTPUT_PATH:-data/climate/processed/climate_assembled_sensor.parquet}"
-ADM2_OUTPUT_PATH="${ADM2_OUTPUT_PATH:-data/climate/processed/climate_assembled_adm2.parquet}"
+SENSOR_OUTPUT_PATH="${SENSOR_OUTPUT_PATH:-data/climate/processed/era5_land/climate_sensor_upstream.parquet}"
+ADM2_OUTPUT_PATH="${ADM2_OUTPUT_PATH:-data/climate/processed/era5_land/climate_adm2_upstream_yearly.parquet}"
 
 python -m src.cli data climate assemble \
   --root-dir "${ROOT_DIR}" \

@@ -18,5 +18,5 @@ python -m src.cli data land-cover assemble \
   --variant adm2 \
   --land-cover-path data/land_cover/land_cover.feather \
   --river-network-path data/river_network \
-  --output data/land_cover/land_cover_assembled_adm2.parquet \
+  --output data/land_cover/land_cover_adm2_upstream.parquet \
   --n_jobs "${SLURM_CPUS_PER_TASK:-4}"
