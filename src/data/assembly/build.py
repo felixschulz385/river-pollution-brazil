@@ -145,6 +145,14 @@ def _load_source_frame(source, *, root_dir):
     elif source.type == LONG_PIVOT_SOURCE_TYPE:
         frame = _pivot_long_source(frame, source)
 
+    for datetime_like_column in (DATE_COLUMN, DATETIME_COLUMN):
+        if datetime_like_column in frame.columns:
+            # DuckDB-written sources (e.g. climate's DATE columns) round-trip
+            # through parquet as plain `object`/python-date values rather than
+            # pandas datetime64, which breaks merges against datetime64 join
+            # keys from other sources with a dtype mismatch.
+            frame[datetime_like_column] = pd.to_datetime(frame[datetime_like_column])
+
     canonical_join_keys = list(source.join_keys)
     if source.id_map:
         for from_column, to_column in source.id_map.items():
