@@ -25,7 +25,7 @@ def configure_parser(parser):
     parser.add_argument(
         "--subtype",
         default="cloud_cover",
-        choices=["cloud_cover", "era5_land_hourly", "era5_land_daily"],
+        choices=["cloud_cover", "era5_land_hourly", "era5_land_daily", "era5_land_arco"],
     )
     parser.add_argument("--stage", default="all", choices=["all", "zarr", "parquet"])
     parser.add_argument(

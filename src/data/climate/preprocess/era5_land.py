@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import os
 import json
 import logging
@@ -9,6 +10,7 @@ import re
 import gc
 import shutil
 import tempfile
+from time import sleep
 
 import dask
 import dask.array as da
@@ -813,6 +815,22 @@ def _looks_like_earthkit_temp_dir(path: Path) -> bool:
     return False
 
 
+def _rmtree_with_retry(path: Path, *, attempts=3, delay_seconds=0.3) -> bool:
+    # On Windows, a just-closed eccodes/earthkit file handle can stay locked
+    # for a brief moment after Python releases its last reference (AV
+    # scanning, delayed OS handle release). A short retry clears most of
+    # these without resorting to anything riskier.
+    for attempt in range(1, attempts + 1):
+        try:
+            shutil.rmtree(path)
+            return True
+        except (PermissionError, FileNotFoundError, OSError):
+            if attempt == attempts:
+                return False
+            sleep(delay_seconds)
+    return False
+
+
 def _cleanup_stale_earthkit_temp_dirs(*, min_age_seconds=EARTHKIT_TEMP_RETENTION_SECONDS) -> int:
     temp_root = Path(tempfile.gettempdir())
     now = pd.Timestamp.utcnow().timestamp()
@@ -826,11 +844,8 @@ def _cleanup_stale_earthkit_temp_dirs(*, min_age_seconds=EARTHKIT_TEMP_RETENTION
             continue
         if age_seconds < min_age_seconds:
             continue
-        try:
-            shutil.rmtree(candidate)
+        if _rmtree_with_retry(candidate):
             removed += 1
-        except (PermissionError, FileNotFoundError, OSError):
-            continue
     if removed:
         logger.info(
             "Removed %s stale Earthkit temp director%s.",
@@ -838,6 +853,22 @@ def _cleanup_stale_earthkit_temp_dirs(*, min_age_seconds=EARTHKIT_TEMP_RETENTION
             "y" if removed == 1 else "ies",
         )
     return removed
+
+
+def _final_earthkit_temp_cleanup() -> None:
+    # Registered with atexit below (imported after the stdlib `weakref`
+    # module, so atexit's LIFO ordering runs this first) to give any
+    # lingering GRIB file handles one last chance to release before
+    # earthkit's own tempfile.TemporaryDirectory finalizers try -- and raise
+    # an uncaught PermissionError -- during interpreter shutdown.
+    gc.collect()
+    try:
+        _cleanup_stale_earthkit_temp_dirs(min_age_seconds=0)
+    except Exception:
+        pass
+
+
+atexit.register(_final_earthkit_temp_cleanup)
 
 
 def _open_era5_dataset(path: Path) -> xr.Dataset:
@@ -851,24 +882,46 @@ def _open_era5_dataset(path: Path) -> xr.Dataset:
         metadata["band_name"] = _field_band_names(metadata)
 
         bands = pd.Index(metadata["band_name"]).drop_duplicates().tolist()
-        times = pd.Index(metadata["datetime"]).drop_duplicates().tolist()
+        times = pd.DatetimeIndex(pd.unique(metadata["datetime"])).sort_values()
         latitude = np.asarray(field_list.data(keys="lat")[0, :, 0])
         longitude = np.asarray(field_list.data(keys="lon")[0, 0, :])
         values = np.asarray(field_list.to_numpy())
 
+        # The flat field array is NOT guaranteed to be band-major (all timesteps
+        # of band 0, then band 1, ...). Real GRIB streams are typically time-major
+        # (all bands for hour 0, then hour 1, ...). Map each field into its
+        # (band, time) slot explicitly from the metadata rather than assuming any
+        # particular message order, which previously caused variables to be
+        # silently cross-contaminated.
+        band_pos = {name: i for i, name in enumerate(bands)}
+        time_pos = {t: i for i, t in enumerate(times)}
+        band_idx = metadata["band_name"].map(band_pos).to_numpy()
+        time_idx = metadata["datetime"].map(time_pos).to_numpy()
+
         expected_fields = len(bands) * len(times)
-        if values.shape[0] != expected_fields:
+        pair_index = pd.MultiIndex.from_arrays([band_idx, time_idx])
+        if pair_index.duplicated().any():
+            raise ValueError(
+                "Duplicate ERA5 fields found for the same band/time combination "
+                f"while reading {path.name}."
+            )
+        if len(pair_index) != expected_fields:
             raise ValueError(
                 "Unexpected ERA5 field count while reshaping notebook-style GRIB data: "
-                f"{values.shape[0]} != {len(bands)} x {len(times)}."
+                f"{len(pair_index)} != {len(bands)} x {len(times)} ({path.name})."
             )
 
+        reshaped = np.empty(
+            (len(bands), len(times), len(latitude), len(longitude)), dtype=values.dtype
+        )
+        reshaped[band_idx, time_idx] = values
+
         dataset = xr.DataArray(
-            values.reshape(len(bands), len(times), len(latitude), len(longitude)),
+            reshaped,
             dims=["band", "time", "latitude", "longitude"],
             coords={
                 "band": bands,
-                "time": pd.DatetimeIndex(times),
+                "time": times,
                 "latitude": latitude,
                 "longitude": longitude,
             },

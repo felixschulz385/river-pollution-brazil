@@ -10,6 +10,7 @@ import xarray as xr
 from src.data.climate.preprocess.era5_land import (
     ERA5L_VAR_CONFIG,
     ERA5_OUTPUT_TIME_INDEX,
+    _open_era5_dataset,
     bootstrap_era5_store,
     load_or_create_geobox_state,
     prepare_daily_era5_dataset,
@@ -19,6 +20,91 @@ from src.data.climate.preprocess.era5_land import (
     write_dataset_region,
 )
 from src.data.climate.fetch.common import load_download_manifest, write_download_manifest
+
+
+class _FakeEra5FieldList:
+    """Mimics the tiny slice of earthkit.data.FieldList's interface that
+    _open_era5_dataset relies on."""
+
+    def __init__(self, metadata: pd.DataFrame, values: np.ndarray, latitude: np.ndarray, longitude: np.ndarray):
+        self._metadata = metadata
+        self._values = values
+        self._latitude = latitude
+        self._longitude = longitude
+
+    def ls(self):
+        return self._metadata
+
+    def data(self, keys):
+        if keys == "lat":
+            plane = np.repeat(self._latitude[:, None], len(self._longitude), axis=1)
+        elif keys == "lon":
+            plane = np.repeat(self._longitude[None, :], len(self._latitude), axis=0)
+        else:
+            raise ValueError(f"Unsupported key: {keys!r}")
+        return np.broadcast_to(plane, (len(self._metadata), *plane.shape))
+
+    def to_numpy(self):
+        return self._values
+
+    def close(self):
+        pass
+
+
+def test_open_era5_dataset_maps_fields_by_metadata_not_stream_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test for the reshape/transpose bug: the flat GRIB field
+    array must be mapped into (band, time) using the metadata's band/datetime
+    columns, not by assuming a band-major message order. Real GRIB streams
+    are time-major (all bands for hour 0, then hour 1, ...) - this test uses
+    exactly that ordering and would fail against a blind
+    `.reshape(len(bands), len(times), ...)`."""
+    times = pd.date_range("1985-01-01", periods=3, freq="1h")
+    bands = ["2t", "tp"]
+    latitude = np.array([1.0, 0.0])
+    longitude = np.array([10.0, 11.0])
+
+    rows = []
+    planes = []
+    for time_idx, valid_time in enumerate(times):
+        for band_idx, band in enumerate(bands):
+            rows.append({"shortName": band, "valid_datetime": valid_time})
+            sentinel = (band_idx + 1) * 1000 + time_idx
+            planes.append(np.full((len(latitude), len(longitude)), sentinel, dtype=np.float64))
+
+    metadata = pd.DataFrame(rows)
+    values = np.stack(planes, axis=0)
+    fake_field_list = _FakeEra5FieldList(metadata, values, latitude, longitude)
+
+    monkeypatch.setattr("earthkit.data.from_source", lambda *args, **kwargs: fake_field_list)
+
+    dataset = _open_era5_dataset(Path("dummy.grib"))
+
+    for time_idx in range(len(times)):
+        assert dataset["2t"].isel(time=time_idx, latitude=0, longitude=0).item() == 1000 + time_idx
+        assert dataset["tp"].isel(time=time_idx, latitude=0, longitude=0).item() == 2000 + time_idx
+
+
+def test_open_era5_dataset_rejects_duplicate_band_time_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    times = pd.date_range("1985-01-01", periods=2, freq="1h")
+    metadata = pd.DataFrame(
+        [
+            {"shortName": "2t", "valid_datetime": times[0]},
+            {"shortName": "2t", "valid_datetime": times[0]},
+        ]
+    )
+    latitude = np.array([1.0, 0.0])
+    longitude = np.array([10.0, 11.0])
+    values = np.zeros((2, len(latitude), len(longitude)), dtype=np.float64)
+    fake_field_list = _FakeEra5FieldList(metadata, values, latitude, longitude)
+
+    monkeypatch.setattr("earthkit.data.from_source", lambda *args, **kwargs: fake_field_list)
+
+    with pytest.raises(ValueError, match="Duplicate ERA5 fields"):
+        _open_era5_dataset(Path("dummy.grib"))
 
 
 class _FakeCoord:

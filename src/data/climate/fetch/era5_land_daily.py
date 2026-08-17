@@ -1,4 +1,5 @@
 from .common import ERA5_AREA, ERA5_DAYS, retrieve_yearly_dataset_in_monthly_batches
+from .verify import verify_era5_grib_batch
 
 
 DATASET = "derived-era5-land-daily-statistics"
@@ -8,6 +9,8 @@ VARIABLES = [
     "volumetric_soil_water_layer_1",
     "volumetric_soil_water_layer_2",
 ]
+# GRIB short names for the variables above, as read back by _open_era5_dataset.
+VERIFICATION_BANDS = ["2t", "2d", "swvl1", "swvl2"]
 
 
 def build_era5_land_daily_request(year, month):
@@ -31,4 +34,5 @@ def fetch_era5_land_daily(root_dir="."):
         output_subdir="era5_land_daily",
         file_prefix="era5_land_daily",
         max_running_remote_requests=1,
+        verify_batch=lambda path: verify_era5_grib_batch(path, bands=VERIFICATION_BANDS),
     )
