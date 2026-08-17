@@ -22,5 +22,5 @@ python -m src.cli data water-quality assemble \
   --water-quality-path data/sensor_data/water_quality.parquet \
   --streamflow-path data/sensor_data/streamflow.parquet \
   --stations-rivers-path data/sensor_data/stations_rivers.parquet \
-  --output data/sensor_data/water_quality_assembled.parquet \
+  --output data/sensor_data/water_quality_streamflow.parquet \
   --n_jobs "${SLURM_CPUS_PER_TASK:-4}"

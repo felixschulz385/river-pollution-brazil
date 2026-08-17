@@ -92,7 +92,7 @@ The water-quality fetch pipeline supports additional options for browser executi
 
 The main assembled output currently tracked in the repository is:
 
-- `data/sensor_data/water_quality_assembled.parquet`
+- `data/sensor_data/water_quality_streamflow.parquet`
 
 Transformation metadata used by the analysis pipeline is stored in:
 
@@ -198,7 +198,7 @@ python3 -m src.cli analysis sensor-data run \
 
 By default, analysis settings point to:
 
-- `data/sensor_data/water_quality_assembled.parquet`
+- `data/sensor_data/water_quality_streamflow.parquet`
 - `data/land_cover/land_cover_sensor_upstream.parquet`
 - `data/sensor_data/water_quality_transformations.json`
 - `data/river_network/trenches.parquet`

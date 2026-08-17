@@ -112,6 +112,11 @@ def _load_source_frame(source, *, root_dir):
     source_path = Path(root_dir) / source.path
     logger.info("Loading assembly source '%s' from %s", source.name, source_path)
     frame = pd.read_parquet(source_path)
+    if frame.index.names != [None]:
+        # Upstream writers (e.g. sensor-data assembly) persist their join keys
+        # as the parquet row index rather than plain columns; join_keys below
+        # must be selectable as columns.
+        frame = frame.reset_index()
 
     if source.type == LAND_COVER_BUCKETED_SOURCE_TYPE:
         kwargs = {"entity_columns": source.join_keys}
