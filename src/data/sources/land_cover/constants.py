@@ -6,6 +6,10 @@ from pathlib import Path
 import numpy as np
 
 from src.data.sources.river_network.constants import PROCESSED_DIR as _RIVER_NETWORK_PROCESSED_DIR
+from src.data.sources.sensor_data.constants import (
+    DEFAULT_STATIONS_RIVERS_PATH,
+    DEFAULT_WATER_QUALITY_PATH,
+)
 
 
 MAPBIOMAS_COLLECTION = "collection_10"
@@ -49,8 +53,6 @@ ASSEMBLY_VARIANTS = (
     ADM2_ASSEMBLY_VARIANT,
 )
 DEFAULT_ASSEMBLY_LAND_COVER_PATH = "data/land_cover/processed/extract/land_cover.feather"
-DEFAULT_WATER_QUALITY_PATH = "data/sensor_data/water_quality.parquet"
-DEFAULT_STATIONS_RIVERS_PATH = "data/sensor_data/stations_rivers.parquet"
 DEFAULT_RIVER_NETWORK_PATH = _RIVER_NETWORK_PROCESSED_DIR
 DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH = (
     "data/land_cover/processed/aggregate/land_cover_sensor_upstream.parquet"

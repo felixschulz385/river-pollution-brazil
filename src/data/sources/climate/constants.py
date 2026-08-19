@@ -3,6 +3,10 @@ from pathlib import Path
 import numpy as np
 
 from src.data.sources.river_network.constants import PROCESSED_DIR as _RIVER_NETWORK_PROCESSED_DIR
+from src.data.sources.sensor_data.constants import (
+    DEFAULT_STATIONS_RIVERS_PATH,
+    DEFAULT_WATER_QUALITY_PATH,
+)
 
 
 TRENCH_ID_COLUMN = "trench_id"
@@ -29,8 +33,6 @@ CLIMATE_ASSEMBLE_VARIANTS = {
 }
 
 DEFAULT_RIVER_NETWORK_PATH = _RIVER_NETWORK_PROCESSED_DIR
-DEFAULT_WATER_QUALITY_PATH = "data/sensor_data/water_quality.parquet"
-DEFAULT_STATIONS_RIVERS_PATH = "data/sensor_data/stations_rivers.parquet"
 DEFAULT_ERA5_LAND_STORE_PATH = Path("data/climate/raw/era5_land.zarr_nobackup")
 DEFAULT_ERA5_LAND_TRENCH_DAY_PATH = Path("data/climate/processed/extract/era5_land.parquet")
 DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH = Path(

@@ -11,7 +11,7 @@ from pathlib import Path
 from .checks import CheckResult
 from .constants import SOURCES, sidecar_path
 from .fingerprint import compute_fingerprint
-from .sources import SOURCE_ADAPTERS
+from .sources import SOURCE_ADAPTERS, FetchListing, OutputArtifactCheck
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,15 @@ class Verification:
         adapter = SOURCE_ADAPTERS[source]
         sidecar = sidecar_path(self.root_dir, source)
 
-        fingerprint_paths = adapter.fingerprint_paths(self.root_dir)
+        try:
+            fingerprint_paths = adapter.fingerprint_paths(self.root_dir)
+        except Exception:
+            logger.exception(
+                "Source '%s': fingerprint_paths() raised unexpectedly; skipping the cache "
+                "for this run and re-checking from scratch.",
+                source,
+            )
+            fingerprint_paths = []
         fingerprint = compute_fingerprint(fingerprint_paths)
 
         existing = None if force else _read_sidecar(sidecar)
@@ -81,8 +89,34 @@ class Verification:
                 from_cache=True,
             )
 
-        fetch_listing = adapter.list_fetched(self.root_dir, force=force)
-        output_artifacts = adapter.check_outputs(self.root_dir)
+        try:
+            fetch_listing = adapter.list_fetched(self.root_dir, force=force)
+        except Exception as exc:
+            logger.exception("Source '%s': list_fetched() raised unexpectedly.", source)
+            fetch_listing = FetchListing(
+                present=0,
+                expected=None,
+                detail=f"list_fetched() crashed: {exc.__class__.__name__}: {exc}",
+            )
+
+        try:
+            output_artifacts = adapter.check_outputs(self.root_dir)
+        except Exception as exc:
+            logger.exception("Source '%s': check_outputs() raised unexpectedly.", source)
+            output_artifacts = [
+                OutputArtifactCheck(
+                    label="check_outputs_crashed",
+                    path=Path(self.root_dir),
+                    exists=True,
+                    checks=[
+                        CheckResult(
+                            name="check_outputs_crashed",
+                            ok=False,
+                            message=f"check_outputs() raised {exc.__class__.__name__}: {exc}",
+                        )
+                    ],
+                )
+            ]
 
         any_present = fetch_listing.present > 0 or any(artifact.exists for artifact in output_artifacts)
         all_checks: list[CheckResult] = [check for artifact in output_artifacts for check in artifact.checks]
@@ -123,9 +157,43 @@ class Verification:
         )
 
     def verify(self, source: str | None = None, force: bool = False) -> dict[str, SourceReport]:
-        """Run verification for `source` (or all sources) and cache results."""
+        """Run verification for `source` (or all sources) and cache results.
+
+        Each source is isolated: an adapter that raises unexpectedly (a bug in
+        that source's checks, a malformed output file, etc.) is reported as a
+        failed source rather than aborting the whole run and losing every
+        other source's already-computed result.
+        """
         names = [source] if source else list(SOURCES)
-        return {name: self._run_source(name, force=force) for name in names}
+        reports: dict[str, SourceReport] = {}
+        for name in names:
+            try:
+                reports[name] = self._run_source(name, force=force)
+            except ValueError:
+                raise  # programming error (unknown source) -- not a data issue to swallow
+            except Exception as exc:
+                logger.exception(
+                    "Source '%s': verification crashed unexpectedly; continuing with remaining sources.",
+                    name,
+                )
+                reports[name] = SourceReport(
+                    source=name,
+                    status="failed",
+                    fingerprint="",
+                    verified_at=_timestamp(),
+                    checks=[
+                        asdict(
+                            CheckResult(
+                                name="verification_crashed",
+                                ok=False,
+                                message=f"{exc.__class__.__name__}: {exc}",
+                            )
+                        )
+                    ],
+                    fetch_completeness=None,
+                    from_cache=False,
+                )
+        return reports
 
     def summary(self, source: str | None = None, force: bool = False) -> dict[str, SourceReport]:
         """Return per-source reports, reusing verification's fingerprint short-circuit."""
