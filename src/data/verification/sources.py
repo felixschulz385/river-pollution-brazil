@@ -59,13 +59,25 @@ class SourceAdapter:
 
 
 def _safe_read_parquet(path: Path):
-    """Read a parquet file, returning None if it's missing or unreadable."""
+    """Read a parquet file, returning None if it's missing or unreadable.
+
+    Some outputs (e.g. sensor_data's assembled panel) are written with a
+    meaningful named index (station_code/datetime) rather than a plain
+    RangeIndex. `check_required_columns` only looks at `frame.columns`, so a
+    named index level would be invisible to it and falsely reported as
+    missing -- reset it back into columns here. A plain positional index
+    (`names == [None]`) is left alone so `reset_index()` doesn't inject a
+    spurious `index` column for sources that don't use a custom index.
+    """
     if not path.exists():
         return None
     try:
-        return pd.read_parquet(path)
+        frame = pd.read_parquet(path)
     except Exception:
         return None
+    if list(frame.index.names) != [None]:
+        frame = frame.reset_index()
+    return frame
 
 
 def _non_empty_check(frame, name: str = "non_empty") -> CheckResult:
@@ -273,22 +285,39 @@ def _sensor_data_fingerprint_paths(root_dir) -> list[Path]:
 # --------------------------------------------------------------------------
 
 def _climate_list_fetched(root_dir, force: bool = False) -> FetchListing:
+    import json
+
     from src.data.sources.climate.preprocess.era5_land import (
         ERA5_OUTPUT_END,
         ERA5_OUTPUT_START,
-        discover_era5_input_files,
+        _candidate_manifest_paths,
     )
 
+    # Successfully preprocessed raw GRIB files are deleted (see
+    # `_delete_raw_input_file` in era5_land.py) -- counting *.grib files
+    # would report 0 present once preprocessing has consumed them, even
+    # though the month was genuinely fetched. Their `.manifest.json`
+    # sidecars survive that deletion and keep `download_status`, so use
+    # those to determine what was actually downloaded.
     try:
-        files = discover_era5_input_files(root_dir=root_dir, subtype="era5_land_hourly")
+        manifest_paths = _candidate_manifest_paths(root_dir=root_dir, subtype="era5_land_hourly")
+        downloaded = 0
+        for manifest_path in manifest_paths:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            download_status = manifest.get("download_status", manifest.get("status"))
+            if download_status == "downloaded":
+                downloaded += 1
     except Exception as exc:
         return FetchListing(present=0, expected=None, detail=f"Could not discover ERA5-Land input files: {exc}")
 
     expected = len(pd.period_range(ERA5_OUTPUT_START, ERA5_OUTPUT_END, freq="M"))
     return FetchListing(
-        present=len(files),
+        present=downloaded,
         expected=expected,
-        detail=f"{len(files)} raw GRIB files present of {expected} expected (year-month, era5_land_hourly).",
+        detail=(
+            f"{downloaded} months downloaded (raw GRIB present or already preprocessed) "
+            f"of {expected} expected (year-month, era5_land_hourly)."
+        ),
     )
 
 

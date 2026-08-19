@@ -142,6 +142,29 @@ def test_sensor_data_list_fetched_no_database(tmp_path):
     assert listing.expected == 1
 
 
+def test_sensor_data_check_outputs_recognizes_columns_kept_as_named_index(tmp_path):
+    """The real assembled panel is written with station_code/datetime as a
+    named index (`.set_index([...]).to_parquet(..., index=True)`), not plain
+    columns. `check_required_columns` only sees `frame.columns`, so those
+    index levels must be restored or they're falsely reported as missing."""
+    output_dir = tmp_path / "data" / "sensor_data"
+    output_dir.mkdir(parents=True)
+    frame = pd.DataFrame(
+        {
+            "station_code": ["S1"],
+            "datetime": pd.to_datetime(["2020-01-01"]),
+            "discharge": [10.0],
+        }
+    ).set_index(["station_code", "datetime"])
+    frame.to_parquet(output_dir / "water_quality_streamflow.parquet", index=True)
+
+    adapter = SOURCE_ADAPTERS["sensor_data"]
+    artifacts = adapter.check_outputs(tmp_path)
+
+    required_columns_check = next(c for c in artifacts[0].checks if c.name == "required_columns")
+    assert required_columns_check.ok, required_columns_check.message
+
+
 def test_sensor_data_check_outputs_flags_discharge_out_of_range(tmp_path):
     output_dir = tmp_path / "data" / "sensor_data"
     output_dir.mkdir(parents=True)
@@ -172,6 +195,28 @@ def test_climate_list_fetched_absent_directory_does_not_raise(tmp_path):
 
     assert listing.present == 0
     assert listing.expected is not None and listing.expected > 0
+
+
+def test_climate_list_fetched_counts_manifests_after_raw_grib_deleted(tmp_path):
+    """Preprocessing deletes the raw .grib once it's folded into the zarr
+    store (see `_delete_raw_input_file`), but the `.manifest.json` sidecar
+    survives -- fetch completeness must be read from that, not raw-file
+    presence, or a fully-preprocessed month looks unfetched."""
+    import json
+
+    adapter = SOURCE_ADAPTERS["climate"]
+    raw_dir = tmp_path / "data" / "climate" / "raw" / "era5_land_hourly"
+    raw_dir.mkdir(parents=True)
+
+    manifest_path = raw_dir / "era5_land_hourly_1985_01.grib.manifest.json"
+    manifest_path.write_text(
+        json.dumps({"download_status": "downloaded", "preprocess_status": "processed"})
+    )
+    # The raw .grib itself is gone -- only the manifest sidecar remains.
+
+    listing = adapter.list_fetched(tmp_path)
+
+    assert listing.present == 1
 
 
 def test_climate_check_outputs_missing(tmp_path):
