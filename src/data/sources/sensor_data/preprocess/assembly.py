@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
-from ..constants import get_water_quality_dir
+from ..constants import get_processed_dir
 from ..schema import (
     ASSEMBLED_SENSOR_DATA_PARQUET,
     CLEAN_STREAMFLOW_PARQUET,
@@ -19,6 +19,7 @@ from ..schema import (
 
 from src.data.sources.river_network import RiverNetwork
 from src.data.sources import river_network as rn_module
+from src.data.sources.river_network.constants import PROCESSED_DIR as RIVER_NETWORK_PROCESSED_DIR
 from src.data.shared.sensor_upstream import prepare_entity_links, sparse_row
 
 
@@ -44,13 +45,13 @@ STREAMFLOW_DIAGNOSTIC_COLUMNS = (
 )
 
 
-def _resolve_path(root_dir, path, default_filename):
+def _resolve_path(root_dir, path, default_filename, stage="extract"):
     if path is not None:
         candidate = Path(path)
         if not candidate.is_absolute():
             candidate = Path(root_dir) / candidate
         return candidate
-    return get_water_quality_dir(root_dir) / default_filename
+    return get_processed_dir(root_dir, stage=stage) / default_filename
 
 
 def _resolve_project_path(root_dir, path, default_path):
@@ -445,7 +446,7 @@ def assemble_sensor_data(
     water_quality_path=None,
     streamflow_path=None,
     stations_rivers_path=None,
-    river_network_path="data/river_network",
+    river_network_path=RIVER_NETWORK_PROCESSED_DIR,
     output_path=None,
     match_radius_m=STREAMFLOW_MATCH_RADIUS_M,
     n_jobs=None,
@@ -458,19 +459,25 @@ def assemble_sensor_data(
         root_dir,
         water_quality_path,
         CLEAN_WATER_QUALITY_PARQUET,
+        stage="extract",
     )
-    streamflow_path = _resolve_path(root_dir, streamflow_path, CLEAN_STREAMFLOW_PARQUET)
+    streamflow_path = _resolve_path(
+        root_dir, streamflow_path, CLEAN_STREAMFLOW_PARQUET, stage="extract"
+    )
     stations_rivers_path = _resolve_path(
         root_dir,
         stations_rivers_path,
         STATIONS_RIVERS_PARQUET,
+        stage="extract",
     )
     river_network_path = _resolve_project_path(
         root_dir,
         river_network_path,
-        "data/river_network",
+        RIVER_NETWORK_PROCESSED_DIR,
     )
-    output_path = _resolve_path(root_dir, output_path, ASSEMBLED_SENSOR_DATA_PARQUET)
+    output_path = _resolve_path(
+        root_dir, output_path, ASSEMBLED_SENSOR_DATA_PARQUET, stage="aggregate"
+    )
 
     logger.info("Loading cleaned water-quality data from %s.", water_quality_path)
     water_quality = pd.read_parquet(water_quality_path)

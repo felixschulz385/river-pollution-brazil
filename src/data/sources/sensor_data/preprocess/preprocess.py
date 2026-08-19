@@ -2,7 +2,7 @@ import json
 import logging
 from pathlib import Path
 
-from ..constants import get_sensor_database_path, get_water_quality_dir
+from ..constants import get_processed_dir, get_sensor_database_path
 from .clean import clean_measurement_values, resolve_measurement_columns
 from .rename import rename_portuguese_fields
 from ..schema import (
@@ -16,7 +16,6 @@ from ..schema import (
     LOG_TRANSFORM_SKEW_THRESHOLD,
     LOG_TRANSFORM_TAIL_RATIO,
     MIN_TRANSFORM_N,
-    PREPROCESS_OUTPUT_DIRNAME,
     STATIONS_RIVERS_COLUMNS,
     STATIONS_RIVERS_PARQUET,
     STATIONS_RIVERS_TABLE,
@@ -349,7 +348,7 @@ def _read_first_available_table(root_dir=".", table_names=None):
 
 
 def _preprocess_output_dir(root_dir=".") -> Path:
-    output_dir = get_water_quality_dir(root_dir) / PREPROCESS_OUTPUT_DIRNAME
+    output_dir = get_processed_dir(root_dir, stage="extract")
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
 
@@ -371,7 +370,7 @@ def preprocess_stations_rivers(root_dir=".") -> str:
     stations = stations.loc[:, STATIONS_RIVERS_COLUMNS].copy()
     geometry = gpd.GeoSeries.from_wkt(stations["geometry_wkt"], crs=4326)
     stations_geo = gpd.GeoDataFrame(stations, geometry=geometry, crs=4326)
-    output_path = get_water_quality_dir(root_dir) / STATIONS_RIVERS_PARQUET
+    output_path = _preprocess_output_dir(root_dir) / STATIONS_RIVERS_PARQUET
     stations_geo.to_parquet(output_path, index=False)
     logger.info("Wrote cleaned stations-rivers GeoParquet to %s.", output_path)
     return str(output_path)
@@ -475,10 +474,9 @@ def preprocess_sensor_data(root_dir=".") -> dict[str, str]:
         measurement_columns,
     )
     clean_frame = _drop_auxiliary_columns(_merge_date_time_columns(clean_frame))
-    water_quality_dir = get_water_quality_dir(root_dir)
     output_dir = _preprocess_output_dir(root_dir)
-    clean_path = water_quality_dir / CLEAN_WATER_QUALITY_PARQUET
-    recommendations_path = water_quality_dir / TRANSFORMATION_RECOMMENDATIONS_JSON
+    clean_path = output_dir / CLEAN_WATER_QUALITY_PARQUET
+    recommendations_path = output_dir / TRANSFORMATION_RECOMMENDATIONS_JSON
     flags_path = output_dir / CLEANING_FLAGS_PARQUET
     summary_path = output_dir / CLEANING_SUMMARY_PARQUET
 
@@ -512,7 +510,7 @@ def preprocess_streamflow(root_dir=".") -> str:
         STREAMFLOW_SOURCE_TABLES,
     )
     clean_streamflow = build_clean_streamflow_daily(raw_frame)
-    output_path = get_water_quality_dir(root_dir) / CLEAN_STREAMFLOW_PARQUET
+    output_path = _preprocess_output_dir(root_dir) / CLEAN_STREAMFLOW_PARQUET
     clean_streamflow.to_parquet(output_path, index=False)
     logger.info(
         "Wrote cleaned streamflow parquet to %s with %s station-day row(s) from %s.",

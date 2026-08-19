@@ -2,6 +2,7 @@ import argparse
 import logging
 
 from .core import RiverNetwork
+from .constants import PROCESSED_DIR
 
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ def configure_parser(parser, include_action=True):
     if include_action:
         parser.add_argument("action", choices=["preprocess"])
     parser.add_argument("--gpkg-path", required=True)
-    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--output-dir", default=PROCESSED_DIR)
     parser.add_argument("--min-lon", type=float)
     parser.add_argument("--min-lat", type=float)
     parser.add_argument("--max-lon", type=float)

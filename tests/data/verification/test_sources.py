@@ -32,7 +32,7 @@ def test_river_network_check_outputs_missing_files(tmp_path):
 
 
 def test_river_network_check_outputs_flags_duplicate_trench_id(tmp_path):
-    river_dir = tmp_path / "data" / "river_network"
+    river_dir = tmp_path / "data" / "river_network" / "processed"
     river_dir.mkdir(parents=True)
     trenches = pd.DataFrame(
         {
@@ -55,7 +55,7 @@ def test_river_network_check_outputs_flags_duplicate_trench_id(tmp_path):
 
 
 def test_river_network_check_outputs_passes_valid_data(tmp_path):
-    river_dir = tmp_path / "data" / "river_network"
+    river_dir = tmp_path / "data" / "river_network" / "processed"
     river_dir.mkdir(parents=True)
     trenches = pd.DataFrame(
         {
@@ -115,7 +115,7 @@ def test_land_cover_check_outputs_missing(tmp_path):
 
 
 def test_land_cover_check_outputs_flags_out_of_range_share(tmp_path):
-    output_dir = tmp_path / "data" / "land_cover"
+    output_dir = tmp_path / "data" / "land_cover" / "processed" / "aggregate"
     output_dir.mkdir(parents=True)
     frame = pd.DataFrame(
         {"station_code": ["A"], "year": [2020], "lc_forest_shr": [1.5]}
@@ -147,7 +147,7 @@ def test_sensor_data_check_outputs_recognizes_columns_kept_as_named_index(tmp_pa
     named index (`.set_index([...]).to_parquet(..., index=True)`), not plain
     columns. `check_required_columns` only sees `frame.columns`, so those
     index levels must be restored or they're falsely reported as missing."""
-    output_dir = tmp_path / "data" / "sensor_data"
+    output_dir = tmp_path / "data" / "sensor_data" / "processed" / "aggregate"
     output_dir.mkdir(parents=True)
     frame = pd.DataFrame(
         {
@@ -166,7 +166,7 @@ def test_sensor_data_check_outputs_recognizes_columns_kept_as_named_index(tmp_pa
 
 
 def test_sensor_data_check_outputs_flags_discharge_out_of_range(tmp_path):
-    output_dir = tmp_path / "data" / "sensor_data"
+    output_dir = tmp_path / "data" / "sensor_data" / "processed" / "aggregate"
     output_dir.mkdir(parents=True)
     frame = pd.DataFrame(
         {
@@ -242,7 +242,7 @@ def test_biomes_list_fetched_absent(tmp_path):
 
 
 def test_biomes_check_outputs_missing_required_column(tmp_path):
-    output_dir = tmp_path / "data" / "biomes"
+    output_dir = tmp_path / "data" / "biomes" / "processed"
     output_dir.mkdir(parents=True)
     frame = pd.DataFrame({"mun_id": ["350001"]})  # missing "biome"
     frame.to_parquet(output_dir / "biome_adm2.parquet", index=False)
@@ -269,7 +269,7 @@ def test_population_list_fetched_absent(tmp_path):
 
 
 def test_population_check_outputs_valid(tmp_path):
-    output_dir = tmp_path / "data" / "population"
+    output_dir = tmp_path / "data" / "population" / "processed"
     output_dir.mkdir(parents=True)
     frame = pd.DataFrame(
         {
@@ -341,7 +341,7 @@ datasets:
     output_path: data/assembly/sensor_panel.parquet
     sources:
       - name: water_quality
-        path: data/sensor_data/water_quality_streamflow.parquet
+        path: data/sensor_data/processed/aggregate/water_quality_streamflow.parquet
         join_keys: [station_code, datetime]
         variables: [ph, turbidity]
 """

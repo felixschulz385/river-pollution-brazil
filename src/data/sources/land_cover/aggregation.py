@@ -108,7 +108,7 @@ def aggregate_along_rivers(
     drainage_polygons_path=None,
     years=None,
     n_jobs=None,
-    output_path="land_cover_river_aggregated.parquet",
+    output_path="data/land_cover/processed/aggregate/land_cover_river_aggregated.parquet",
 ):
     """Aggregate land cover variables upstream of each ADM2 unit."""
     if n_jobs is None:

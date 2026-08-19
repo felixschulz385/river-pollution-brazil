@@ -1,9 +1,13 @@
+from src.data.shared.paths import GADM_PATH as DEFAULT_GADM_PATH
+
+
+PROCESSED_DIR = "data/river_network/processed"
+
 TRENCHES_FILENAME = "river_trenches.parquet"
 DRAINAGE_AREAS_FILENAME = "drainage_areas.parquet"
 SYSTEM_MATRICES_FILENAME = "river_system_matrices.pkl"
 TRENCH_ADM2_TABLE_FILENAME = "trench_adm2_matches.parquet"
 ADM2_DOMINANT_SYSTEM_TABLE_FILENAME = "adm2_dominant_systems.parquet"
-DEFAULT_GADM_PATH = "data/gadm/gadm41_BRA.gpkg"
 DEFAULT_ADM2_LAYER = "ADM_ADM_2"
 BRAZIL_PROJECTED_CRS = 5641
 

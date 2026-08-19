@@ -47,7 +47,7 @@ class LandCover:
         self,
         n_jobs=None,
         river_network_path=None,
-        output_path="data/land_cover_results.feather",
+        output_path="data/land_cover/processed/extract/land_cover.feather",
         log_level=None,
     ):
         """Extract per-trench land-cover class shares from raw rasters."""
@@ -96,7 +96,7 @@ class LandCover:
         drainage_polygons_path=None,
         years=None,
         n_jobs=None,
-        output_path="land_cover_river_aggregated.parquet",
+        output_path="data/land_cover/processed/aggregate/land_cover_river_aggregated.parquet",
     ):
         """Aggregate land-cover variables upstream of each ADM2 unit."""
         from .constants import DEFAULT_ASSEMBLY_LAND_COVER_PATH, DEFAULT_RIVER_NETWORK_PATH

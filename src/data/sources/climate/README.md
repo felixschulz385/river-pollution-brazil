@@ -5,7 +5,7 @@ area of interest (`ERA5_AREA = [5.27, -73.99, -33.75, -34.78]`, i.e. N/W/S/E)
 into a single local Zarr store:
 
 ```
-data/climate/processed/era5_land/era5_land.zarr
+data/climate/raw/era5_land.zarr_nobackup
 ```
 
 All commands below go through the shared CLI:
@@ -70,7 +70,7 @@ Notes:
   need one, call `climate.preprocess.era5_land_arco.preprocess_era5_land_arco(root_dir=..., start=..., end=...)`
   directly from Python instead of the CLI.
 - **Safely resumable.** Progress is tracked per (ARCO group, year-month) in
-  `data/climate/processed/era5_land/era5_land_arco_progress.json`. Re-running
+  `data/climate/raw/era5_land_arco_progress.json`. Re-running
   the same command skips everything already marked `"processed"`, so it's
   fine to Ctrl-C and restart.
 - **ARCO is a beta service.** CDS explicitly reserves the right to throttle or
@@ -131,7 +131,7 @@ into gridded cover fractions.
 
 ## Known caveat: historical data needs reprocessing after the reshape-bug fix
 
-`era5_land.zarr` currently contains data written by an older version of the
+`era5_land.zarr_nobackup` currently contains data written by an older version of the
 GRIB reader that had a field-ordering bug (cross-contaminated variables -
 e.g. `2t_daily_min` pinned near 0 K, `tp`/`sro`/`ssro`/`pev` inflated to
 ~10^6 mm/day). That bug is fixed now; getting corrected historical values

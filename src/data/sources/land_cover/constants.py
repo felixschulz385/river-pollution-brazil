@@ -5,6 +5,8 @@ from pathlib import Path
 
 import numpy as np
 
+from src.data.sources.river_network.constants import PROCESSED_DIR as _RIVER_NETWORK_PROCESSED_DIR
+
 
 MAPBIOMAS_COLLECTION = "collection_10"
 MAPBIOMAS_FILENAME_TEMPLATE = "brazil_coverage_{year}.tif"
@@ -25,8 +27,8 @@ def build_paths(root_dir: str | Path = ".") -> LandCoverPaths:
     land_cover_root = root / "data" / "land_cover"
     return LandCoverPaths(
         datadir=land_cover_root / "raw" / "lc_mapbiomas10_30",
-        drainage_path=root / "data" / "river_network" / "drainage_areas.parquet",
-        legend_path=land_cover_root / "mapbiomas_legend.xlsx",
+        drainage_path=root / _RIVER_NETWORK_PROCESSED_DIR / "drainage_areas.parquet",
+        legend_path=land_cover_root / "auxiliary" / "mapbiomas_legend.xlsx",
     )
 
 TRENCH_ID_COLUMN = "trench_id"
@@ -46,12 +48,16 @@ ASSEMBLY_VARIANTS = (
     SENSOR_ASSEMBLY_VARIANT,
     ADM2_ASSEMBLY_VARIANT,
 )
-DEFAULT_ASSEMBLY_LAND_COVER_PATH = "data/land_cover/land_cover.feather"
+DEFAULT_ASSEMBLY_LAND_COVER_PATH = "data/land_cover/processed/extract/land_cover.feather"
 DEFAULT_WATER_QUALITY_PATH = "data/sensor_data/water_quality.parquet"
 DEFAULT_STATIONS_RIVERS_PATH = "data/sensor_data/stations_rivers.parquet"
-DEFAULT_RIVER_NETWORK_PATH = "data/river_network"
-DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH = "data/land_cover/land_cover_sensor_upstream.parquet"
-DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH = "data/land_cover/land_cover_adm2_upstream.parquet"
+DEFAULT_RIVER_NETWORK_PATH = _RIVER_NETWORK_PROCESSED_DIR
+DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH = (
+    "data/land_cover/processed/aggregate/land_cover_sensor_upstream.parquet"
+)
+DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH = (
+    "data/land_cover/processed/aggregate/land_cover_adm2_upstream.parquet"
+)
 
 STATION_CODE_COLUMN = "station_code"
 DATETIME_COLUMN = "datetime"

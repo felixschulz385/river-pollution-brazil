@@ -118,11 +118,12 @@ def _river_network_list_fetched(root_dir, force: bool = False) -> FetchListing:
 def _river_network_check_outputs(root_dir) -> list[OutputArtifactCheck]:
     from src.data.sources.river_network.constants import (
         DRAINAGE_AREAS_FILENAME,
+        PROCESSED_DIR,
         TRENCHES_FILENAME,
         TRENCH_ID_COLUMN,
     )
 
-    river_dir = Path(root_dir) / "data" / "river_network"
+    river_dir = Path(root_dir) / PROCESSED_DIR
     results = []
 
     trenches_path = river_dir / TRENCHES_FILENAME
@@ -158,10 +159,11 @@ def _river_network_fingerprint_paths(root_dir) -> list[Path]:
     from src.data.sources.river_network.constants import (
         DEFAULT_GADM_PATH,
         DRAINAGE_AREAS_FILENAME,
+        PROCESSED_DIR,
         TRENCHES_FILENAME,
     )
 
-    river_dir = Path(root_dir) / "data" / "river_network"
+    river_dir = Path(root_dir) / PROCESSED_DIR
     return [
         Path(root_dir) / DEFAULT_GADM_PATH,
         river_dir / TRENCHES_FILENAME,
@@ -253,9 +255,13 @@ def _sensor_data_list_fetched(root_dir, force: bool = False) -> FetchListing:
 
 
 def _sensor_data_check_outputs(root_dir) -> list[OutputArtifactCheck]:
-    from src.data.sources.sensor_data.schema import STREAMFLOW_MAX_VALID_DISCHARGE
+    from src.data.sources.sensor_data.constants import get_processed_dir
+    from src.data.sources.sensor_data.schema import (
+        ASSEMBLED_SENSOR_DATA_PARQUET,
+        STREAMFLOW_MAX_VALID_DISCHARGE,
+    )
 
-    path = Path(root_dir) / "data" / "sensor_data" / "water_quality_streamflow.parquet"
+    path = get_processed_dir(root_dir, stage="aggregate") / ASSEMBLED_SENSOR_DATA_PARQUET
     frame = _safe_read_parquet(path)
     if frame is None:
         return [_missing_artifact("water_quality_streamflow", path)]
@@ -272,11 +278,15 @@ def _sensor_data_check_outputs(root_dir) -> list[OutputArtifactCheck]:
 
 
 def _sensor_data_fingerprint_paths(root_dir) -> list[Path]:
-    from src.data.sources.sensor_data.constants import get_download_log_database_path
+    from src.data.sources.sensor_data.constants import (
+        get_download_log_database_path,
+        get_processed_dir,
+    )
+    from src.data.sources.sensor_data.schema import ASSEMBLED_SENSOR_DATA_PARQUET
 
     return [
         get_download_log_database_path(root_dir),
-        Path(root_dir) / "data" / "sensor_data" / "water_quality_streamflow.parquet",
+        get_processed_dir(root_dir, stage="aggregate") / ASSEMBLED_SENSOR_DATA_PARQUET,
     ]
 
 
@@ -422,7 +432,9 @@ def _biomes_fingerprint_paths(root_dir) -> list[Path]:
 # --------------------------------------------------------------------------
 
 def _population_list_fetched(root_dir, force: bool = False) -> FetchListing:
-    path = Path(root_dir) / "data" / "population" / "raw" / "population_raw.parquet"
+    from src.data.sources.population.constants import raw_dir as _population_raw_dir
+
+    path = _population_raw_dir(root_dir) / "population_raw.parquet"
     present = 1 if path.exists() else 0
     return FetchListing(
         present=present, expected=1, detail=f"population_raw.parquet {'present' if present else 'missing'} at {path}."
@@ -430,7 +442,10 @@ def _population_list_fetched(root_dir, force: bool = False) -> FetchListing:
 
 
 def _population_check_outputs(root_dir) -> list[OutputArtifactCheck]:
-    path = Path(root_dir) / "data" / "population" / "population.parquet"
+    from src.data.sources.population.constants import DEFAULT_POPULATION_OUTPUT_FILENAME
+    from src.data.sources.population.constants import processed_dir as _population_processed_dir
+
+    path = _population_processed_dir(root_dir) / DEFAULT_POPULATION_OUTPUT_FILENAME
     frame = _safe_read_parquet(path)
     if frame is None:
         return [_missing_artifact("population", path)]
@@ -453,9 +468,13 @@ def _population_check_outputs(root_dir) -> list[OutputArtifactCheck]:
 
 
 def _population_fingerprint_paths(root_dir) -> list[Path]:
+    from src.data.sources.population.constants import DEFAULT_POPULATION_OUTPUT_FILENAME
+    from src.data.sources.population.constants import processed_dir as _population_processed_dir
+    from src.data.sources.population.constants import raw_dir as _population_raw_dir
+
     return [
-        Path(root_dir) / "data" / "population" / "raw" / "population_raw.parquet",
-        Path(root_dir) / "data" / "population" / "population.parquet",
+        _population_raw_dir(root_dir) / "population_raw.parquet",
+        _population_processed_dir(root_dir) / DEFAULT_POPULATION_OUTPUT_FILENAME,
     ]
 
 
@@ -503,7 +522,7 @@ def _health_list_fetched(root_dir, force: bool = False) -> FetchListing:
 
 
 def _health_check_outputs(root_dir) -> list[OutputArtifactCheck]:
-    health_dir = Path(root_dir) / "data" / "health"
+    health_dir = Path(root_dir) / "data" / "health" / "processed"
     results = []
     for filename in _HEALTH_OUTPUT_FILES:
         path = health_dir / filename
@@ -517,7 +536,7 @@ def _health_check_outputs(root_dir) -> list[OutputArtifactCheck]:
 
 
 def _health_fingerprint_paths(root_dir) -> list[Path]:
-    health_dir = Path(root_dir) / "data" / "health"
+    health_dir = Path(root_dir) / "data" / "health" / "processed"
     return [health_dir / filename for filename in _HEALTH_OUTPUT_FILES]
 
 

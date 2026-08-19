@@ -3,6 +3,7 @@ import logging
 
 from .core import LandCover
 from .preprocess import configure_logging
+from src.data.sources.river_network.constants import PROCESSED_DIR as RIVER_NETWORK_PROCESSED_DIR
 
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,9 @@ def configure_parser(parser, include_action=True):
     parser.add_argument("--drainage-path", default=None)
     parser.add_argument("--legend-path", default=None)
     parser.add_argument("--variant", default="sensor")
-    parser.add_argument("--land-cover-path", default="data/land_cover/land_cover.feather")
+    parser.add_argument(
+        "--land-cover-path", default="data/land_cover/processed/extract/land_cover.feather"
+    )
     parser.add_argument(
         "--water-quality-path",
         default="data/sensor_data/water_quality.parquet",
@@ -46,7 +49,7 @@ def run(args):
         agent.preprocess(
             n_jobs=args.n_jobs,
             river_network_path=args.river_network_path,
-            output_path=args.output or "land_cover_results.feather",
+            output_path=args.output or "data/land_cover/processed/extract/land_cover.feather",
             log_level=getattr(args, "log_level", None),
         )
     else:
@@ -55,7 +58,7 @@ def run(args):
             land_cover_path=args.land_cover_path,
             water_quality_path=args.water_quality_path,
             stations_rivers_path=args.stations_rivers_path,
-            river_network_path=args.river_network_path or "data/river_network",
+            river_network_path=args.river_network_path or RIVER_NETWORK_PROCESSED_DIR,
             output_path=args.output,
             n_jobs=args.n_jobs,
         )

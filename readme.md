@@ -82,11 +82,11 @@ Supported health subtypes are `mortality`, `hospitalization`, and `birth`.
 
 The repository currently contains derived health outputs such as:
 
-- `data/health/birth_weight.parquet`
-- `data/health/gestational_duration.parquet`
-- `data/health/hospitalizations.parquet`
-- `data/health/hospitalizations_icd10_chapter.parquet`
-- `data/health/hospitalizations_selected_morbidity_list.parquet`
+- `data/health/processed/birth_weight.parquet`
+- `data/health/processed/gestational_duration.parquet`
+- `data/health/processed/hospitalizations.parquet`
+- `data/health/processed/hospitalizations_icd10_chapter.parquet`
+- `data/health/processed/hospitalizations_selected_morbidity_list.parquet`
 
 ### Water Quality
 
@@ -109,11 +109,11 @@ The water-quality fetch pipeline supports additional options for browser executi
 
 The main assembled output currently tracked in the repository is:
 
-- `data/sensor_data/water_quality_streamflow.parquet`
+- `data/sensor_data/processed/aggregate/water_quality_streamflow.parquet`
 
 Transformation metadata used by the analysis pipeline is stored in:
 
-- `data/sensor_data/water_quality_transformations.json`
+- `data/sensor_data/processed/extract/water_quality_transformations.json`
 
 ### Land Cover
 
@@ -121,8 +121,8 @@ Land-cover processing is also organized into fetch and preprocess (extract, then
 
 ```bash
 python3 -m src.cli data fetch      --source land_cover
-python3 -m src.cli data preprocess --source land_cover --phase extract --river-network-path data/river_network
-python3 -m src.cli data preprocess --source land_cover --phase aggregate --variant sensor --river-network-path data/river_network
+python3 -m src.cli data preprocess --source land_cover --phase extract --river-network-path data/river_network/processed
+python3 -m src.cli data preprocess --source land_cover --phase aggregate --variant sensor --river-network-path data/river_network/processed
 ```
 
 In the current code, `fetch` is only a placeholder and expects raw MapBiomas files to be obtained manually and placed in the configured data directory.
@@ -134,7 +134,7 @@ The assembly step supports at least two output variants:
 
 Current derived land-cover outputs include:
 
-- `data/land_cover/land_cover_sensor_upstream.parquet`
+- `data/land_cover/processed/aggregate/land_cover_sensor_upstream.parquet`
 
 ### Population
 
@@ -149,7 +149,7 @@ The population fetch step pulls raw data from BigQuery and therefore requires ap
 
 The cleaned output is:
 
-- `data/population/population.parquet`
+- `data/population/processed/population.parquet`
 
 ### River Network
 
@@ -159,7 +159,7 @@ are placed manually) and is exposed through a single preprocess step:
 ```bash
 python3 -m src.cli data preprocess --source river_network \
   --gpkg-path path/to/source.gpkg \
-  --output-dir data/river_network
+  --output-dir data/river_network/processed
 ```
 
 Optional arguments allow spatial subsetting and administrative annotation, including:
@@ -169,9 +169,8 @@ Optional arguments allow spatial subsetting and administrative annotation, inclu
 - `--gadm-layer`
 - `--gadm-adm2-layer`
 
-Current river-network outputs in `data/river_network/` include:
+Current river-network outputs in `data/river_network/processed/` include:
 
-- `trenches.parquet`
 - `river_trenches.parquet`
 - `drainage_areas.parquet`
 
@@ -216,10 +215,10 @@ python3 -m src.cli analysis sensor-data run \
 
 By default, analysis settings point to:
 
-- `data/sensor_data/water_quality_streamflow.parquet`
-- `data/land_cover/land_cover_sensor_upstream.parquet`
-- `data/sensor_data/water_quality_transformations.json`
-- `data/river_network/trenches.parquet`
+- `data/sensor_data/processed/aggregate/water_quality_streamflow.parquet`
+- `data/land_cover/processed/aggregate/land_cover_sensor_upstream.parquet`
+- `data/sensor_data/processed/extract/water_quality_transformations.json`
+- `data/river_network/processed/river_trenches.parquet`
 - `output/analysis/sensor_data/`
 
 Each run writes a dedicated model subdirectory with:

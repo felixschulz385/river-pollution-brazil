@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from ..constants import population_dir as _population_dir
+from ..constants import processed_dir as _processed_dir
 from ..constants import raw_dir as _raw_dir
 
 
@@ -91,7 +91,7 @@ def preprocess_population_data(
     if not source.exists():
         raise FileNotFoundError(f"Raw population file not found: {source}")
 
-    destination = Path(output_path) if output_path else _population_dir(root_dir) / "population.parquet"
+    destination = Path(output_path) if output_path else _processed_dir(root_dir) / "population.parquet"
     destination.parent.mkdir(parents=True, exist_ok=True)
 
     frame = pd.read_parquet(source)

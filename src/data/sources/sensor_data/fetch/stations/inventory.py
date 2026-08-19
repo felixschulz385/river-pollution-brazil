@@ -14,6 +14,8 @@ from ...constants import (
     ensure_water_quality_dirs,
     get_root_path,
 )
+from src.data.shared.paths import GADM_PATH
+from src.data.sources.river_network.constants import PROCESSED_DIR as _RIVER_NETWORK_PROCESSED_DIR
 
 
 STATION_INVENTORY_URL = (
@@ -21,9 +23,9 @@ STATION_INVENTORY_URL = (
     "codEstDE=&codEstATE=&tpEst=&nmEst=&nmRio=&codSubBacia=&codBacia=&"
     "nmMunicipio=&nmEstado=&sgResp=&sgOper=&telemetrica="
 )
-DEFAULT_BRAZIL_BOUNDARY_PATH = "data/misc/gadm41_BRA.gpkg"
+DEFAULT_BRAZIL_BOUNDARY_PATH = GADM_PATH
 DEFAULT_BRAZIL_BOUNDARY_LAYER = "ADM_ADM_0"
-DEFAULT_RIVER_NETWORK_DIR = "data/river_network"
+DEFAULT_RIVER_NETWORK_DIR = _RIVER_NETWORK_PROCESSED_DIR
 BRAZIL_PROJECTED_CRS = 5641
 
 

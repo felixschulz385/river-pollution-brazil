@@ -25,7 +25,7 @@ datasets:
     output_path: data/assembly/sensor_panel.parquet
     sources:
       - name: water_quality_streamflow
-        path: data/sensor_data/water_quality_streamflow.parquet
+        path: data/sensor_data/processed/aggregate/water_quality_streamflow.parquet
         join_keys: [station_code, datetime]
         variables:
           - rained
@@ -186,7 +186,7 @@ datasets:
           - streamflow_total_weight
           - streamflow_nearest_distance_m
       - name: river_system
-        path: data/river_network/river_trenches.parquet
+        path: data/river_network/processed/river_trenches.parquet
         join_keys: [trench_id]
         variables:
           - system_id
@@ -197,7 +197,7 @@ datasets:
         # basin-level clustering in regressions).
         categorical_variables: [system_id]
       - name: land_cover_sensor_upstream
-        path: data/land_cover/land_cover_sensor_upstream.parquet
+        path: data/land_cover/processed/aggregate/land_cover_sensor_upstream.parquet
         type: land_cover_bucketed
         join_keys: [station_code, year]
         variables:
@@ -218,7 +218,7 @@ datasets:
           - alr_mining
           - alr_other
       - name: climate_sensor_upstream
-        path: data/climate/processed/era5_land/climate_sensor_upstream.parquet
+        path: data/climate/processed/aggregate/climate_sensor_upstream.parquet
         type: long_pivot
         join_keys: [station_code, date]
         # Nearest 25km upstream ring (bucket lower bound 0) -- the local
@@ -292,7 +292,7 @@ datasets:
           - 2t_daily_max_mean_180d
           - 2t_daily_max_mean_365d
       - name: biome_sensor
-        path: data/biomes/biome_sensor.parquet
+        path: data/biomes/processed/biome_sensor.parquet
         join_keys: [station_code]
         variables:
           - biome
@@ -312,7 +312,7 @@ datasets:
       # both weight distance identically, matching
       # shared.DEFAULT_ADM2_DISTANCE_KERNEL/DEFAULT_ADM2_KERNEL_BANDWIDTH_KM.
       - name: land_cover_adm2_upstream
-        path: data/land_cover/land_cover_adm2_upstream.parquet
+        path: data/land_cover/processed/aggregate/land_cover_adm2_upstream.parquet
         type: land_cover_bucketed
         join_keys: [mun_id, year]
         kernel: gaussian
@@ -335,7 +335,7 @@ datasets:
           - alr_mining
           - alr_other
       - name: climate_adm2_upstream_yearly
-        path: data/climate/processed/era5_land/climate_adm2_upstream_yearly.parquet
+        path: data/climate/processed/aggregate/climate_adm2_upstream_yearly.parquet
         type: climate_bucketed
         join_keys: [adm2_id, year]
         id_map: {adm2_id: mun_id}
@@ -357,7 +357,7 @@ datasets:
           - 2t_daily_min
           - 2t_daily_max
       - name: population
-        path: data/population/population.parquet
+        path: data/population/processed/population.parquet
         join_keys: [mun_id, year]
         variables:
           - sex
@@ -367,7 +367,7 @@ datasets:
         # them from the numeric-dtype enforcement applied to other variables.
         categorical_variables: [sex, age_group]
       - name: biome_adm2
-        path: data/biomes/biome_adm2.parquet
+        path: data/biomes/processed/biome_adm2.parquet
         join_keys: [mun_id]
         variables:
           - biome

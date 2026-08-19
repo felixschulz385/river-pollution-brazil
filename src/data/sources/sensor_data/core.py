@@ -1,3 +1,6 @@
+from src.data.sources.river_network.constants import PROCESSED_DIR as RIVER_NETWORK_PROCESSED_DIR
+
+
 class SensorData:
     """Run sensor-data fetching, conversion, and cleaning workflows."""
 
@@ -84,7 +87,9 @@ class SensorData:
             water_quality_path=water_quality_path,
             streamflow_path=streamflow_path,
             stations_rivers_path=stations_rivers_path,
-            river_network_path=river_network_path or self.river_network_dir or "data/river_network",
+            river_network_path=river_network_path
+            or self.river_network_dir
+            or RIVER_NETWORK_PROCESSED_DIR,
             output_path=output_path,
             n_jobs=n_jobs,
         )

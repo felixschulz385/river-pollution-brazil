@@ -78,7 +78,7 @@ def _climate_raw_dir(root_dir="."):
 
 def _load_boundaries(root_dir="."):
     gpkg_path = _root(root_dir) / "data" / "gadm" / "gadm41_BRA.gpkg"
-    json_path = _root(root_dir) / "data" / "misc" / "raw" / "gadm" / "gadm41_BRA_2.json"
+    json_path = _root(root_dir) / "data" / "gadm" / "gadm41_BRA_2.json"
 
     if gpkg_path.exists():
         boundaries = gpd.read_file(
@@ -235,7 +235,9 @@ def _build_deter_cloud_cover(root_dir="."):
             cloud_cover_grid.set_coords("CC_2r").groupby("CC_2r").mean().cloud_cover.to_pandas()
         )
 
-    with (_root(root_dir) / "data" / "climate" / "DETER_cc2r.pkl").open("wb") as handle:
+    deter_pkl_path = _root(root_dir) / "data" / "climate" / "processed" / "extract" / "DETER_cc2r.pkl"
+    deter_pkl_path.parent.mkdir(parents=True, exist_ok=True)
+    with deter_pkl_path.open("wb") as handle:
         pickle.dump(out_dict, handle)
 
     out_df = mapping_to_long_frame(
@@ -304,7 +306,8 @@ def preprocess_cloud_cover(root_dir="."):
         how="outer",
     )
 
-    output_path = _root(root_dir) / "data" / "climate" / "climate_data.parquet"
+    output_path = _root(root_dir) / "data" / "climate" / "processed" / "extract" / "climate_data.parquet"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     weather_data_df[
         [
             "CC_2r",

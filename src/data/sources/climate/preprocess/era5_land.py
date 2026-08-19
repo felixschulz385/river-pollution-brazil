@@ -194,7 +194,7 @@ def _era5_raw_dir(root_dir=".", subtype="era5_land_hourly") -> Path:
 
 
 def _era5_processed_dir(root_dir=".") -> Path:
-    return _root(root_dir) / "data" / "climate" / "processed" / "era5_land"
+    return _root(root_dir) / "data" / "climate" / "processed" / "extract"
 
 
 def _era5_cache_dir(root_dir=".") -> Path:

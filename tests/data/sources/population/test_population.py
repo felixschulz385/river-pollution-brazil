@@ -84,7 +84,7 @@ def test_preprocess_population_data_writes_expected_output(tmp_path) -> None:
     output_path = preprocess_population_data(root_dir=root_dir)
     result = pd.read_parquet(output_path)
 
-    assert output_path == root_dir / "data" / "population" / "population.parquet"
+    assert output_path == root_dir / "data" / "population" / "processed" / "population.parquet"
     assert result.to_dict("records") == [
         {
             "mun_id": "110001",

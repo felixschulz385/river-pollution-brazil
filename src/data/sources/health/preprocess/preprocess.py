@@ -99,6 +99,12 @@ def _raw_dir(root_dir):
     return os.path.join(_health_dir(root_dir), "raw")
 
 
+def _processed_dir(root_dir):
+    path = os.path.join(_health_dir(root_dir), "processed")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 def _load_completed_batch_frame(root_dir, table_name, legacy_raw_filename=None):
     completed_entries = [
         entry
@@ -315,15 +321,15 @@ def _clean_mortality_age_frame(frame):
 def preprocess_mortality_age_tables(root_dir="."):
     """Clean raw mortality tables and write final CSV outputs."""
     raw_dir = _raw_dir(root_dir)
-    health_dir = _health_dir(root_dir)
+    processed_dir = _processed_dir(root_dir)
     sources = {
         "pre_1996": (
             os.path.join(raw_dir, "mortality_age_counts_pre_1996_raw.parquet"),
-            os.path.join(health_dir, "scraping_pre_1996.csv"),
+            os.path.join(processed_dir, "scraping_pre_1996.csv"),
         ),
         "post_1995": (
             os.path.join(raw_dir, "mortality_age_counts_post_1995_raw.parquet"),
-            os.path.join(health_dir, "scraping_post_1996.csv"),
+            os.path.join(processed_dir, "scraping_post_1996.csv"),
         ),
     }
 
@@ -763,7 +769,7 @@ def _preprocess_sih_morbidity_request(raw_path, output_path):
 
 def preprocess_hospitalization_tables(root_dir="."):
     """Clean SIH residence hospitalization requests and write final parquet outputs."""
-    health_dir = _health_dir(root_dir)
+    processed_dir = _processed_dir(root_dir)
     outputs = {}
     try:
         total_frame = _load_completed_batch_frame(
@@ -775,7 +781,7 @@ def preprocess_hospitalization_tables(root_dir="."):
         total_frame = _empty_total_hospitalization_frame()
     outputs["SIH_RESIDENCE_TOTAL_MUNICIPALITY_YEAR"] = _preprocess_sih_total_request(
         total_frame,
-        os.path.join(health_dir, "hospitalizations.parquet"),
+        os.path.join(processed_dir, "hospitalizations.parquet"),
     )
 
     try:
@@ -788,7 +794,7 @@ def preprocess_hospitalization_tables(root_dir="."):
         icd10_frame = _empty_icd10_hospitalization_frame()
     outputs["SIH_RESIDENCE_ICD10_CHAPTER_MUNICIPALITY_YEAR"] = _preprocess_sih_icd10_chapter_request(
         icd10_frame,
-        os.path.join(health_dir, "hospitalizations_icd10_chapter.parquet"),
+        os.path.join(processed_dir, "hospitalizations_icd10_chapter.parquet"),
     )
 
     try:
@@ -801,7 +807,7 @@ def preprocess_hospitalization_tables(root_dir="."):
         morbidity_frame = _empty_morbidity_hospitalization_frame()
     outputs["SIH_RESIDENCE_SELECTED_MORBIDITY_LIST_MUNICIPALITY_YEAR"] = _preprocess_sih_morbidity_request(
         morbidity_frame,
-        os.path.join(health_dir, "hospitalizations_selected_morbidity_list.parquet"),
+        os.path.join(processed_dir, "hospitalizations_selected_morbidity_list.parquet"),
     )
     return outputs
 
@@ -820,14 +826,14 @@ def _clean_birth_outcome_frame(frame):
 def preprocess_birth_outcome_tables(root_dir=".", outcome_names=None):
     """Clean raw birth tables and write final parquet outputs."""
     raw_dir = _raw_dir(root_dir)
-    health_dir = _health_dir(root_dir)
+    processed_dir = _processed_dir(root_dir)
     outputs = {}
     selected_outcomes = outcome_names or ["gestational_duration", "birth_weight"]
 
     for outcome_name in selected_outcomes:
         raw_path = os.path.join(raw_dir, f"{outcome_name}_raw.parquet")
         cleaned = _clean_birth_outcome_frame(pd.read_parquet(raw_path))
-        output_path = os.path.join(health_dir, f"{outcome_name}.parquet")
+        output_path = os.path.join(processed_dir, f"{outcome_name}.parquet")
         cleaned.to_parquet(output_path, index=False)
         outputs[outcome_name] = output_path
 

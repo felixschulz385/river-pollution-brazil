@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from src.data.shared.paths import GADM_PATH as DEFAULT_GADM_PATH
+
 
 BIOMES_ARCHIVE_URL = (
     "https://geoftp.ibge.gov.br/informacoes_ambientais/estudos_ambientais/biomas/"
@@ -31,13 +33,12 @@ BIOME_COLUMN = "biome"
 MUN_ID_COLUMN = "mun_id"
 STATION_CODE_COLUMN = "station_code"
 
-DEFAULT_GADM_PATH = "data/gadm/gadm41_BRA.gpkg"
 DEFAULT_ADM2_LAYER = "ADM_ADM_2"
 DEFAULT_ADM2_ID_COLUMN = "CC_2"
 BRAZIL_PROJECTED_CRS = 5641
 
-DEFAULT_ADM2_OUTPUT_PATH = "data/biomes/biome_adm2.parquet"
-DEFAULT_SENSOR_OUTPUT_PATH = "data/biomes/biome_sensor.parquet"
+DEFAULT_ADM2_OUTPUT_PATH = "data/biomes/processed/biome_adm2.parquet"
+DEFAULT_SENSOR_OUTPUT_PATH = "data/biomes/processed/biome_sensor.parquet"
 
 
 def biomes_dir(root_dir: str | Path = ".") -> Path:
