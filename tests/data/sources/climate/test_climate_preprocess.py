@@ -331,7 +331,7 @@ def test_preprocess_era5_land_processes_files_and_leaves_store_reusable(
             status="downloaded",
         )
 
-    first_store = preprocess_era5_land(root_dir=tmp_path, subtype="era5_land_hourly")
+    first_store = preprocess_era5_land(root_dir=tmp_path, subtype="era5_land_hourly", stage="zarr")
 
     opened = xr.open_zarr(first_store, consolidated=False)
     try:
@@ -374,17 +374,21 @@ def test_preprocess_era5_land_deletes_raw_file_and_updates_manifest(
         lambda path: _hourly_dataset(),
     )
 
-    store_path = preprocess_era5_land(root_dir=tmp_path, subtype="era5_land_hourly")
+    store_path = preprocess_era5_land(root_dir=tmp_path, subtype="era5_land_hourly", stage="zarr")
     manifest = load_download_manifest(target)
 
     assert store_path.exists()
     assert not target.exists()
     assert manifest is not None
-    assert manifest["status"] == "downloaded"
+    # `_write_preprocess_manifest` advances the top-level "status" through the
+    # preprocess lifecycle too (-> "processed"); `download_status` is what
+    # retains the original download outcome.
+    assert manifest["status"] == "processed"
+    assert manifest["download_status"] == "downloaded"
     assert manifest["preprocess_status"] == "processed"
     assert manifest["raw_deleted"] is True
     assert manifest["request_id"] == "req-1"
-    assert manifest["processed_store_path"].endswith("era5_land.zarr")
+    assert manifest["processed_store_path"].endswith("era5_land.zarr_nobackup")
 
 
 def test_preprocess_worker_waits_for_new_downloaded_files(
@@ -428,7 +432,9 @@ def test_preprocess_worker_waits_for_new_downloaded_files(
         lambda root_dir=".", subtype="era5_land_hourly": waits["count"] == 0,
     )
 
-    store_path = preprocess_era5_land_worker(root_dir=tmp_path, subtype="era5_land_hourly", poll_seconds=0)
+    store_path = preprocess_era5_land_worker(
+        root_dir=tmp_path, subtype="era5_land_hourly", poll_seconds=0, stage="zarr"
+    )
     manifest = load_download_manifest(raw_dir / "era5_land_hourly_1985_01.grib")
 
     assert waits["count"] >= 1

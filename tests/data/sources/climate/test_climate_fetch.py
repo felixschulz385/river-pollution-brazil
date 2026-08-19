@@ -514,16 +514,15 @@ def test_fetch_era5_land_daily_skips_additional_remote_checks_after_running_limi
         lambda root_dir=".": DummyClient(),
     )
     monkeypatch.setattr("src.data.sources.climate.fetch.common.MAX_ACTIVE_REMOTE_REQUESTS", 3)
-    monkeypatch.setitem(
-        __import__("src.data.sources.climate.fetch.common", fromlist=["DATASET_RUNNING_REMOTE_REQUEST_LIMITS"]).DATASET_RUNNING_REMOTE_REQUEST_LIMITS,
-        DAILY_DATASET,
-        2,
-    )
     monkeypatch.setattr("src.data.sources.climate.fetch.common.ENABLE_PERIODIC_RECHECKS", False)
 
+    # fetch_era5_land_daily hardcodes max_running_remote_requests=1 (see
+    # era5_land_daily.py), which overrides DATASET_RUNNING_REMOTE_REQUEST_LIMITS
+    # entirely -- so the effective running-slot budget here is 1, not the
+    # dataset's dict entry.
     fetch_era5_land_daily(root_dir=tmp_path)
 
-    assert checked_request_ids == ["req-01", "req-02"]
+    assert checked_request_ids == ["req-01"]
 
 
 def test_fetch_era5_land_hourly_stops_remote_checks_after_running_limit(
@@ -676,6 +675,12 @@ def test_fetch_era5_land_hourly_skips_fresh_remote_checks(
         lambda root_dir=".": DummyClient(),
     )
     monkeypatch.setattr("src.data.sources.climate.fetch.common.ENABLE_PERIODIC_RECHECKS", False)
+    # Only one manifest (active/submitted) exists among the full year-month
+    # range this fetch covers; without capping the active-request budget at
+    # that single manifest, the submit loop would try to submit every other
+    # (manifest-less) batch in range, which DummyClient.submit rejects --
+    # unrelated to what this test actually exercises (skipping a fresh check).
+    monkeypatch.setattr("src.data.sources.climate.fetch.common.MAX_ACTIVE_REMOTE_REQUESTS", 1)
     monkeypatch.setattr(
         "src.data.sources.climate.fetch.common.datetime",
         type(
