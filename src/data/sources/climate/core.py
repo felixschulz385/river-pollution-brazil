@@ -4,12 +4,13 @@ class Climate:
     def __init__(self, root_dir="."):
         self.root_dir = root_dir
 
-    def fetch(self, subtype="cloud_cover"):
-        """Fetch the requested climate subtype."""
-        if subtype == "cloud_cover":
-            from .fetch.cloud_cover import fetch_cloud_cover
+    def fetch(self, subtype="era5_land_hourly"):
+        """Fetch the requested ERA5-Land variant.
 
-            return fetch_cloud_cover(root_dir=self.root_dir)
+        All variants write into the same shared zarr store
+        (DEFAULT_ERA5_LAND_STORE_PATH); this only selects *how* the raw data
+        is obtained (CDS GRIB vs. the ARCO cloud store).
+        """
         if subtype == "era5_land_hourly":
             from .fetch.era5_land_hourly import fetch_era5_land_hourly
 
@@ -24,22 +25,16 @@ class Climate:
             return fetch_era5_land_arco(root_dir=self.root_dir)
         raise ValueError(f"Unsupported climate fetch subtype: {subtype}")
 
-    def preprocess(self, subtype="cloud_cover", stage="all", n_jobs=None):
-        """Preprocess the requested climate subtype."""
-        if subtype == "cloud_cover":
-            from .preprocess.cloud_cover import preprocess_cloud_cover
+    def preprocess(self, stage="all", n_jobs=None):
+        """Preprocess GRIB-origin ERA5-Land input into the shared zarr store.
 
-            return preprocess_cloud_cover(root_dir=self.root_dir)
-        if subtype in {"era5_land_hourly", "era5_land_daily"}:
-            from .preprocess.era5_land import preprocess_era5_land_worker
+        Not split by variant: era5_land_hourly and era5_land_daily both feed
+        the same store, so both are always drained together. era5_land_arco
+        writes directly during fetch and has no separate preprocess step.
+        """
+        from .preprocess.era5_land import preprocess_era5_land_worker
 
-            return preprocess_era5_land_worker(
-                root_dir=self.root_dir,
-                subtype=subtype,
-                stage=stage,
-                n_jobs=n_jobs,
-            )
-        raise ValueError(f"Unsupported climate preprocess subtype: {subtype}")
+        return preprocess_era5_land_worker(root_dir=self.root_dir, stage=stage, n_jobs=n_jobs)
 
     def assemble(
         self,

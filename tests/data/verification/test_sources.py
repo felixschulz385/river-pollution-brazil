@@ -197,26 +197,25 @@ def test_climate_list_fetched_absent_directory_does_not_raise(tmp_path):
     assert listing.expected is not None and listing.expected > 0
 
 
-def test_climate_list_fetched_counts_manifests_after_raw_grib_deleted(tmp_path):
-    """Preprocessing deletes the raw .grib once it's folded into the zarr
-    store (see `_delete_raw_input_file`), but the `.manifest.json` sidecar
-    survives -- fetch completeness must be read from that, not raw-file
-    presence, or a fully-preprocessed month looks unfetched."""
-    import json
+def test_climate_list_fetched_counts_zarr_store_variables_not_raw_files(tmp_path):
+    """era5_land_hourly, era5_land_daily, and era5_land_arco all write into
+    the same shared zarr store, and preprocessing deletes each raw .grib
+    once it's folded in -- fetch completeness must be read from which
+    variable arrays exist in that store, not from raw-file/manifest
+    presence per fetch variant."""
+    from src.data.sources.climate.constants import DEFAULT_ERA5_LAND_STORE_PATH
 
     adapter = SOURCE_ADAPTERS["climate"]
-    raw_dir = tmp_path / "data" / "climate" / "raw" / "era5_land_hourly"
-    raw_dir.mkdir(parents=True)
-
-    manifest_path = raw_dir / "era5_land_hourly_1985_01.grib.manifest.json"
-    manifest_path.write_text(
-        json.dumps({"download_status": "downloaded", "preprocess_status": "processed"})
-    )
-    # The raw .grib itself is gone -- only the manifest sidecar remains.
+    store_path = tmp_path / DEFAULT_ERA5_LAND_STORE_PATH
+    for variable in ("tp", "sro", "2t"):
+        (store_path / variable).mkdir(parents=True)
+    # A coordinate array, not a data variable -- must not be counted.
+    (store_path / "latitude").mkdir(parents=True)
 
     listing = adapter.list_fetched(tmp_path)
 
-    assert listing.present == 1
+    assert listing.present == 3
+    assert listing.expected is not None and listing.expected > 3
 
 
 def test_climate_check_outputs_missing(tmp_path):

@@ -295,38 +295,38 @@ def _sensor_data_fingerprint_paths(root_dir) -> list[Path]:
 # --------------------------------------------------------------------------
 
 def _climate_list_fetched(root_dir, force: bool = False) -> FetchListing:
-    import json
+    # era5_land_hourly, era5_land_daily, and era5_land_arco all write into
+    # the *same* shared zarr store (DEFAULT_ERA5_LAND_STORE_PATH) rather than
+    # producing separately-countable per-variant artifacts, and successfully
+    # preprocessed raw GRIB files are deleted once consumed -- so completeness
+    # is judged from the store itself (which expected variable arrays it
+    # contains), not by counting raw GRIB/manifest files per variant.
+    from src.data.sources.climate.constants import DEFAULT_ERA5_LAND_STORE_PATH
+    from src.data.sources.climate.preprocess.era5_land import ERA5L_VAR_CONFIG
 
-    from src.data.sources.climate.preprocess.era5_land import (
-        ERA5_OUTPUT_END,
-        ERA5_OUTPUT_START,
-        _candidate_manifest_paths,
-    )
+    store_path = Path(root_dir) / DEFAULT_ERA5_LAND_STORE_PATH
 
-    # Successfully preprocessed raw GRIB files are deleted (see
-    # `_delete_raw_input_file` in era5_land.py) -- counting *.grib files
-    # would report 0 present once preprocessing has consumed them, even
-    # though the month was genuinely fetched. Their `.manifest.json`
-    # sidecars survive that deletion and keep `download_status`, so use
-    # those to determine what was actually downloaded.
+    expected_variables = set(ERA5L_VAR_CONFIG)
+    for var_name, cfg in ERA5L_VAR_CONFIG.items():
+        for extra_suffix in cfg.get("aggregation", {}).get("extras", {}):
+            expected_variables.add(f"{var_name}_{extra_suffix}")
+    expected = len(expected_variables)
+
+    if not store_path.exists():
+        return FetchListing(present=0, expected=expected, detail=f"ERA5-Land zarr store missing at {store_path}.")
+
     try:
-        manifest_paths = _candidate_manifest_paths(root_dir=root_dir, subtype="era5_land_hourly")
-        downloaded = 0
-        for manifest_path in manifest_paths:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            download_status = manifest.get("download_status", manifest.get("status"))
-            if download_status == "downloaded":
-                downloaded += 1
-    except Exception as exc:
-        return FetchListing(present=0, expected=None, detail=f"Could not discover ERA5-Land input files: {exc}")
+        present_variables = {entry.name for entry in store_path.iterdir() if entry.is_dir()} & expected_variables
+    except OSError as exc:
+        return FetchListing(present=0, expected=expected, detail=f"Could not list ERA5-Land zarr store: {exc}")
 
-    expected = len(pd.period_range(ERA5_OUTPUT_START, ERA5_OUTPUT_END, freq="M"))
+    present = len(present_variables)
     return FetchListing(
-        present=downloaded,
+        present=present,
         expected=expected,
         detail=(
-            f"{downloaded} months downloaded (raw GRIB present or already preprocessed) "
-            f"of {expected} expected (year-month, era5_land_hourly)."
+            f"{present}/{expected} ERA5-Land variables present in the shared zarr store "
+            f"at {store_path}."
         ),
     )
 
@@ -360,16 +360,16 @@ def _climate_check_outputs(root_dir) -> list[OutputArtifactCheck]:
 def _climate_fingerprint_paths(root_dir) -> list[Path]:
     from src.data.sources.climate.constants import (
         DEFAULT_ADM2_UPSTREAM_YEARLY_OUTPUT_PATH,
+        DEFAULT_ERA5_LAND_STORE_PATH,
         DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH,
     )
-    from src.data.sources.climate.preprocess.era5_land import discover_era5_input_files
 
-    try:
-        files = discover_era5_input_files(root_dir=root_dir, subtype="era5_land_hourly")
-    except Exception:
-        files = []
+    # Fingerprint the shared zarr store itself rather than raw GRIB input
+    # files: those get deleted once consumed, and era5_land_arco updates the
+    # store without ever producing GRIB files at all, so per-file GRIB
+    # fingerprinting would miss ARCO-driven changes entirely.
     return [
-        *files,
+        Path(root_dir) / DEFAULT_ERA5_LAND_STORE_PATH / "zarr.json",
         Path(root_dir) / DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH,
         Path(root_dir) / DEFAULT_ADM2_UPSTREAM_YEARLY_OUTPUT_PATH,
     ]

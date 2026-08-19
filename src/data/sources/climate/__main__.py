@@ -25,8 +25,10 @@ def configure_parser(parser, include_action=True):
     parser.add_argument("--root-dir", default=".")
     parser.add_argument(
         "--subtype",
-        default="cloud_cover",
-        choices=["cloud_cover", "era5_land_hourly", "era5_land_daily", "era5_land_arco"],
+        default="era5_land_hourly",
+        choices=["era5_land_hourly", "era5_land_daily", "era5_land_arco"],
+        help="Fetch variant only -- ignored for preprocess, which always processes "
+        "every GRIB-origin variant together since they share one zarr store.",
     )
     parser.add_argument("--stage", default="all", choices=["all", "zarr", "parquet"])
     parser.add_argument(
@@ -49,7 +51,7 @@ def run(args):
     if args.action == "fetch":
         agent.fetch(subtype=args.subtype)
     elif args.action == "preprocess":
-        agent.preprocess(subtype=args.subtype, stage=args.stage, n_jobs=args.n_jobs)
+        agent.preprocess(stage=args.stage, n_jobs=args.n_jobs)
     else:
         agent.assemble(
             variant=args.variant,

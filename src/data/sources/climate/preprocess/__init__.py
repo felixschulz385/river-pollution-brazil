@@ -1,11 +1,7 @@
-__all__ = ["preprocess_cloud_cover", "preprocess_era5_land", "preprocess_era5_land_worker"]
+__all__ = ["preprocess_era5_land", "preprocess_era5_land_worker"]
 
 
 def __getattr__(name):
-    if name == "preprocess_cloud_cover":
-        from .cloud_cover import preprocess_cloud_cover as _preprocess_cloud_cover
-
-        return _preprocess_cloud_cover
     if name == "preprocess_era5_land":
         from .era5_land import preprocess_era5_land as _preprocess_era5_land
 

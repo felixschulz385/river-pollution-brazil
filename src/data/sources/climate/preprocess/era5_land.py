@@ -1300,9 +1300,13 @@ def process_era5_input_file(path: Path, *, root_dir=".", subtype="era5_land_hour
         return store_path
 
 
-def preprocess_era5_land(root_dir=".", subtype="era5_land_hourly", stage="all", n_jobs: int | None = None) -> Path:
-    if subtype not in SUPPORTED_ERA5_PREPROCESS_SUBTYPES:
-        raise ValueError(f"Unsupported ERA5 preprocess subtype: {subtype}")
+def preprocess_era5_land(root_dir=".", stage="all", n_jobs: int | None = None) -> Path:
+    """Preprocess all GRIB-origin ERA5-Land subtypes into the shared zarr store.
+
+    era5_land_hourly and era5_land_daily both write into the same store
+    (see DEFAULT_ERA5_LAND_STORE_PATH); they aren't a choice the caller makes,
+    so both are always processed together rather than one-at-a-time by subtype.
+    """
     if stage not in ERA5_LAND_PREPROCESS_STAGES:
         raise ValueError(
             f"Unsupported ERA5 preprocess stage: {stage}. "
@@ -1310,12 +1314,18 @@ def preprocess_era5_land(root_dir=".", subtype="era5_land_hourly", stage="all", 
         )
 
     if stage in {"all", "zarr"}:
-        input_files = discover_era5_input_files(root_dir=root_dir, subtype=subtype)
+        input_files = [
+            (path, subtype)
+            for subtype in sorted(SUPPORTED_ERA5_PREPROCESS_SUBTYPES)
+            for path in discover_era5_input_files(root_dir=root_dir, subtype=subtype)
+        ]
         if not input_files:
-            raise FileNotFoundError(f"No ERA5 GRIB files found for subtype {subtype!r}.")
+            raise FileNotFoundError(
+                f"No ERA5 GRIB files found for subtypes {sorted(SUPPORTED_ERA5_PREPROCESS_SUBTYPES)}."
+            )
 
-        store_path = bootstrap_era5_store(root_dir=root_dir, sample_path=input_files[0])
-        for input_file in input_files:
+        store_path = bootstrap_era5_store(root_dir=root_dir, sample_path=input_files[0][0])
+        for input_file, subtype in input_files:
             store_path = process_era5_input_file(input_file, root_dir=root_dir, subtype=subtype)
     else:
         store_path = _era5_store_path(root_dir)
@@ -1330,13 +1340,16 @@ def preprocess_era5_land(root_dir=".", subtype="era5_land_hourly", stage="all", 
 
 def preprocess_era5_land_worker(
     root_dir=".",
-    subtype="era5_land_hourly",
     poll_seconds=120,
     stage="all",
     n_jobs: int | None = None,
 ) -> Path:
-    if subtype not in SUPPORTED_ERA5_PREPROCESS_SUBTYPES:
-        raise ValueError(f"Unsupported ERA5 preprocess subtype: {subtype}")
+    """Poll for and process GRIB-origin ERA5-Land input across all subtypes.
+
+    era5_land_hourly and era5_land_daily both feed the same shared zarr
+    store, so this always drains both rather than requiring the caller to
+    pick one -- there's nothing subtype-specific left once you're past fetch.
+    """
     if stage not in ERA5_LAND_PREPROCESS_STAGES:
         raise ValueError(
             f"Unsupported ERA5 preprocess stage: {stage}. "
@@ -1349,25 +1362,30 @@ def preprocess_era5_land_worker(
     last_store_path = _era5_store_path(root_dir)
     while True:
         ready_files = []
-        for path in discover_era5_input_files(root_dir=root_dir, subtype=subtype):
-            _wait_for_lock_release(path)
-            manifest = load_download_manifest(path)
-            if _manifest_ready_for_preprocess(manifest):
-                ready_files.append(path)
+        for subtype in sorted(SUPPORTED_ERA5_PREPROCESS_SUBTYPES):
+            for path in discover_era5_input_files(root_dir=root_dir, subtype=subtype):
+                _wait_for_lock_release(path)
+                manifest = load_download_manifest(path)
+                if _manifest_ready_for_preprocess(manifest):
+                    ready_files.append((path, subtype))
 
         if ready_files:
-            bootstrap_era5_store(root_dir=root_dir, sample_path=ready_files[0])
-            for path in ready_files:
+            bootstrap_era5_store(root_dir=root_dir, sample_path=ready_files[0][0])
+            for path, subtype in ready_files:
                 last_store_path = process_era5_input_file(path, root_dir=root_dir, subtype=subtype)
             continue
 
-        if not _active_download_requests_exist(root_dir=root_dir, subtype=subtype):
+        if not any(
+            _active_download_requests_exist(root_dir=root_dir, subtype=subtype)
+            for subtype in sorted(SUPPORTED_ERA5_PREPROCESS_SUBTYPES)
+        ):
             if last_store_path.exists():
                 if stage == "zarr":
                     return last_store_path
                 return tabularize_era5_land_by_trench(root_dir=root_dir, n_jobs=n_jobs)
             raise FileNotFoundError(
-                f"No downloaded or active ERA5 files found for subtype {subtype!r}."
+                f"No downloaded or active ERA5 files found for subtypes "
+                f"{sorted(SUPPORTED_ERA5_PREPROCESS_SUBTYPES)}."
             )
 
         _worker_wait(poll_seconds)

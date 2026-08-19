@@ -331,7 +331,7 @@ def test_preprocess_era5_land_processes_files_and_leaves_store_reusable(
             status="downloaded",
         )
 
-    first_store = preprocess_era5_land(root_dir=tmp_path, subtype="era5_land_hourly", stage="zarr")
+    first_store = preprocess_era5_land(root_dir=tmp_path, stage="zarr")
 
     opened = xr.open_zarr(first_store, consolidated=False)
     try:
@@ -374,7 +374,7 @@ def test_preprocess_era5_land_deletes_raw_file_and_updates_manifest(
         lambda path: _hourly_dataset(),
     )
 
-    store_path = preprocess_era5_land(root_dir=tmp_path, subtype="era5_land_hourly", stage="zarr")
+    store_path = preprocess_era5_land(root_dir=tmp_path, stage="zarr")
     manifest = load_download_manifest(target)
 
     assert store_path.exists()
@@ -432,9 +432,7 @@ def test_preprocess_worker_waits_for_new_downloaded_files(
         lambda root_dir=".", subtype="era5_land_hourly": waits["count"] == 0,
     )
 
-    store_path = preprocess_era5_land_worker(
-        root_dir=tmp_path, subtype="era5_land_hourly", poll_seconds=0, stage="zarr"
-    )
+    store_path = preprocess_era5_land_worker(root_dir=tmp_path, poll_seconds=0, stage="zarr")
     manifest = load_download_manifest(raw_dir / "era5_land_hourly_1985_01.grib")
 
     assert waits["count"] >= 1

@@ -784,30 +784,32 @@ def test_climate_fetch_routes_supported_subtypes(
         agent.fetch(subtype="unknown")
 
 
-def test_climate_preprocess_routes_supported_subtypes(
+def test_climate_preprocess_is_not_split_by_subtype(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    hourly_output = object()
-    daily_output = object()
+    # era5_land_hourly and era5_land_daily both write into the same shared
+    # zarr store, so `preprocess` doesn't take a subtype at all -- it always
+    # drains both together (handled inside preprocess_era5_land_worker).
+    # era5_land_arco has no separate preprocess stage: opening the ARCO
+    # store, aggregating, and writing all happen under `fetch` instead, since
+    # (unlike the GRIB path) there's no distinct raw-download step.
+    worker_output = object()
+    calls = []
+
+    def fake_worker(root_dir=".", stage="all", n_jobs=None):
+        calls.append({"root_dir": root_dir, "stage": stage, "n_jobs": n_jobs})
+        return worker_output
 
     monkeypatch.setattr(
         "src.data.sources.climate.preprocess.era5_land.preprocess_era5_land_worker",
-        lambda root_dir=".", subtype="era5_land_hourly", stage="all", n_jobs=None: (
-            hourly_output if subtype == "era5_land_hourly" else daily_output
-        ),
+        fake_worker,
     )
 
     agent = Climate(root_dir=tmp_path)
 
-    assert agent.preprocess(subtype="era5_land_hourly") is hourly_output
-    assert agent.preprocess(subtype="era5_land_daily") is daily_output
-    with pytest.raises(ValueError, match="Unsupported climate preprocess subtype"):
-        agent.preprocess(subtype="unknown")
-    # era5_land_arco has no separate preprocess stage - opening the ARCO
-    # store, aggregating, and writing all happen under `fetch` instead, since
-    # (unlike the GRIB path) there's no distinct raw-download step.
-    with pytest.raises(ValueError, match="Unsupported climate preprocess subtype"):
-        agent.preprocess(subtype="era5_land_arco")
+    assert agent.preprocess() is worker_output
+    assert len(calls) == 1
+    assert calls[0]["root_dir"] == tmp_path
 
 
 def test_climate_fetch_era5_land_arco_does_the_real_work(
@@ -1014,7 +1016,7 @@ def test_cli_climate_fetch_routes_subtype(
 ) -> None:
     seen = {}
 
-    def fake_fetch(self, subtype="cloud_cover"):
+    def fake_fetch(self, subtype="era5_land_hourly"):
         seen["subtype"] = subtype
         seen["root_dir"] = self.root_dir
         return []
@@ -1038,14 +1040,17 @@ def test_cli_climate_fetch_routes_subtype(
     assert seen == {"subtype": "era5_land_hourly", "root_dir": str(tmp_path)}
 
 
-def test_cli_climate_preprocess_routes_subtype(
+def test_cli_climate_preprocess_ignores_fetch_only_subtype_flag(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # `--subtype` only selects a fetch variant; preprocess always drains
+    # every GRIB-origin variant together (see preprocess_era5_land_worker),
+    # so passing --subtype here must not error and must not be forwarded.
     seen = {}
 
-    def fake_preprocess(self, subtype="cloud_cover", stage="all", n_jobs=None):
-        seen["subtype"] = subtype
+    def fake_preprocess(self, stage="all", n_jobs=None):
         seen["root_dir"] = self.root_dir
+        seen["stage"] = stage
         return []
 
     monkeypatch.setattr(Climate, "preprocess", fake_preprocess)
@@ -1066,7 +1071,7 @@ def test_cli_climate_preprocess_routes_subtype(
     )
 
     assert exit_code == 0
-    assert seen == {"subtype": "era5_land_hourly", "root_dir": str(tmp_path)}
+    assert seen == {"root_dir": str(tmp_path), "stage": "all"}
 
 
 def test_cli_climate_fetch_routes_arco_subtype(
@@ -1074,7 +1079,7 @@ def test_cli_climate_fetch_routes_arco_subtype(
 ) -> None:
     seen = {}
 
-    def fake_fetch(self, subtype="cloud_cover"):
+    def fake_fetch(self, subtype="era5_land_hourly"):
         seen["subtype"] = subtype
         seen["root_dir"] = self.root_dir
         return []

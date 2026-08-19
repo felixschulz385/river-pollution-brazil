@@ -8,10 +8,14 @@ into a single local Zarr store:
 data/climate/raw/era5_land.zarr_nobackup
 ```
 
-All commands below go through the shared CLI:
+All commands below go through the shared CLI. `--subtype` selects a *fetch*
+variant only -- `preprocess` always drains every GRIB-origin variant
+(`era5_land_hourly`, `era5_land_daily`) together into the shared store, since
+neither is a choice worth splitting on downstream of fetch:
 
 ```
-python code/data/cli.py climate <fetch|preprocess> --subtype <subtype> [--root-dir .]
+python code/data/cli.py climate fetch --subtype <subtype> [--root-dir .]
+python code/data/cli.py climate preprocess [--root-dir .]
 ```
 
 `--root-dir` defaults to the current working directory and should point at the
@@ -30,8 +34,7 @@ repo root (the folder containing `data/`, `setup/`, `code/`).
   `zarr`, `cdsapi`, `ecmwf-datastores-client`, `earthkit-data`, `eccodes`,
   `cfgrib`, `odc-geo`, plus `aiohttp`/`requests` (listed in
   [`requirements.txt`](../../../requirements.txt), required by `xarray.open_zarr`
-  for the ARCO `https://` store). `rioxarray` is additionally needed if you're
-  also running `cloud_cover`. On this machine, the validated environment is the
+  for the ARCO `https://` store). On this machine, the validated environment is the
   `311` conda env (`C:\Users\schulz0022\conda-envs\311`); activate it in
   PowerShell with `setup/codex_311_env.ps1`, or point any Python 3.11 env with
   the packages above at the same secrets file.
@@ -40,7 +43,6 @@ repo root (the folder containing `data/`, `setup/`, `code/`).
 
 | Subtype | CDS dataset | Variables | Mechanism |
 |---|---|---|---|
-| `cloud_cover` | `satellite-cloud-properties` (CLARA-A3) | cloud fraction | one-shot synchronous download + extract |
 | `era5_land_hourly` | `reanalysis-era5-land` (GRIB) | `surface_runoff`, `sub_surface_runoff`, `potential_evaporation` | async job submission, polled, downloaded, then aggregated hourly->daily locally |
 | `era5_land_daily` | `derived-era5-land-daily-statistics` | `2t`, `2d`, `swvl1`, `swvl2` | async job submission (CDS computes the daily mean itself) - kept temporarily as a cross-check against `era5_land_arco`, see note below |
 | `era5_land_arco` | ARCO Zarr (`arco.datastores.ecmwf.int`) | `2t`, `2d`, `swvl1`, `swvl2`, `tp` | reads a live, always-available Zarr store directly - no job queue |
@@ -61,8 +63,8 @@ writing into the local store all happen in one place, under `fetch`:
 python code/data/cli.py climate fetch --subtype era5_land_arco --root-dir .
 ```
 
-`preprocess --subtype era5_land_arco` is intentionally unsupported (raises
-"Unsupported climate preprocess subtype") - use `fetch` for this subtype.
+`era5_land_arco` has no separate `preprocess` step - opening the live store,
+aggregating, and writing all happen under `fetch` above.
 
 Notes:
 - **Long-running.** It iterates the full 1985-2024 range across 3 ARCO
@@ -84,7 +86,7 @@ Two steps, since this path still goes through CDS's async job queue:
 
 ```
 python code/data/cli.py climate fetch --subtype era5_land_hourly --root-dir .
-python code/data/cli.py climate preprocess --subtype era5_land_hourly --root-dir .
+python code/data/cli.py climate preprocess --root-dir .
 ```
 
 `fetch` submits one job per (year, month) batch (480 total), polls CDS, and
@@ -111,23 +113,15 @@ run in the background and resume if interrupted.
 
 ```
 python code/data/cli.py climate fetch --subtype era5_land_daily --root-dir .
-python code/data/cli.py climate preprocess --subtype era5_land_daily --root-dir .
+python code/data/cli.py climate preprocess --root-dir .
 ```
 
 This duplicates `2t`/`2d`/`swvl1`/`swvl2` via a second CDS product that
 computes the daily mean server-side, kept temporarily so its output can be
 diffed against `era5_land_arco`'s as an independent sanity check. Once that's
-been done for a few months, this subtype is expected to be retired.
-
-### Cloud cover
-
-```
-python code/data/cli.py climate fetch --subtype cloud_cover --root-dir .
-python code/data/cli.py climate preprocess --subtype cloud_cover --root-dir .
-```
-
-Single synchronous download (no polling needed) followed by preprocessing
-into gridded cover fractions.
+been done for a few months, this subtype is expected to be retired. Note that
+`preprocess` is the same command as for `era5_land_hourly` above - it always
+processes whatever GRIB input is ready across both subtypes in one pass.
 
 ## Known caveat: historical data needs reprocessing after the reshape-bug fix
 
