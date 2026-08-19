@@ -185,6 +185,17 @@ datasets:
           - streamflow_nonnull_day_count
           - streamflow_total_weight
           - streamflow_nearest_distance_m
+      - name: river_system
+        path: data/river_network/river_trenches.parquet
+        join_keys: [trench_id]
+        variables:
+          - system_id
+        # system_id is a disconnected-river-system identifier (connected
+        # component of the flow graph, see src.data.river_network.core), not
+        # a measurement -- exclude it from numeric-dtype enforcement so it
+        # stays a clean integer/categorical grouping key (e.g. for
+        # basin-level clustering in regressions).
+        categorical_variables: [system_id]
       - name: land_cover_sensor_upstream
         path: data/land_cover/land_cover_sensor_upstream.parquet
         type: land_cover_bucketed
