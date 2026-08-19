@@ -26,6 +26,7 @@ class SourceReport:
     verified_at: str
     checks: list[dict] = field(default_factory=list)
     fetch_completeness: dict | None = None
+    outputs_present: bool = False
     from_cache: bool = False
 
 
@@ -86,6 +87,7 @@ class Verification:
                 verified_at=existing["verified_at"],
                 checks=existing.get("checks", []),
                 fetch_completeness=existing.get("fetch_completeness"),
+                outputs_present=existing.get("outputs_present", False),
                 from_cache=True,
             )
 
@@ -118,7 +120,8 @@ class Verification:
                 )
             ]
 
-        any_present = fetch_listing.present > 0 or any(artifact.exists for artifact in output_artifacts)
+        outputs_present = any(artifact.exists for artifact in output_artifacts)
+        any_present = fetch_listing.present > 0 or outputs_present
         all_checks: list[CheckResult] = [check for artifact in output_artifacts for check in artifact.checks]
 
         if not any_present:
@@ -143,6 +146,7 @@ class Verification:
             "status": status,
             "checks": checks_payload,
             "fetch_completeness": fetch_completeness,
+            "outputs_present": outputs_present,
         }
         _write_sidecar(sidecar, payload)
         logger.info("Verified source '%s': status=%s", source, status)
@@ -153,6 +157,7 @@ class Verification:
             verified_at=payload["verified_at"],
             checks=checks_payload,
             fetch_completeness=fetch_completeness,
+            outputs_present=outputs_present,
             from_cache=False,
         )
 
