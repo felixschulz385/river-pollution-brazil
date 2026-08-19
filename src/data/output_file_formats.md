@@ -1,7 +1,7 @@
 # Output File Formats
 
 This document describes the persisted files written by
-`src/data/river_network/`, `src/data/land_cover/`, and climate assembly
+`src/data/sources/river_network/`, `src/data/sources/land_cover/`, and climate assembly
 outputs.
 
 ## River Network Storage
@@ -188,7 +188,7 @@ Semantics:
 
 ### `data/biomes/biome_adm2.parquet`
 
-One row per `mun_id` with a `biome` label, produced by `src.data.biomes`
+One row per `mun_id` with a `biome` label, produced by `src.data.sources.biomes`
 intersecting IBGE's terrestrial biome polygons with GADM ADM2 boundaries.
 
 Semantics:

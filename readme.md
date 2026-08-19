@@ -41,13 +41,30 @@ The repository’s current top-level Python entry point is:
 python3 -m src.cli --help
 ```
 
-This exposes two styles of commands:
+`data` exposes a verb-first API, with `--source` picking which pipeline
+source a verb applies to:
 
-- grouped commands under `data` and `analysis`
-- flat compatibility aliases such as `health`, `water-quality`, `land-cover`, `population`, and `river-network`
+```bash
+python3 -m src.cli data summary                       # pipeline completeness overview
+python3 -m src.cli data verify  --source <source>      # verify one source's outputs
+python3 -m src.cli data fetch      --source <source> [source flags...]
+python3 -m src.cli data preprocess --source <source> [--phase extract|aggregate] [source flags...]
+python3 -m src.cli data assemble   --dataset <id>       # join preprocessed sources
+```
+
+`--source` and `--phase` must precede any source-specific flags. `--source`
+is one of `health`, `climate`, `sensor_data`, `land_cover`, `population`,
+`river_network`, `biomes`. `--phase` only applies to sources whose
+preprocessing has two stages (`climate`, `land_cover`, `sensor_data`):
+`extract` (raw → per-source processed output) and `aggregate` (roll-up into
+sensor/ADM2 upstream panels).
+
+Add `--slurm` to `fetch`/`preprocess`/`assemble` to submit the same
+invocation as a Slurm job instead of running it locally — see
+`setup/slurm_scripts/README.md` and `setup/slurm_jobs.yaml`.
 
 Each data submodule also owns its own standalone entry point, e.g.
-`python3 -m src.data.climate --help`; `src/cli.py` delegates to these rather
+`python3 -m src.data.sources.climate --help`; `src/cli.py` delegates to these rather
 than duplicating their argument parsing.
 
 ## Data Workflows
@@ -57,8 +74,8 @@ than duplicating their argument parsing.
 Health data can be fetched and preprocessed through the CLI:
 
 ```bash
-python3 -m src.cli data health fetch --subtype all
-python3 -m src.cli data health preprocess --subtype all
+python3 -m src.cli data fetch      --source health --subtype all
+python3 -m src.cli data preprocess --source health --subtype all
 ```
 
 Supported health subtypes are `mortality`, `hospitalization`, and `birth`.
@@ -73,12 +90,12 @@ The repository currently contains derived health outputs such as:
 
 ### Water Quality
 
-Water-quality processing is organized into fetch, preprocess, and assemble stages:
+Water-quality processing is organized into fetch and preprocess (extract, then aggregate) stages:
 
 ```bash
-python3 -m src.cli data water-quality fetch --root-dir .
-python3 -m src.cli data water-quality preprocess --root-dir .
-python3 -m src.cli data water-quality assemble --root-dir .
+python3 -m src.cli data fetch      --source sensor_data --root-dir .
+python3 -m src.cli data preprocess --source sensor_data --phase extract --root-dir .
+python3 -m src.cli data preprocess --source sensor_data --phase aggregate --root-dir .
 ```
 
 The water-quality fetch pipeline supports additional options for browser execution and partial reruns, including:
@@ -100,12 +117,12 @@ Transformation metadata used by the analysis pipeline is stored in:
 
 ### Land Cover
 
-Land-cover processing is also organized into fetch, preprocess, and assemble stages:
+Land-cover processing is also organized into fetch and preprocess (extract, then aggregate) stages:
 
 ```bash
-python3 -m src.cli data land-cover fetch
-python3 -m src.cli data land-cover preprocess --river-network-path data/river_network
-python3 -m src.cli data land-cover assemble --variant sensor --river-network-path data/river_network
+python3 -m src.cli data fetch      --source land_cover
+python3 -m src.cli data preprocess --source land_cover --phase extract --river-network-path data/river_network
+python3 -m src.cli data preprocess --source land_cover --phase aggregate --variant sensor --river-network-path data/river_network
 ```
 
 In the current code, `fetch` is only a placeholder and expects raw MapBiomas files to be obtained manually and placed in the configured data directory.
@@ -124,8 +141,8 @@ Current derived land-cover outputs include:
 Population data is processed through:
 
 ```bash
-python3 -m src.cli data population fetch --root-dir .
-python3 -m src.cli data population preprocess --root-dir .
+python3 -m src.cli data fetch      --source population --root-dir .
+python3 -m src.cli data preprocess --source population --root-dir .
 ```
 
 The population fetch step pulls raw data from BigQuery and therefore requires appropriate Google Cloud credentials and access to the configured billing project.
@@ -136,10 +153,11 @@ The cleaned output is:
 
 ### River Network
 
-The river-network workflow is exposed through:
+The river-network workflow has no automated fetch (raw hydrography/GADM files
+are placed manually) and is exposed through a single preprocess step:
 
 ```bash
-python3 -m src.cli data river-network generate \
+python3 -m src.cli data preprocess --source river_network \
   --gpkg-path path/to/source.gpkg \
   --output-dir data/river_network
 ```

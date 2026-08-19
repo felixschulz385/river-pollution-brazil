@@ -1,0 +1,69 @@
+# Slurm resource specs for `python -m src.cli data <verb> --source X --slurm`.
+#
+# Keyed by "<source>.<verb>" or "<source>.<verb>.<phase>", matching the
+# SOURCE_REGISTRY / phase names in src/cli.py. Each entry is merged on top of
+# `defaults`. To add Slurm support for a source/verb combo that isn't listed
+# here yet, add a new key -- `--slurm` will otherwise fail with a clear error
+# pointing back at this file.
+
+defaults:
+  partition: scicore
+  conda_hook: /scicore/home/meiera/schulz0022/miniforge-pypy3/bin/conda
+  conda_env: "311"
+  project_dir: /scicore/home/meiera/schulz0022/projects/river-pollution-brazil
+
+jobs:
+  # Formerly setup/slurm_scripts/extract_climate.sh
+  climate.preprocess.extract:
+    job_name: extract_climate
+    time: "0-12:00:00"
+    qos: 1day
+    cpus_per_task: 4
+    mem: 128G
+    extra_env:
+      OMP_NUM_THREADS: 1
+      OPENBLAS_NUM_THREADS: 1
+      MKL_NUM_THREADS: 1
+      NUMEXPR_NUM_THREADS: 1
+
+  # Formerly setup/slurm_scripts/assemble_climate.sh (one variant per job now;
+  # run --slurm twice, once per --variant, to reproduce both outputs).
+  climate.preprocess.aggregate:
+    job_name: aggregate_climate
+    time: "0-12:00:00"
+    qos: 1day
+    cpus_per_task: 4
+    mem: 128G
+
+  # Formerly setup/slurm_scripts/extract_land_cover.sh
+  land_cover.preprocess.extract:
+    job_name: extract_land_cover
+    time: "0-12:00:00"
+    qos: 1day
+    cpus_per_task: 4
+    mem: 64G
+
+  # Formerly setup/slurm_scripts/assemble_land_cover_adm2.sh and
+  # assemble_land_cover_sensor.sh (identical resources; --variant picks which).
+  land_cover.preprocess.aggregate:
+    job_name: aggregate_land_cover
+    time: "0-06:00:00"
+    qos: 6hours
+    cpus_per_task: 4
+    mem: 64G
+
+  # Formerly setup/slurm_scripts/assemble_sensor_data.sh
+  sensor_data.preprocess.aggregate:
+    job_name: aggregate_sensor_data
+    time: "0-06:00:00"
+    qos: 6hours
+    cpus_per_task: 4
+    mem: 128G
+
+  # Formerly setup/slurm_scripts/generate_river_network.sh
+  river_network.preprocess:
+    job_name: preprocess_river_network
+    time: "0-00:30:00"
+    qos: 30min
+    cpus_per_task: 4
+    mem: 64G

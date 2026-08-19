@@ -7,8 +7,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.data.land_cover.composition import compute_kernel_weighted_composition
-from src.data.land_cover.constants import (
+from src.data.sources.land_cover.composition import compute_kernel_weighted_composition
+from src.data.sources.land_cover.constants import (
     LAND_COVER_COMPOSITION_BUCKET_MAP,
     derive_mun_id_from_adm2_id,
 )
