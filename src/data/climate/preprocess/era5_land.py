@@ -611,13 +611,20 @@ def tabularize_era5_land_by_trench(root_dir=".", n_jobs: int | None = None) -> P
             omitted_trenches,
         )
         output_path = _era5_trench_day_path(root_dir)
-        _write_chunked_trench_day_table(
-            dataset[climate_columns],
-            climate_columns=climate_columns,
-            trench_coordinates=trench_coordinates,
-            output_path=output_path,
-            n_jobs=n_jobs,
-        )
+        # _write_chunked_trench_day_table stages parts under `output_path.tmp`
+        # and atomically swaps them into place; without a lock, two overlapping
+        # runs of this step (e.g. a resubmitted HPC job overlapping with one
+        # still running) race on that shared staging directory and swap, which
+        # can corrupt the final table -- the GRIB->zarr preprocessing step
+        # above guards its shared write the same way.
+        with climate_file_lock(output_path, owner="climate_tabularize_worker"):
+            _write_chunked_trench_day_table(
+                dataset[climate_columns],
+                climate_columns=climate_columns,
+                trench_coordinates=trench_coordinates,
+                output_path=output_path,
+                n_jobs=n_jobs,
+            )
     finally:
         close = getattr(dataset, "close", None)
         if callable(close):
