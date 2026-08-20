@@ -819,6 +819,7 @@ def _clean_birth_outcome_frame(frame):
     frame = frame.drop(columns=["Município"])
     value_columns = [col for col in frame.columns if col not in {"mun_id", "mun_name", "year", "Total"}]
     frame[value_columns] = frame[value_columns].apply(lambda col: col.str.replace("-", "0"), axis=0).astype("float32")
+    frame["Total"] = frame["Total"].str.replace("-", "0").astype("float32")
     frame = frame[["mun_id", "mun_name", "year"] + value_columns + ["Total"]]
     return frame.dropna(subset=["mun_id"])
 

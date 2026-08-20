@@ -210,7 +210,10 @@ def _land_cover_list_fetched(root_dir, force: bool = False) -> FetchListing:
 
 
 def _land_cover_check_outputs(root_dir) -> list[OutputArtifactCheck]:
-    from src.data.sources.land_cover.constants import DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH
+    from src.data.sources.land_cover.constants import (
+        BUCKET_SHARE_COLUMN,
+        DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH,
+    )
 
     path = Path(root_dir) / DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH
     frame = _safe_read_parquet(path)
@@ -221,9 +224,13 @@ def _land_cover_check_outputs(root_dir) -> list[OutputArtifactCheck]:
         check_required_columns(frame, ["station_code", "year"]),
         _non_empty_check(frame),
     ]
-    share_columns = [column for column in frame.columns if column.endswith("_shr")]
-    for column in share_columns[:5]:
-        checks.append(check_value_range(frame, column, lo=-1e-6, hi=1.0 + 1e-6, name=f"value_range:{column}"))
+    # Long-format table: land_cover_class is a row value, and the fraction is
+    # a single "share" column (not per-class "{class}_shr" columns), so one
+    # range check covers every class's rows.
+    if BUCKET_SHARE_COLUMN in frame.columns:
+        checks.append(
+            check_value_range(frame, BUCKET_SHARE_COLUMN, lo=-1e-6, hi=1.0 + 1e-6, name=f"value_range:{BUCKET_SHARE_COLUMN}")
+        )
     return [OutputArtifactCheck(label="land_cover_sensor_upstream", path=path, exists=True, checks=checks)]
 
 
@@ -256,6 +263,7 @@ def _sensor_data_list_fetched(root_dir, force: bool = False) -> FetchListing:
 
 def _sensor_data_check_outputs(root_dir) -> list[OutputArtifactCheck]:
     from src.data.sources.sensor_data.constants import get_processed_dir
+    from src.data.sources.sensor_data.preprocess.assembly import STREAMFLOW_DAY_COLUMN
     from src.data.sources.sensor_data.schema import (
         ASSEMBLED_SENSOR_DATA_PARQUET,
         STREAMFLOW_MAX_VALID_DISCHARGE,
@@ -270,9 +278,14 @@ def _sensor_data_check_outputs(root_dir) -> list[OutputArtifactCheck]:
         check_required_columns(frame, ["station_code", "datetime"]),
         _non_empty_check(frame),
     ]
-    if "discharge" in frame.columns:
+    # The final assembled table renames "discharge" to "streamflow_discharge_day"
+    # (plus rolling-mean columns); the plain "discharge" column never survives
+    # to this output.
+    if STREAMFLOW_DAY_COLUMN in frame.columns:
         checks.append(
-            check_value_range(frame, "discharge", lo=0.0, hi=STREAMFLOW_MAX_VALID_DISCHARGE, name="value_range:discharge")
+            check_value_range(
+                frame, STREAMFLOW_DAY_COLUMN, lo=0.0, hi=STREAMFLOW_MAX_VALID_DISCHARGE, name=f"value_range:{STREAMFLOW_DAY_COLUMN}"
+            )
         )
     return [OutputArtifactCheck(label="water_quality_streamflow", path=path, exists=True, checks=checks)]
 
@@ -333,15 +346,20 @@ def _climate_list_fetched(root_dir, force: bool = False) -> FetchListing:
 
 def _climate_check_outputs(root_dir) -> list[OutputArtifactCheck]:
     from src.data.sources.climate.constants import (
+        CLIMATE_VARIABLE_COLUMN,
         DEFAULT_ADM2_UPSTREAM_YEARLY_OUTPUT_PATH,
         DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH,
     )
     from src.data.sources.climate.fetch.verify import ERA5L_VALUE_RANGES
 
     results = []
-    for label, rel_path in (
-        ("climate_sensor_upstream", DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH),
-        ("climate_adm2_upstream_yearly", DEFAULT_ADM2_UPSTREAM_YEARLY_OUTPUT_PATH),
+    # Both output tables are long-format: the variable code lives as a row
+    # value in `climate_variable`, not baked into the column name, so each
+    # variable's range must be checked against a filtered slice, not a
+    # column-name prefix match.
+    for label, rel_path, value_column in (
+        ("climate_sensor_upstream", DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH, "mean_day"),
+        ("climate_adm2_upstream_yearly", DEFAULT_ADM2_UPSTREAM_YEARLY_OUTPUT_PATH, "mean_value"),
     ):
         path = Path(root_dir) / rel_path
         frame = _safe_read_parquet(path)
@@ -349,10 +367,22 @@ def _climate_check_outputs(root_dir) -> list[OutputArtifactCheck]:
             results.append(_missing_artifact(label, path))
             continue
         checks = [_non_empty_check(frame)]
-        for variable, (lo, hi) in ERA5L_VALUE_RANGES.items():
-            matching_columns = [column for column in frame.columns if column.startswith(f"{variable}_")]
-            for column in matching_columns[:2]:
-                checks.append(check_value_range(frame, column, lo=lo, hi=hi, name=f"value_range:{column}"))
+        if CLIMATE_VARIABLE_COLUMN not in frame.columns:
+            checks.append(
+                CheckResult(
+                    name="value_range",
+                    ok=False,
+                    message=f"Column '{CLIMATE_VARIABLE_COLUMN}' not present.",
+                )
+            )
+        else:
+            for variable, (lo, hi) in ERA5L_VALUE_RANGES.items():
+                subset = frame.loc[frame[CLIMATE_VARIABLE_COLUMN] == variable]
+                name = f"value_range:{variable}:{value_column}"
+                if subset.empty:
+                    checks.append(CheckResult(name=name, ok=False, message=f"No rows for variable '{variable}'."))
+                    continue
+                checks.append(check_value_range(subset, value_column, lo=lo, hi=hi, name=name))
         results.append(OutputArtifactCheck(label=label, path=path, exists=True, checks=checks))
     return results
 
@@ -496,6 +526,15 @@ _HEALTH_OUTPUT_FILES = (
     "birth_weight.parquet",
     "gestational_duration.parquet",
 )
+# All three SIH hospitalization tables share this long-format base schema
+# (see _empty_total/_icd10/_morbidity_hospitalization_frame in
+# src/data/sources/health/preprocess/preprocess.py); each adds its own extra
+# category columns (icd10_chapter_*, morbidity_*) on top.
+_HEALTH_HOSPITALIZATION_REQUIRED_COLUMNS = ["municipality_code", "year", "metric_name", "metric_value"]
+# Birth outcome tables (_clean_birth_outcome_frame) keep a municipality id,
+# per-category count columns, and a "Total" column -- all non-negative counts.
+_HEALTH_BIRTH_OUTCOME_FILES = {"birth_weight.parquet", "gestational_duration.parquet"}
+_HEALTH_BIRTH_OUTCOME_REQUIRED_COLUMNS = ["mun_id", "year", "Total"]
 
 
 def _health_list_fetched(root_dir, force: bool = False) -> FetchListing:
@@ -531,6 +570,18 @@ def _health_check_outputs(root_dir) -> list[OutputArtifactCheck]:
             results.append(_missing_artifact(filename, path))
             continue
         checks = [_non_empty_check(frame)]
+        if filename in _HEALTH_BIRTH_OUTCOME_FILES:
+            checks.append(check_required_columns(frame, _HEALTH_BIRTH_OUTCOME_REQUIRED_COLUMNS))
+            if "Total" in frame.columns:
+                checks.append(
+                    check_value_range(frame, "Total", lo=0.0, hi=float("inf"), name="value_range:Total")
+                )
+        else:
+            checks.append(check_required_columns(frame, _HEALTH_HOSPITALIZATION_REQUIRED_COLUMNS))
+            if "metric_value" in frame.columns:
+                checks.append(
+                    check_value_range(frame, "metric_value", lo=0.0, hi=float("inf"), name="value_range:metric_value")
+                )
         results.append(OutputArtifactCheck(label=filename, path=path, exists=True, checks=checks))
     return results
 

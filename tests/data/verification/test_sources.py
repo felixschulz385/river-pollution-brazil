@@ -115,10 +115,17 @@ def test_land_cover_check_outputs_missing(tmp_path):
 
 
 def test_land_cover_check_outputs_flags_out_of_range_share(tmp_path):
+    """The real output is long-format (land_cover_class as a row value, a
+    single "share" column), not per-class "{class}_shr" columns."""
     output_dir = tmp_path / "data" / "land_cover" / "processed" / "aggregate"
     output_dir.mkdir(parents=True)
     frame = pd.DataFrame(
-        {"station_code": ["A"], "year": [2020], "lc_forest_shr": [1.5]}
+        {
+            "station_code": ["A"],
+            "year": [2020],
+            "land_cover_class": ["forest"],
+            "share": [1.5],
+        }
     )
     frame.to_parquet(output_dir / "land_cover_sensor_upstream.parquet", index=False)
 
@@ -166,13 +173,16 @@ def test_sensor_data_check_outputs_recognizes_columns_kept_as_named_index(tmp_pa
 
 
 def test_sensor_data_check_outputs_flags_discharge_out_of_range(tmp_path):
+    """The final assembled table renames "discharge" to
+    "streamflow_discharge_day"; the plain "discharge" column never survives
+    to this output, so the range check must target the renamed column."""
     output_dir = tmp_path / "data" / "sensor_data" / "processed" / "aggregate"
     output_dir.mkdir(parents=True)
     frame = pd.DataFrame(
         {
             "station_code": ["S1"],
             "datetime": pd.to_datetime(["2020-01-01"]),
-            "discharge": [2_000_000.0],
+            "streamflow_discharge_day": [2_000_000.0],
         }
     )
     frame.to_parquet(output_dir / "water_quality_streamflow.parquet", index=False)
@@ -225,6 +235,33 @@ def test_climate_check_outputs_missing(tmp_path):
 
     assert len(artifacts) == 2
     assert all(not artifact.exists for artifact in artifacts)
+
+
+def test_climate_check_outputs_flags_out_of_range_value(tmp_path):
+    """Both climate outputs are long-format: the variable code lives as a
+    row value in "climate_variable", not baked into the column name, so the
+    range check must filter by that column rather than match a column-name
+    prefix (which would never match anything in this schema)."""
+    output_dir = tmp_path / "data" / "climate" / "processed" / "aggregate"
+    output_dir.mkdir(parents=True)
+    frame = pd.DataFrame(
+        {
+            "station_code": ["S1"],
+            "date": pd.to_datetime(["2020-01-01"]),
+            "distance_bucket": ["0"],
+            "climate_variable": ["2t"],
+            "reachable_trench_count": [1],
+            "mean_day": [1000.0],  # far outside the (180, 340) Kelvin range
+        }
+    )
+    frame.to_parquet(output_dir / "climate_sensor_upstream.parquet", index=False)
+
+    adapter = SOURCE_ADAPTERS["climate"]
+    artifacts = adapter.check_outputs(tmp_path)
+
+    sensor_artifact = next(a for a in artifacts if a.label == "climate_sensor_upstream")
+    assert sensor_artifact.exists
+    assert not sensor_artifact.ok
 
 
 # --------------------------------------------------------------------------
@@ -326,6 +363,41 @@ def test_health_check_outputs_all_missing(tmp_path):
 
     assert len(artifacts) == 5
     assert all(not artifact.exists for artifact in artifacts)
+
+
+def test_health_check_outputs_flags_negative_metric_value(tmp_path):
+    output_dir = tmp_path / "data" / "health" / "processed"
+    output_dir.mkdir(parents=True)
+    frame = pd.DataFrame(
+        {
+            "municipality_code": ["350001"],
+            "year": [2020],
+            "metric_name": ["total_requests"],
+            "metric_value": [-5.0],
+        }
+    )
+    frame.to_parquet(output_dir / "hospitalizations.parquet", index=False)
+
+    adapter = SOURCE_ADAPTERS["health"]
+    artifacts = adapter.check_outputs(tmp_path)
+
+    artifact = next(a for a in artifacts if a.label == "hospitalizations.parquet")
+    assert artifact.exists
+    assert not artifact.ok
+
+
+def test_health_check_outputs_flags_negative_birth_outcome_total(tmp_path):
+    output_dir = tmp_path / "data" / "health" / "processed"
+    output_dir.mkdir(parents=True)
+    frame = pd.DataFrame({"mun_id": ["350001"], "year": [2020], "Total": [-1.0]})
+    frame.to_parquet(output_dir / "birth_weight.parquet", index=False)
+
+    adapter = SOURCE_ADAPTERS["health"]
+    artifacts = adapter.check_outputs(tmp_path)
+
+    artifact = next(a for a in artifacts if a.label == "birth_weight.parquet")
+    assert artifact.exists
+    assert not artifact.ok
 
 
 # --------------------------------------------------------------------------
