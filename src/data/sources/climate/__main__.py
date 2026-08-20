@@ -1,6 +1,7 @@
 import argparse
 import logging
 
+from .constants import CLIMATE_ASSEMBLE_VARIANTS
 from .core import Climate
 
 
@@ -33,8 +34,11 @@ def configure_parser(parser, include_action=True):
     parser.add_argument("--stage", default="all", choices=["all", "zarr", "parquet"])
     parser.add_argument(
         "--variant",
-        default="sensor_upstream_distance_buckets",
-        choices=["sensor_upstream_distance_buckets", "adm2_upstream_yearly"],
+        default="all",
+        choices=["all", "sensor_upstream_distance_buckets", "adm2_upstream_yearly"],
+        help="Assemble variant only -- 'all' (default) runs sensor and ADM2 "
+        "upstream panels sequentially; --output is not supported with 'all' "
+        "since each variant writes its own default output path.",
     )
     parser.add_argument("--climate-path", default=None)
     parser.add_argument("--water-quality-path", default=None)
@@ -53,15 +57,19 @@ def run(args):
     elif args.action == "preprocess":
         agent.preprocess(stage=args.stage, n_jobs=args.n_jobs)
     else:
-        agent.assemble(
-            variant=args.variant,
-            climate_path=args.climate_path,
-            water_quality_path=args.water_quality_path,
-            stations_rivers_path=args.stations_rivers_path,
-            river_network_path=args.river_network_path,
-            output_path=args.output,
-            n_jobs=args.n_jobs,
-        )
+        variants = sorted(CLIMATE_ASSEMBLE_VARIANTS) if args.variant == "all" else [args.variant]
+        if args.variant == "all" and args.output is not None:
+            raise ValueError("--output is not supported with --variant all; run each variant separately.")
+        for variant in variants:
+            agent.assemble(
+                variant=variant,
+                climate_path=args.climate_path,
+                water_quality_path=args.water_quality_path,
+                stations_rivers_path=args.stations_rivers_path,
+                river_network_path=args.river_network_path,
+                output_path=args.output,
+                n_jobs=args.n_jobs,
+            )
 
 
 def main():

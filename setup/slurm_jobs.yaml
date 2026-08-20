@@ -26,11 +26,12 @@ jobs:
       MKL_NUM_THREADS: 1
       NUMEXPR_NUM_THREADS: 1
 
-  # Formerly setup/slurm_scripts/assemble_climate.sh (one variant per job now;
-  # run --slurm twice, once per --variant, to reproduce both outputs).
+  # Formerly setup/slurm_scripts/assemble_climate.sh. Default --variant is
+  # "all", running sensor and ADM2 upstream panels sequentially in one job;
+  # pass --variant explicitly to submit just one. Time budget covers both.
   climate.preprocess.aggregate:
     job_name: aggregate_climate
-    time: "0-12:00:00"
+    time: "1-00:00:00"
     qos: 1day
     cpus_per_task: 4
     mem: 128G
