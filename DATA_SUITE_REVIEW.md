@@ -956,3 +956,417 @@ the "obvious" fix turned out to introduce a worse partial-day-sum bug at month-f
 For that path, the ~3h offset itself is now an accepted limitation (project decision,
 2026-08-21) rather than an open item — see that item's note for the rationale and the condition
 under which it should be revisited.
+
+## Fifth pass — 2026-08-21 (independent review, done blind against this file)
+
+Split into five parallel reviews (shared/verification/assembly, climate/land_cover, health,
+sensor_data, biomes/population/river_network/), each done without reading this file first, then
+cross-checked and fixed. One finding (the climate hourly-resample UTC-vs-local-time offset)
+turned out to just restate the Fourth pass's already-accepted item above and wasn't re-opened.
+
+### High severity
+
+- [x] `sensor_data/fetch/stations/inventory.py:104-152` (`preprocess_station_inventory`) vs
+      `sensor_data/preprocess/preprocess.py:340-360` (`preprocess_stations_rivers`) — the
+      `stations_rivers` table was written with the raw ANA station-code column
+      (`Codigo`/`codigo`, never renamed), a live `geometry` GeoSeries column, and no
+      `operator_agency_code` column at all, while the reader hard-required
+      `["station_code", "operator_agency_code", "trench_id", "geometry_wkt"]` and called
+      `gpd.GeoSeries.from_wkt` on a column that didn't exist. This made
+      `preprocess_stations_rivers()` — and therefore `preprocess_all()` and
+      `assemble_sensor_data()` — raise `KeyError` on every single run, unconditionally.
+      **Fixed:** confirmed via the raw ANA `HidroInventario` feed (and the one other place its
+      fields are referenced, `src/experiments/hydrology_stations.ipynb`) that no
+      operating-agency field is ever returned by the API — `operator_agency_code` was an
+      invented requirement with no possible source data, so it's dropped from
+      `STATIONS_RIVERS_COLUMNS` (`schema.py`) with a comment explaining why. At the write site,
+      `preprocess_station_inventory` now renames the raw code column to `station_code` and
+      writes the geometry as WKT text under `geometry_wkt` (`.set_geometry("geometry_wkt")`
+      first, since a plain `.rename()` drops geopandas' active-geometry tracking and breaks
+      `.crs`). Added `tests/data/sources/sensor_data/test_station_inventory.py`, a real
+      end-to-end test running `preprocess_station_inventory()` then the real
+      `preprocess_stations_rivers()` against the DuckDB table it produces, asserting no
+      `KeyError` and correct `station_code`/`trench_id`/geometry values.
+- [x] `health/preprocess/preprocess.py` `_coerce_tabnet_numeric` (346-363) and
+      `_clean_mortality_age_frame` (241-267) — Brazilian-formatted thousands separators (`.`)
+      were only stripped when a value also contained a decimal comma; a pure count like
+      `"1.234"` (meaning 1234) parsed straight through `pd.to_numeric` as the float `1.234`,
+      silently dividing any DATASUS count/value ≥ 1000 by ~1000 with no error, warning, or NaN.
+      `_clean_mortality_age_frame` had the same defect but worse — it never stripped `.` at
+      all. Verified directly: `_coerce_tabnet_numeric(["1.234", "12.345,67", "-", "-5,3",
+      "999"])` produced `[1.234, 12345.67, 0.0, -5.3, 999.0]` instead of `[1234.0, 12345.67,
+      0.0, -5.3, 999.0]`.
+      **Fixed:** `_coerce_tabnet_numeric` now unconditionally strips every `.` before
+      converting `,` to `.` (a `.` is never a legitimate decimal separator in this data).
+      `_clean_mortality_age_frame` now calls `_coerce_tabnet_numeric` instead of its own ad hoc
+      `str.replace("-", "0")` + `pd.to_numeric`, so both paths share one correct
+      implementation. Added
+      `test_coerce_tabnet_numeric_strips_thousands_separator_without_decimal_comma`.
+- [x] `health/fetch/datasus.py` `fetch_mortality_age_tables` (568-580) — `pre_1996`'s year-code
+      range (`range(79, 95)`) and `post_1995`'s (`range(96,100)+range(0,22)`) leave code `"95"`
+      (year 1995) unrequested from either DATASUS mortality URL, so the mortality-by-age panel
+      has a full year silently missing from every municipality's series, with no error raised.
+      **Fixed:** extracted the year-code construction into a testable `_mortality_age_year_codes()`
+      helper and widened `pre_1996`'s range to `range(79, 96)` so code `"95"` is included —
+      confirmed via `MORTALITY_URLS`/comments that DATASUS's old mortality system (`obt09br.def`,
+      `pre_1996`) is the correct source for 1995, not the new one, avoiding a double-fetch. Added
+      `test_mortality_age_year_codes_cover_1979_to_2021_with_no_gaps_or_overlap`.
+
+### Medium severity
+
+- [x] `climate/assembly.py` `_assemble_sensor_upstream_duckdb` (~512-522) — the `mean_7d`/
+      `mean_30d`/.../`mean_365d` rolling aggregates used `ROWS BETWEEN {window_size-1} PRECEDING
+      AND CURRENT ROW`, which counts physical rows in the daily climate-bucket series, not
+      calendar days. `_partitioned_trench_day_paths` (128-160) already documents that real gaps
+      can occur in that series (a date with zero contributing trench rows for a station/bucket
+      is simply absent, not zero-filled), so a single missing day silently made e.g. `mean_7d`
+      average 8 calendar days instead of 7, with no error or signal.
+      **Fixed:** switched to `RANGE BETWEEN INTERVAL {window_size-1} DAYS PRECEDING AND CURRENT
+      ROW` (verified DuckDB supports `RANGE` frames with `INTERVAL` over a `DATE`-typed `ORDER
+      BY` column), which spans real calendar days regardless of gaps in the row sequence. Added
+      `test_sensor_rolling_window_spans_calendar_days_not_row_count`, which also asserts the
+      old `ROWS`-based window would have produced a different (wrong) result for the same
+      gapped input.
+- [x] `climate/preprocess/era5_land.py` `bootstrap_era5_store` (1053-1095) — creates the shared
+      zarr store (`to_zarr(mode="w")`) or appends missing data variables to it
+      (`to_zarr(mode="a")`), but was never called under a lock on `store_path` itself; every
+      caller (`process_era5_input_file`, the ARCO preprocessing path) only held a lock on the
+      *input file* being processed. Two workers racing to bootstrap the same not-yet-created
+      store concurrently (realistic given the pipeline explicitly runs GRIB and ARCO
+      preprocessing as separate concurrent workers against one shared store) could both issue
+      overlapping `to_zarr` writes and corrupt the store's zarr metadata.
+      **Fixed:** the whole bootstrap body (existence check, `mode="w"` create, `mode="a"`
+      appends) now runs inside `climate_file_lock(store_path, owner="climate_store_bootstrap")`,
+      covering every call site uniformly since they all go through this one function; the
+      `mkdir` for the store's parent directory was moved ahead of the lock acquisition (the
+      lock file itself lives in that directory). Verified against the full
+      `tests/data/sources/climate` suite (59 tests, `311` env) rather than adding a new
+      concurrency test, since the existing bootstrap/append tests already exercise the code
+      path this wraps and a real race is impractical to assert deterministically in a unit test.
+- [x] `assembly/build.py` `_compute_kernel_weighted_bucket_values` (~74-90) — when every
+      distance-bucket row for an (entity, climate_variable) group had a null `mean_value`, the
+      group's weight summed to 0, and the weighted-average fallback (`np.where(weight_sum > 0,
+      ..., 0.0)`) produced a precise `0.0` instead of a missing value — indistinguishable from a
+      genuine zero measurement in downstream regressions. The sibling land-cover composition
+      path handles the same "all buckets missing" case with an explicit pseudocount prior; the
+      climate path had no equivalent.
+      **Fixed:** the group's aggregated value is now explicitly overwritten with `np.nan`
+      wherever `weight_sum <= 0`, rather than left at the arithmetic `0.0` default — a climate
+      scalar has no natural prior the way land-cover composition shares do, so "no data" must
+      surface as `NaN`. Confirmed no `fillna(0)` sits between this function and the final
+      assembled parquet (plain `how="left"` merges throughout), so the `NaN` survives intact,
+      and confirmed `verification/checks.py`'s `check_null_fraction` already treats `NaN` as
+      the missing-data signal it expects (it was previously blind to this bug, since `0.0`
+      values were never flagged as null). Added
+      `test_compute_kernel_weighted_bucket_values_returns_nan_when_all_buckets_null`.
+- [x] `population/preprocess/preprocess.py:76-80` — `age_group=lambda d:
+      d["age_group"].astype(str).map(normalize_age_group)` called `.astype(str)` before
+      `normalize_age_group`'s own `pd.isna(value)` null-check, so a genuine missing
+      `grupo_idade` value was stringified to the literal `"nan"` first (on which `pd.isna` is
+      `False`) and survived as a bogus category instead of staying null — silently corrupting
+      any population aggregate that groups or filters by `age_group`. The `mun_id` assignment
+      three lines above has an explicit comment warning against exactly this pattern.
+      **Fixed:** removed the `.astype(str)` call so `normalize_age_group` receives the raw
+      value and its own null guard works correctly. Added
+      `test_normalize_age_group_returns_null_for_missing_values` and
+      `test_transform_population_frame_keeps_missing_age_group_null` (full pipeline, missing
+      `grupo_idade` value asserted to stay null in the output).
+- [x] `river_network/__main__.py:40-41` (`run`) — `if all([args.min_lon, args.min_lat,
+      args.max_lon, args.max_lat]):` used truthiness, so a bbox with any bound exactly `0.0`
+      (e.g. a southern edge on the equator, plausible for northern Brazil/Amazon queries) was
+      silently discarded even though all four flags were passed — the full unfiltered dataset
+      loaded instead, with no error or warning.
+      **Fixed:** changed to `all(v is not None for v in (...))`. Added
+      `tests/data/sources/river_network/test_main.py` covering a bbox with a zero bound (still
+      built) and one with a missing bound (still `None`, regression guard for the other
+      branch).
+
+### Lower severity
+
+- [x] `river_network/core.py` `annotate_drainage_areas_with_country_membership` (776-780) — the
+      GADM country boundary was reduced to a bare shapely geometry (`.union_all().simplify
+      (0.01)`, no CRS attached) and compared directly against `self.drainage_areas` via
+      `.intersects()`, which performs no CRS check — if `drainage_areas` were ever not already
+      in the GADM layer's CRS (e.g. after being reprojected earlier in a pipeline change, as
+      `build_trench_adm2_table` elsewhere in the same file already does before its own spatial
+      joins), the membership flags would silently come back wrong against mismatched
+      coordinate systems.
+      **Fixed:** `drainage_areas` is now reprojected to match the GADM layer's CRS (only when
+      they differ) before the `.intersects()` call — reprojecting `drainage_areas` rather than
+      `brazil`, since the `0.01` `simplify` tolerance is calibrated for the GADM layer's
+      (degree) units. Added
+      `test_annotate_drainage_areas_with_country_membership_reprojects_mismatched_crs`, with
+      `drainage_areas` in a projected CRS (as it is post-`build_trench_adm2_table`) and the
+      GADM fixture in WGS84.
+- [x] `health/preprocess/preprocess.py` `_preprocess_sih_icd10_chapter_request` (565-593) — any
+      ICD-10 chapter column whose header didn't exactly match a key in
+      `ICD10_CHAPTER_LABELS` (e.g. future DATASUS wording drift, a new "Ignorado" bucket) was
+      silently dropped from the panel with no logging, unlike `_extract_municipality_fields`'s
+      dropped-row logging a few lines away in the same file.
+      **Fixed:** now logs a warning naming the dropped column(s) and count before filtering
+      them out. Added
+      `test_preprocess_sih_icd10_chapter_request_warns_on_unmapped_chapter_column`.
+- [x] `assembly/schema.py` `_parse_source` (61-88) vs `build.py`'s type dispatch — an
+      unrecognized/misspelled `type:` value in `assembly_datasets.yaml` (e.g.
+      `"climate_bucket"` instead of `"climate_bucketed"`) was never validated against
+      `SOURCE_TYPES` and silently fell through `build.py`'s `if/elif` chain (no `else`) as a
+      plain wide source, producing a confusing failure far from the actual typo.
+      **Fixed:** `_parse_source` now raises `ValueError` immediately if `type` isn't one of
+      `SOURCE_TYPES`, naming the bad value and the valid options. Added
+      `test_load_assembly_config_rejects_unknown_source_type`.
+
+### Resolved (follow-up, 2026-08-21)
+
+- `shared/sensor_upstream.py` `collapse_same_period_observations` (28-66) keeps the *earliest*
+  row (by `ordering_column`) when multiple observations share an (entity, period) key; if the
+  intended semantics for same-period duplicates is "most recent reading", this is backwards.
+  Could not confirm intended semantics without a deeper read of every caller's expectations, so
+  left as a flag for the next pass rather than a fix — check against callers before changing,
+  since a change to "keep last" would itself be a silent behavior change if the current
+  "keep first" is actually correct.
+  **Investigated, not a bug:** traced both real call paths (`_build_sensor_targets` via
+  `climate/assembly.py`, and `build_location_period_targets`) — both immediately reduce
+  `prepare_observation_targets`'s result down to just the (entity, period)/(location, period)
+  key columns and `drop_duplicates()` again, discarding `ordering_column` and every other
+  collapsed-row value. So "earliest vs. most recent" is currently inconsequential to any real
+  caller; there's nothing to get backwards yet. Documented this explicitly in the function's
+  docstring (including the "revisit if a future caller starts relying on collapsed-row values"
+  caveat) instead of guessing at a change, and added
+  `test_collapse_same_period_observations_keeps_smallest_ordering_value_per_group` to pin down
+  and guard the current "keep smallest" behavior for whenever that assumption starts to matter.
+- `health/fetch/datasus.py` `fetch_mortality_age_tables`/`fetch_birth_outcome_tables` accumulate
+  every year's scraped table in memory across a ~28-45 year loop and only persist once via
+  `pd.concat(...)` after the loop completes, unlike the SIH pipeline's per-batch
+  manifest/checkpoint. A single transient failure partway through discards the whole scrape for
+  that outcome, forcing a full restart. This is a reliability/cost issue (not silent
+  corruption) but bringing it up to the SIH pipeline's checkpoint pattern is a larger, separate
+  piece of work than the fixes above — noted here for a future pass rather than attempted now.
+  **Fixed:** both fetchers now use the same batch-manifest infra as the SIH pipeline
+  (`initialize_manifest`/`update_manifest_entry`/`completed_batch_paths` from
+  `shared/batches.py`), via three small shared helpers (`_plan_year_batches`,
+  `_fetch_year_batch`, `_combine_year_batches`). Each year is written to its own batch parquet
+  and marked `"completed"` in the manifest as soon as it's fetched; on failure the manifest
+  entry is marked `"failed"` and the exception re-raised (matching the SIH pattern), and a
+  resumed call only re-fetches years not already `"completed"` instead of restarting the whole
+  ~28-45 year scrape. The final combined output is unchanged — all completed year-batches are
+  concatenated into the same `..._raw.parquet` file as before. Added
+  `test_fetch_mortality_age_tables_resumes_without_refetching_completed_years`, which fails a
+  request mid-scrape, confirms the earlier year's checkpoint survived as `"completed"`, then
+  resumes and confirms the combined output has both years without re-requesting the completed
+  one.
+
+`tests/data` (186 tests, up from 184) passes in full under the `311` conda env.
+
+All 11 findings from this pass (3 high, 4 medium, 3 low) that were confirmed and in-scope have
+been fixed and tested; two lower-confidence/larger-scope items are deferred (above) rather than
+fixed. The full `tests/data` suite (178 tests, including 13 new ones added across this pass)
+passes under the `311` conda env; the `thesis-reopen` env additionally confirms each touched
+module individually, modulo two pre-existing, unrelated environment gaps (`pyodbc`, `earthkit`
+aren't installed there) that predate this pass.
+
+## Sixth pass — 2026-08-21 (independent review, done blind against this file)
+
+Run as 8 parallel finder passes (correctness, removed-behavior audit, cross-file tracing,
+reuse, simplification, efficiency, altitude/consistency, conventions) over the current
+on-disk state of `src/data/`, each done without reading this file first, then verified
+against the actual code (not just the diff) before writing up. Most raw candidates turned
+out to already be covered by the fourth/fifth passes above (independently rediscovering the
+same bugs and confirming they're genuinely fixed) — only the items below are new. Findings
+are recorded here but **not fixed** in this pass, unlike the passes above.
+
+### Medium severity
+
+- [x] `river_network/core.py:774-791` (`annotate_drainage_areas_with_country_membership`) —
+      the fifth pass's own CRS-mismatch fix (`drainage_areas_matched_crs = ... if
+      self.drainage_areas.crs == brazil_gdf.crs else self.drainage_areas.to_crs(brazil_gdf.crs)`)
+      doesn't handle `self.drainage_areas.crs is None`. If `drainage_areas` has no CRS set (its
+      CRS can be dropped by earlier geometry operations) and `brazil_gdf.crs` is set (the
+      normal case), `None == crs_obj` is `False`, so the guard routes into
+      `.to_crs(brazil_gdf.crs)` on a CRS-less GeoDataFrame — geopandas raises `ValueError:
+      Cannot transform naive geometries`, turning what used to be a silent wrong-answer bug
+      into a hard crash. (The "both `None`" case is unaffected — that's the pre-existing
+      behavior, not a new regression.)
+      **Fixed:** the guard now also treats `self.drainage_areas.crs is None` as "already
+      matching" (skip reprojection) rather than routing it into `.to_crs()`, since a `None`
+      CRS can't be reprojected and treating it as a crash is worse than the pre-fix
+      raw-coordinate comparison this whole fix targets. Added
+      `test_annotate_drainage_areas_with_country_membership_handles_missing_crs`.
+- [x] `health/fetch/datasus.py:612` (`fetch_mortality_age_tables`) and `:810`
+      (`fetch_birth_outcome_tables`) — the fourth pass's fix wrapped `form.reset_query()` in a
+      try/except inside `_execute_sih_manifest_entries`'s `finally` block specifically so a
+      cleanup failure there can't mask the real exception propagating out of a batch. Both of
+      these other two DATASUS fetch loops call `form.reset_query()` unconditionally, with no
+      such guard, inside their own per-year loop. If `reset_query()` raises in either loop —
+      the same "results window ended up in an unexpected state" case the SIH fix documents —
+      the exception replaces whatever real error (if any) is in flight, and the whole
+      multi-year `raw_tables` accumulator for that outcome is lost, which is worse than the SIH
+      case (there, a `reset_query()` failure is contained to one manifest entry, not the whole
+      run).
+      **Fixed:** extracted the SIH fix's try/except+log pattern into a shared
+      `_reset_query_or_warn(form, context)` helper and switched all three call sites
+      (`_execute_sih_manifest_entries`, `fetch_mortality_age_tables`,
+      `fetch_birth_outcome_tables`) to use it, so a cleanup failure is contained the same way
+      in all three loops instead of only one. Added
+      `test_fetch_mortality_age_tables_does_not_abort_on_reset_query_failure` and
+      `test_fetch_birth_outcome_tables_does_not_abort_on_reset_query_failure`, both of which
+      fail against the pre-fix code (the whole multi-year fetch would raise and discard
+      already-collected years).
+- [x] `climate/preprocess/era5_land.py:1053-1099` (`bootstrap_era5_store`) — the fifth pass's
+      fix wraps the *entire* function body, including the cheap "store already has every
+      variable" fast path (`missing_vars = _missing_store_variables(store_path); if not
+      missing_vars: return store_path`), inside `climate_file_lock(store_path, ...)`. This
+      function is called once per input file from both `process_era5_input_file` and the ARCO
+      worker poll loop — i.e. on every file, from every concurrent worker, by the surrounding
+      comment's own admission. After the store is fully bootstrapped (the common case), every
+      call still has to acquire the single global store lock (`FILE_LOCK_POLL_SECONDS`-interval
+      busy-poll) purely to run a read-only check, serializing all workers on one mutex even
+      though nothing is being written. A cheap unlocked fast-path check before acquiring the
+      lock (only entering the locked section when a write is actually needed) would preserve
+      the crash-safety fix without serializing the common case.
+      **Fixed:** added an unlocked `_missing_store_variables(store_path)` check at the top of
+      `bootstrap_era5_store`, returning immediately (no lock, no geobox load) when the store
+      already has every expected variable; the lock is now only acquired when there's actually
+      something to create/append. Added
+      `test_bootstrap_era5_store_skips_lock_and_geobox_load_when_store_already_complete`,
+      which asserts against the pre-fix code (calling `climate_file_lock` on the already-
+      bootstrapped fast path would have failed the test's `AssertionError`-raising stub).
+- [x] `climate/preprocess/era5_land.py:757-761,976-1011` (`_save_geobox_state` /
+      `load_or_create_geobox_state`) — called from `bootstrap_era5_store` at line ~1054,
+      *before* the `climate_file_lock` acquired two lines later, and from four other call
+      sites across `era5_land.py`/`era5_land_arco.py`, none lock-protected. When
+      `geobox.pickle` doesn't exist yet (first run), `_save_geobox_state` writes it via a plain
+      `path.open("wb")` + `pickle.dump` — no atomic temp-file+rename, no lock. Two workers
+      racing on first run can both compute and write `geobox.pickle` concurrently; a reader
+      mid-write gets a truncated pickle stream and `pickle.load` raises `UnpicklingError`/
+      `EOFError` — the identical concurrency-corruption class the sibling zarr-store lock (in
+      the same function, one call later) was added to prevent, just left unfixed one call
+      earlier.
+      **Fixed:** two changes. (1) `_save_geobox_state` now writes via a temp-file +
+      `os.replace`, matching the pattern used elsewhere (`shared.batches.write_manifest`, etc.),
+      so a torn read is no longer possible regardless of which of the five call sites races.
+      (2) `bootstrap_era5_store`'s own `load_or_create_geobox_state` call now happens *inside*
+      `climate_file_lock`, alongside the zarr-store bootstrap it was already adjacent to — the
+      other four call sites (`era5_land.py:281,593,1304`, `era5_land_arco.py:134`) are left
+      unlocked, since a concurrent-write race there now degrades to last-writer-wins on an
+      atomically-written file rather than corruption, a materially smaller residual risk than
+      the torn-read case this fix closes. Added the no-leftover-temp-file assertion to
+      `test_load_or_create_geobox_state_persists_first_dataset_geometry`.
+
+### Lower severity
+
+- [x] `sensor_data/fetch/data/download.py:195-231` (`_is_parseable_zip` /
+      `_current_raw_archives_frame`) — the fourth pass's fix replaced a metadata-only
+      `iterdir()`/`stat()` listing with a full ZIP-integrity check
+      (`zipfile.ZipFile(...).testzip()`, a full CRC32/decompression pass) for every `.zip` file
+      in `raw_dir`. `_current_raw_archives_frame` is called at both the start and end of every
+      `fetch_station_data` run (`download.py:1051,1146`), so it now decompresses and
+      CRC-checks every previously-downloaded archive in the directory — potentially thousands
+      of station archives — twice per run, where it used to be a cheap stat-based scan. Worth
+      caching the "verified good" result per file (e.g. in the download log) instead of
+      re-verifying every archive on every run, or only running `testzip()` on files that look
+      suspicious (very recent mtime, previously flagged incomplete).
+      **Fixed:** added a small per-`raw_dir` JSON cache (`.zip_verification_cache.json`, keyed
+      on filename with `{size, mtime_ns, ok}`, written atomically) so `_is_parseable_zip` is
+      only actually run when a file's size/mtime has changed since it was last verified —
+      correctness is unchanged (a file that changes is always re-verified; nothing is ever
+      trusted without having been checked at least once), only repeat verification of
+      unchanged files is skipped. Added
+      `test_current_raw_archives_frame_caches_zip_verification_across_runs`, which counts
+      `_is_parseable_zip` calls across three scans (initial, unchanged, rewritten) and asserts
+      the cache is used on the second and bypassed on the third.
+- [x] `shared/batches.py:63-75` (`write_manifest`), `sources/biomes/fetch.py:22-31`
+      (`fetch_biomes`), `verification/core.py:48-56` (`_write_sidecar`) — the atomic
+      write-then-rename pattern added across earlier passes (`f"{path}.tmp-{pid}"` write +
+      `os.replace`) is implemented independently in all three places rather than factored into
+      one shared helper (e.g. `shared.batches.atomic_write`); `verification/core.py`'s own
+      comment says it's "matching `shared.batches.write_manifest`", i.e. the duplication was
+      noticed and reimplemented anyway. A future fix (e.g. `os.fsync` before rename) needs
+      three edits instead of one.
+      **Fixed:** added `atomic_write_text`/`atomic_write_bytes` to `shared/batches.py` and
+      switched all three sites (plus `write_manifest` itself) to use them instead of
+      reimplementing the temp-file+`os.replace` dance independently. No behavior change —
+      existing atomicity tests for `write_manifest` and the biomes/verification test suites
+      pass unchanged.
+- [x] `assembly/build.py:111-125` (`_pivot_long_source`) — the `except ValueError as exc:`
+      handler around `frame.pivot(...)` unconditionally assumes any `ValueError` means
+      duplicate `(join_keys, pivot_column)` rows and builds its diagnostic from
+      `frame.duplicated(subset=...)`. If `frame.pivot(...)` raises `ValueError` for an
+      unrelated reason (e.g. a non-hashable pivot value), `duplicated()` finds nothing,
+      `duplicate_keys` is empty, and the raised message claims "has duplicate rows for the
+      same (...) combination" with an empty example list — masking the real root cause behind
+      an incorrect diagnostic.
+      **Fixed:** now checks whether `duplicate_keys` is actually non-empty before raising the
+      duplicate-specific message; if `frame.pivot` failed for some other reason, it re-raises
+      with the source name and the original exception's own message instead of misattributing
+      it to duplicates. Added
+      `test_pivot_long_source_does_not_blame_duplicates_for_unrelated_pivot_error`.
+
+All 7 findings from this pass have been fixed and tested. `tests/data` (184 tests, up from 178)
+passes in full under the `311` conda env.
+
+## Real-environment verification — 2026-08-21
+
+Two categories of fix from earlier passes had only ever been checked by reading code and
+running mocked unit tests: anything touching Selenium (no live DATASUS form available) and
+anything touching pyodbc/Access (no ODBC Access driver installed). Both were exercised for
+real this pass.
+
+### Selenium / Chrome driver
+
+- `shared/webdriver.py` (`ManagedBrowser._create_driver`) resolved its ChromeDriver binary via
+  the third-party `webdriver_manager` package. On this machine that binary had drifted 10 major
+  versions behind the installed Chrome (chromedriver 141 vs. Chrome 151), which would make
+  every Selenium-driven fetch (DATASUS, sensor-data downloads) fail outright with
+  `SessionNotCreatedException` before ever reaching the code under test.
+  **Fixed:** switched to Selenium's built-in Selenium Manager (`webdriver.Chrome(options=options)`
+  with no explicit `service`/binary path) instead of `webdriver_manager`, so the driver is
+  always resolved to match whatever Chrome is actually installed, rather than a separately
+  pinned/cached binary that can silently go stale after a Chrome auto-update — exactly what
+  happened here. Removed the now-unused `webdriver_manager` import and the
+  `_driver_binary_path` caching it required.
+  **Also required (environment, not code):** a stale Homebrew Cask (`chromedriver` 141,
+  installed Oct 2025) sat on `PATH` ahead of Selenium Manager's own resolution and would have
+  kept shadowing it regardless of the code fix (Selenium Manager prefers an existing PATH
+  driver over downloading its own by design). Uninstalled it (`brew uninstall --cask
+  chromedriver`) at the user's direction, since Selenium Manager now owns driver resolution
+  entirely and a manually pinned driver is exactly the kind of stale-version risk this fix
+  targets.
+  **Verified for real:** with the cask removed and the `311` conda env properly activated (not
+  just its interpreter invoked directly — `conda activate` is what sets `SE_MANAGER_PATH` for
+  this conda-forge Selenium build), `ManagedBrowser` launched headless Chrome and loaded the
+  real DATASUS birth-outcomes page (`http://tabnet.datasus.gov.br/cgi/tabcgi.exe?sinasc/cnv/nvbr.def`),
+  confirming a matching driver/browser pair (both v151) and the correct page title.
+  `tests/data/shared/test_webdriver.py` passes unchanged.
+
+### pyodbc / Access (.mdb) reads
+
+- No ODBC driver was registered on this machine (`pyodbc.drivers()` returned `[]`), so
+  `access_reader.py`'s connection-leak fix, per-table skip-on-error fix, and
+  `normalize_object_columns` decimal-comma coercion had only ever run against mocked
+  connections. Installed `mdbtools` (`brew install mdbtools`) and registered its ODBC driver
+  in `/usr/local/etc/odbcinst.ini` (`[MDBTools]`, pointing at `libmdbodbc.dylib`) — this is a
+  machine setup step, not a repo change, since production presumably runs against the real
+  Windows/Microsoft Access driver `connect_access_database` requests by name.
+- Obtained one real station archive from ANA's public download form
+  (`https://www.snirh.gov.br/hidroweb/serieshistoricas`, no login required — confirmed
+  separately that ANA's REST API at `snirh.gov.br/hidroweb/rest/api/*` requires an
+  authenticated login token, which is exactly why this codebase scrapes the public form
+  instead): station 10100000's conventional-data `.mdb`, ~3.5MB, containing tables from
+  `Estacao`/`Cotas`/`Vazoes`/`QualAgua`/`Chuvas` and others.
+- **Verified for real** (via `load_mdb_tables` and the full `read_archive_payload` entry
+  point, driver name substituted to `MDBTools`; everything else unchanged): 11 tables with
+  real data were parsed successfully (`Cotas`, `QualAgua`, `Estacao`, etc., up to 167 columns
+  wide); two mdbtools-driver-reported pseudo-tables (`Series_Sedimentos`, `vwCotaMedia` — views
+  the driver can't execute against) were skipped with a warning exactly as the per-table
+  skip-on-error fix intends, without aborting the rest of the file. `lsof` on the `.mdb` after
+  the run showed no open handle (confirming the connection-close fix), and
+  `read_archive_payload`'s extraction directory was fully removed by `shutil.rmtree` with
+  nothing left behind — the exact failure mode (a lingering driver-held lock defeating cleanup)
+  the connection-leak fix targeted. `normalize_object_columns` ran without error across all
+  columns; this particular station's measurement columns turned out to be native Access
+  numeric types rather than decimal-comma text, so the comma-coercion branch specifically
+  wasn't exercised by this file — that path remains covered by its unit tests only.
+
+No code changes resulted from the pyodbc verification (all three fixes behaved as designed);
+one code change resulted from the Selenium verification (`webdriver_manager` → Selenium
+Manager), described above. `tests/data` (186 tests) passes in full under the `311` conda env.

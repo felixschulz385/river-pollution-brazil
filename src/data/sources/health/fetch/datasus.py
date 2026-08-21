@@ -9,6 +9,7 @@ from .forms import DatasusTabnetForm
 from ..constants import HEALTH_DATASET_NAME
 from src.data.shared.batches import batch_output_path
 from src.data.shared.batches import batch_table_dir
+from src.data.shared.batches import completed_batch_paths
 from src.data.shared.batches import initialize_manifest
 from src.data.shared.batches import manifest_path
 from src.data.shared.batches import update_manifest_entry
@@ -394,6 +395,80 @@ def _run_sih_residence_query(
     return
 
 
+def _reset_query_or_warn(form, context):
+    """Call `form.reset_query()`, logging (not raising) on failure.
+
+    `reset_query()` can raise if the results window ended up in an
+    unexpected state (e.g. `.limpa` isn't found). Letting that propagate
+    from a cleanup step would replace/mask whatever real error (if any) is
+    already in flight, or abort an otherwise-successful multi-year fetch
+    over a purely cosmetic reset failure -- log and move on instead; the
+    next iteration may still see a stale window, but that's a lesser
+    problem than losing already-collected data or the original error.
+    """
+    try:
+        form.reset_query()
+    except Exception:
+        logger.warning(
+            "Failed to reset DATASUS query state after %s; "
+            "the next request may see stale form/window state.",
+            context,
+            exc_info=True,
+        )
+
+
+def _plan_year_batches(root_dir, table_name, batch_ids):
+    """Initialize a resumable per-year manifest for `table_name`.
+
+    Returns `(manifest_entries, pending_batch_ids)`: `pending_batch_ids` is
+    every `batch_ids` entry not already `"completed"` from a prior run, so a
+    resumed fetch only re-does the years that failed or were never reached.
+    """
+    planned_entries = [
+        {
+            "batch_id": batch_id,
+            "status": "pending",
+            "raw_path": batch_output_path(root_dir, HEALTH_DATASET_NAME, table_name, batch_id),
+        }
+        for batch_id in batch_ids
+    ]
+    manifest_entries = initialize_manifest(root_dir, HEALTH_DATASET_NAME, table_name, planned_entries)
+    pending_batch_ids = [entry["batch_id"] for entry in manifest_entries if entry["status"] == "pending"]
+    return manifest_entries, pending_batch_ids
+
+
+def _fetch_year_batch(root_dir, table_name, manifest_entries, batch_id, fetch_table):
+    """Fetch one year's table and checkpoint it to disk immediately.
+
+    `fetch_table()` returns the year's `DataFrame`. On failure, the manifest
+    entry is marked `"failed"` (so a resumed run retries just this year) and
+    the exception is re-raised -- unlike accumulating every year's table in
+    memory and only writing once at the end, a crash here can't discard
+    years already fetched successfully.
+    """
+    try:
+        table = fetch_table()
+        raw_path = batch_output_path(root_dir, HEALTH_DATASET_NAME, table_name, batch_id)
+        os.makedirs(os.path.dirname(raw_path), exist_ok=True)
+        table.to_parquet(raw_path, index=False)
+        update_manifest_entry(
+            root_dir, HEALTH_DATASET_NAME, table_name, manifest_entries, batch_id,
+            status="completed", raw_path=raw_path, error=None,
+        )
+    except Exception as exc:
+        update_manifest_entry(
+            root_dir, HEALTH_DATASET_NAME, table_name, manifest_entries, batch_id,
+            status="failed", error=str(exc),
+        )
+        raise
+
+
+def _combine_year_batches(root_dir, table_name, output_path):
+    batch_paths = completed_batch_paths(root_dir, HEALTH_DATASET_NAME, table_name)
+    combined = pd.concat([pd.read_parquet(path) for path in batch_paths], ignore_index=True)
+    return _save_raw_table(combined, output_path)
+
+
 def _execute_sih_manifest_entries(
     root_dir,
     form,
@@ -541,23 +616,7 @@ def _execute_sih_manifest_entries(
             raise
         finally:
             if len(form.driver.window_handles) > 1:
-                try:
-                    form.reset_query()
-                except Exception:
-                    # `reset_query()` raising here (e.g. the results window
-                    # ended up in an unexpected state and `.limpa` isn't
-                    # found) must not replace/mask whatever exception (if
-                    # any) is already propagating out of the `try` above --
-                    # that would hide the real failure behind an unrelated
-                    # cleanup error. Log and move on; the next manifest entry
-                    # may still see a stale window, but that's a lesser
-                    # problem than losing the original error.
-                    logger.warning(
-                        "Failed to reset DATASUS query state after batch %s; "
-                        "the next batch may see stale form/window state.",
-                        entry["batch_id"],
-                        exc_info=True,
-                    )
+                _reset_query_or_warn(form, f"batch {entry['batch_id']}")
     return {
         "table_dir": batch_table_dir(root_dir, HEALTH_DATASET_NAME, table_name),
         "manifest_path": manifest_path(root_dir, HEALTH_DATASET_NAME, table_name),
@@ -565,42 +624,69 @@ def _execute_sih_manifest_entries(
     }
 
 
+def _mortality_age_year_codes():
+    """Year codes (as used in DATASUS's `obtbr<yy>.dbf` filenames) for each
+    of the two mortality-by-age source systems, split so every year from
+    1979 through 2021 is covered exactly once: the old system (`obt09br.def`,
+    `pre_1996`) covers 1979-1995, the new system (`obt10br.def`,
+    `post_1995`) covers 1996-2021."""
+    return {
+        "pre_1996": [str(year).zfill(2) for year in range(79, 96)],
+        "post_1995": [str(year).zfill(2) for year in list(range(96, 100)) + list(range(0, 22))],
+    }
+
+
 def fetch_mortality_age_tables(root_dir=".", headless=False, download_dir=None):
-    """Fetch raw mortality tables grouped by age band."""
+    """Fetch raw mortality tables grouped by age band.
+
+    Each year is checkpointed to disk as soon as it's fetched (the same
+    batch-manifest pattern the SIH pipeline uses), so a transient failure
+    partway through the ~40-year scrape only loses the in-flight year -- a
+    resumed run skips every year already completed instead of restarting
+    the whole period from scratch.
+    """
     output_dir = _raw_dir(root_dir)
+    year_codes = _mortality_age_year_codes()
     fetch_plan = {
         "pre_1996": {
             "url": MORTALITY_URLS["pre_1996"],
-            "years": [str(year).zfill(2) for year in range(79, 95)],
+            "years": year_codes["pre_1996"],
             "output": os.path.join(output_dir, "mortality_age_counts_pre_1996_raw.parquet"),
         },
         "post_1995": {
             "url": MORTALITY_URLS["post_1995"],
-            "years": [str(year).zfill(2) for year in list(range(96, 100)) + list(range(0, 22))],
+            "years": year_codes["post_1995"],
             "output": os.path.join(output_dir, "mortality_age_counts_post_1995_raw.parquet"),
         },
     }
 
     output_paths = {}
     for period, config in fetch_plan.items():
-        form = DatasusTabnetForm(headless=headless, download_dir=download_dir)
-        raw_tables = []
-        try:
-            for year in config["years"]:
-                form.open(config["url"])
-                form.select_column("Faixa_Etária")
-                form.select_option_value(f"obtbr{year}.dbf")
-                form.select_output_format_prn()
-                form.submit_query()
+        table_name = f"mortality_age_{period}"
+        manifest_entries, pending_years = _plan_year_batches(root_dir, table_name, config["years"])
 
-                table = form.read_result_table()
-                table.insert(0, "year_code", year)
-                raw_tables.append(table)
-                form.reset_query()
-        finally:
-            form.close()
+        if pending_years:
+            form = DatasusTabnetForm(headless=headless, download_dir=download_dir)
+            try:
+                for year in pending_years:
+                    def _fetch_year_table(form=form, year=year):
+                        form.open(config["url"])
+                        form.select_column("Faixa_Etária")
+                        form.select_option_value(f"obtbr{year}.dbf")
+                        form.select_output_format_prn()
+                        form.submit_query()
+                        table = form.read_result_table()
+                        table.insert(0, "year_code", year)
+                        return table
 
-        output_paths[period] = _save_raw_table(pd.concat(raw_tables, ignore_index=True), config["output"])
+                    try:
+                        _fetch_year_batch(root_dir, table_name, manifest_entries, year, _fetch_year_table)
+                    finally:
+                        _reset_query_or_warn(form, f"{period} year {year}")
+            finally:
+                form.close()
+
+        output_paths[period] = _combine_year_batches(root_dir, table_name, config["output"])
 
     return output_paths
 
@@ -761,7 +847,13 @@ def fetch_hospitalization_tables(root_dir=".", headless=False, download_dir=None
 
 
 def fetch_birth_outcome_tables(root_dir=".", headless=False, download_dir=None, outcome_names=None):
-    """Fetch raw birth-outcome tables for gestational duration and birth weight."""
+    """Fetch raw birth-outcome tables for gestational duration and birth weight.
+
+    Each year is checkpointed to disk as soon as it's fetched (see
+    `fetch_mortality_age_tables`'s docstring for why), so a transient
+    failure partway through the 30-year scrape only loses the in-flight
+    year.
+    """
     output_dir = _raw_dir(root_dir)
     years = list(range(1994, 2024))
     latest_year = 2023
@@ -770,36 +862,48 @@ def fetch_birth_outcome_tables(root_dir=".", headless=False, download_dir=None, 
 
     for outcome_name in selected_outcomes:
         column_option = BIRTH_COLUMN_OPTIONS[outcome_name]
-        form = DatasusTabnetForm(headless=headless, download_dir=download_dir)
-        raw_tables = []
-        try:
-            for year in years:
-                logger.info("Fetching %s data for year %s...", outcome_name, year)
-                form.open("http://tabnet.datasus.gov.br/cgi/tabcgi.exe?sinasc/cnv/nvbr.def")
-                form.select_column(column_option)
+        table_name = f"birth_outcome_{outcome_name}"
+        manifest_entries, pending_years = _plan_year_batches(
+            root_dir, table_name, [str(year) for year in years]
+        )
 
-                year_code = str(year % 100).zfill(2)
-                latest_year_code = str(latest_year % 100).zfill(2)
-                # The "Período" multiselect needs at least one value selected;
-                # for `year == latest_year` the two calls used to collapse to
-                # nothing (both were gated behind `year != latest_year`),
-                # leaving the query without an explicit period filter.
-                form.select_option_value(f"nvbr{year_code}.dbf")
-                if year != latest_year:
-                    form.select_option_value(f"nvbr{latest_year_code}.dbf")
+        if pending_years:
+            form = DatasusTabnetForm(headless=headless, download_dir=download_dir)
+            try:
+                for batch_id in pending_years:
+                    year = int(batch_id)
 
-                form.select_output_format_prn()
-                form.submit_query()
+                    def _fetch_year_table(form=form, year=year):
+                        logger.info("Fetching %s data for year %s...", outcome_name, year)
+                        form.open("http://tabnet.datasus.gov.br/cgi/tabcgi.exe?sinasc/cnv/nvbr.def")
+                        form.select_column(column_option)
 
-                table = form.read_result_table()
-                table.insert(0, "year", year)
-                raw_tables.append(table)
-                form.reset_query()
-        finally:
-            form.close()
+                        year_code = str(year % 100).zfill(2)
+                        latest_year_code = str(latest_year % 100).zfill(2)
+                        # The "Período" multiselect needs at least one value
+                        # selected; for `year == latest_year` the two calls
+                        # used to collapse to nothing (both were gated behind
+                        # `year != latest_year`), leaving the query without
+                        # an explicit period filter.
+                        form.select_option_value(f"nvbr{year_code}.dbf")
+                        if year != latest_year:
+                            form.select_option_value(f"nvbr{latest_year_code}.dbf")
+
+                        form.select_output_format_prn()
+                        form.submit_query()
+                        table = form.read_result_table()
+                        table.insert(0, "year", year)
+                        return table
+
+                    try:
+                        _fetch_year_batch(root_dir, table_name, manifest_entries, batch_id, _fetch_year_table)
+                    finally:
+                        _reset_query_or_warn(form, f"{outcome_name} year {year}")
+            finally:
+                form.close()
 
         raw_path = os.path.join(output_dir, f"{outcome_name}_raw.parquet")
-        output_paths[outcome_name] = _save_raw_table(pd.concat(raw_tables, ignore_index=True), raw_path)
+        output_paths[outcome_name] = _combine_year_batches(root_dir, table_name, raw_path)
 
     return output_paths
 

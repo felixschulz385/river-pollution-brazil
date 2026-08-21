@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -254,6 +255,41 @@ def test_compute_kernel_weighted_bucket_values_ignores_unmapped_bucket_without_z
     assert row_a == pytest.approx(row_b)
 
 
+def test_compute_kernel_weighted_bucket_values_returns_nan_when_all_buckets_null():
+    # Entity A has no climate coverage in any bucket for variable "x" (e.g. no
+    # upstream trench had data for this variable) -- weight_sum is 0 for that
+    # group. The aggregated value must be NaN ("unknown"), not 0.0, which
+    # would be indistinguishable from a genuine zero measurement downstream.
+    # Entity B, with real data in both buckets, is a control confirming the
+    # normal weighted-average path still works.
+    long_df = pd.DataFrame(
+        {
+            "entity": ["A", "A", "B", "B"],
+            "category": ["x", "x", "x", "x"],
+            "bucket": [0, 25, 0, 25],
+            "value": [np.nan, np.nan, 10.0, 30.0],
+        }
+    )
+    bucket_map = {0: ("0_25km", 12.5), 25: ("25_50km", 37.5)}
+
+    result = _compute_kernel_weighted_bucket_values(
+        long_df,
+        entity_columns=["entity"],
+        category_column="category",
+        value_column="value",
+        kernel="uniform",
+        bandwidth=1000.0,
+        bucket_map=bucket_map,
+    )
+
+    row_a = result.loc[result["entity"] == "A", "x"].iloc[0]
+    row_b = result.loc[result["entity"] == "B", "x"].iloc[0]
+    assert np.isnan(row_a)
+    # Both buckets fall within the uniform kernel's bandwidth -> equal weight
+    # -> simple average of the two bucket means.
+    assert row_b == pytest.approx(20.0)
+
+
 def test_write_dataset_writes_parquet(tmp_path):
     df = pd.DataFrame({"a": [1, 2]})
     output_path = tmp_path / "nested" / "out.parquet"
@@ -285,3 +321,37 @@ def test_pivot_long_source_raises_clear_error_on_duplicate_join_key_pivot_combin
 
     with pytest.raises(ValueError, match="climate.*duplicate rows"):
         _pivot_long_source(frame, source)
+
+
+def test_pivot_long_source_does_not_blame_duplicates_for_unrelated_pivot_error(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # A `frame.pivot` failure with no actual duplicate (join_keys,
+    # pivot_column) rows present must not be misreported as a duplicate-key
+    # error -- that would mask whatever the real cause was.
+    frame = pd.DataFrame(
+        {
+            "station_code": ["S1", "S2"],
+            "date": pd.to_datetime(["2020-03-01", "2020-03-01"]),
+            "climate_variable": ["2t", "2t"],
+            "mean_day": [20.0, 21.0],
+        }
+    )
+    source = AssemblySource(
+        name="climate",
+        path="climate.parquet",
+        join_keys=("station_code", "date"),
+        variables=("2t_mean_day",),
+        type=LONG_PIVOT_SOURCE_TYPE,
+        pivot_column="climate_variable",
+        value_columns=("mean_day",),
+    )
+
+    def _raise_unrelated_value_error(self, *args, **kwargs):
+        raise ValueError("some unrelated pivot failure")
+
+    monkeypatch.setattr(pd.DataFrame, "pivot", _raise_unrelated_value_error)
+
+    with pytest.raises(ValueError, match="climate.*failed to pivot.*unrelated pivot failure") as exc_info:
+        _pivot_long_source(frame, source)
+    assert "duplicate" not in str(exc_info.value)

@@ -513,11 +513,17 @@ def _assemble_sensor_upstream_duckdb(
         for column in climate_columns:
             window_columns.append(_sql_ident(f"{column}_mean_day"))
             for window_label, window_size in SENSOR_WINDOW_LABELS.items():
+                # RANGE (not ROWS) so the window spans `window_size` actual
+                # calendar days regardless of gaps in the daily climate-bucket
+                # series (e.g. a date with no contributing trench rows for
+                # this station/bucket is simply absent, not zero-filled) --
+                # ROWS BETWEEN counts physical rows, so a single missing day
+                # would silently make "7d" reach back 8 calendar days.
                 window_columns.append(
                     f"AVG({_sql_ident(f'{column}_mean_day')}) OVER ("
                     f"PARTITION BY {_sql_ident(STATION_CODE_COLUMN)}, {_sql_ident(DISTANCE_BUCKET_COLUMN)} "
                     f"ORDER BY {_sql_ident(DATE_COLUMN)} "
-                    f"ROWS BETWEEN {window_size - 1} PRECEDING AND CURRENT ROW"
+                    f"RANGE BETWEEN INTERVAL {window_size - 1} DAYS PRECEDING AND CURRENT ROW"
                     f") AS {_sql_ident(f'{column}_mean_{window_label}')}"
                 )
         window_columns_sql = ",\n            ".join(window_columns)

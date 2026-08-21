@@ -218,7 +218,10 @@ def test_load_or_create_geobox_state_persists_first_dataset_geometry(
     assert state["latitude"].tolist() == [-10.0, -11.0]
     assert state["longitude"].tolist() == [-50.0, -49.0]
     assert state["spatial_ref"] == 4326
-    assert (tmp_path / "data" / "climate" / "raw" / "era5_land_hourly" / "geobox.pickle").exists()
+    geobox_path = tmp_path / "data" / "climate" / "raw" / "era5_land_hourly" / "geobox.pickle"
+    assert geobox_path.exists()
+    # No leftover temp file from the atomic write-then-rename.
+    assert list(geobox_path.parent.glob("geobox.pickle.tmp-*")) == []
 
 
 def test_bootstrap_era5_store_creates_coords_only_store_and_missing_variables(
@@ -284,6 +287,41 @@ def test_bootstrap_era5_store_appends_only_missing_variables(
         close = getattr(reopened, "close", None)
         if callable(close):
             close()
+
+
+def test_bootstrap_era5_store_skips_lock_and_geobox_load_when_store_already_complete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    geobox_state = {
+        "geobox": FakeGeoBox(latitude=[-10.0, -11.0], longitude=[-50.0, -49.0]),
+        "latitude": np.array([-10.0, -11.0]),
+        "longitude": np.array([-50.0, -49.0]),
+        "spatial_ref": 4326,
+    }
+    monkeypatch.setattr(
+        "src.data.sources.climate.preprocess.era5_land.load_or_create_geobox_state",
+        lambda root_dir=".", sample_path=None: geobox_state,
+    )
+    store_path = bootstrap_era5_store(root_dir=tmp_path)
+
+    # Second call, with the store already fully bootstrapped: the cheap
+    # read-only fast path must return without acquiring the store lock or
+    # loading geobox state again (both would be wasted work -- and the lock
+    # would otherwise serialize every concurrent worker on this no-op call).
+    calls = []
+    monkeypatch.setattr(
+        "src.data.sources.climate.preprocess.era5_land.load_or_create_geobox_state",
+        lambda root_dir=".", sample_path=None: calls.append(1) or geobox_state,
+    )
+    monkeypatch.setattr(
+        "src.data.sources.climate.preprocess.era5_land.climate_file_lock",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("lock should not be acquired")),
+    )
+
+    result = bootstrap_era5_store(root_dir=tmp_path)
+
+    assert result == store_path
+    assert calls == []
 
 
 def test_resample_hourly_to_daily_applies_expected_aggregations() -> None:

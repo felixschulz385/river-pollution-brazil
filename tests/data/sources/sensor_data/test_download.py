@@ -107,3 +107,42 @@ def test_current_raw_archives_frame_excludes_truncated_zip(tmp_path) -> None:
 
     assert good_path.name in frame["filename"].tolist()
     assert truncated_path.name not in frame["filename"].tolist()
+
+
+def test_current_raw_archives_frame_caches_zip_verification_across_runs(tmp_path, monkeypatch) -> None:
+    import zipfile
+
+    good_path = tmp_path / "12_conventional_mdb_20200101.zip"
+    with zipfile.ZipFile(good_path, "w") as archive:
+        archive.writestr("STATION12.mdb", b"fake mdb bytes")
+
+    calls = {"n": 0}
+    real_is_parseable_zip = download_module._is_parseable_zip
+
+    def counting_is_parseable_zip(path):
+        calls["n"] += 1
+        return real_is_parseable_zip(path)
+
+    monkeypatch.setattr(download_module, "_is_parseable_zip", counting_is_parseable_zip)
+
+    first = download_module._current_raw_archives_frame(tmp_path)
+    assert good_path.name in first["filename"].tolist()
+    assert calls["n"] == 1
+
+    # Unchanged file on a second scan: the cached verdict is reused, not
+    # re-verified via a full CRC pass.
+    second = download_module._current_raw_archives_frame(tmp_path)
+    assert good_path.name in second["filename"].tolist()
+    assert calls["n"] == 1
+
+    # File rewritten (e.g. redownloaded): the cache entry is stale and the
+    # file is re-verified.
+    with zipfile.ZipFile(good_path, "w") as archive:
+        archive.writestr("STATION12.mdb", b"different fake mdb bytes")
+    import os as _os
+
+    _os.utime(good_path, ns=(_os.stat(good_path).st_atime_ns, _os.stat(good_path).st_mtime_ns + 1))
+
+    third = download_module._current_raw_archives_frame(tmp_path)
+    assert good_path.name in third["filename"].tolist()
+    assert calls["n"] == 2

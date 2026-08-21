@@ -32,7 +32,10 @@ STREAMFLOW_JUMP_RATIO_THRESHOLD = 10_000.0
 STREAMFLOW_SMALL_LAG_THRESHOLD = 0.01
 STATIONS_RIVERS_COLUMNS = [
     "station_code",
-    "operator_agency_code",
+    # NOTE: the raw ANA HidroInventario station feed has no operating-agency
+    # field (its query params `sgResp`/`sgOper` filter by agency but the XML
+    # response never echoes it back), so `operator_agency_code` was dropped
+    # from this list rather than being populated with an invented value.
     "trench_id",
     "geometry_wkt",
 ]

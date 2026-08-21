@@ -142,11 +142,23 @@ def preprocess_station_inventory(
 
     # `stations` captures the filtered station inventory with original source
     # fields. The companion `stations_rivers` table adds only the trench join
-    # key used by downstream scraping and analysis tasks.
+    # key used by downstream scraping and analysis tasks. `preprocess_stations_rivers`
+    # (preprocess/preprocess.py) requires this table to expose a `station_code`
+    # column and a `geometry_wkt` text column, so rename/re-key those here
+    # rather than leaving the raw ANA field names (`Codigo`/`codigo`, a live
+    # `geometry` GeoSeries) for the downstream reader to guess at.
+    stations_rivers_table = stations_with_trench.rename(
+        columns={station_code_column: "station_code", "geometry": "geometry_wkt"}
+    ).set_geometry("geometry_wkt")
     write_geodataframe_table(
         root_dir,
         STATIONS_TABLE,
         stations_geo.reset_index(drop=True),
     )
-    write_geodataframe_table(root_dir, STATION_RIVERS_TABLE, stations_with_trench.reset_index(drop=True))
+    write_geodataframe_table(
+        root_dir,
+        STATION_RIVERS_TABLE,
+        stations_rivers_table.reset_index(drop=True),
+        geometry_column="geometry_wkt",
+    )
     return stations_with_trench

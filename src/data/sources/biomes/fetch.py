@@ -1,9 +1,9 @@
 import logging
-import os
 import zipfile
 
 import requests
 
+from src.data.shared.batches import atomic_write_bytes
 from .constants import BIOMES_ARCHIVE_URL, archive_path, raw_dir
 
 
@@ -20,15 +20,12 @@ def fetch_biomes(root_dir="."):
         logger.info("Downloading IBGE biomes archive from %s", BIOMES_ARCHIVE_URL)
         response = requests.get(BIOMES_ARCHIVE_URL, timeout=300)
         response.raise_for_status()
-        # Download to a temp file and atomically rename it into place, so a
-        # process killed mid-download (network drop, OOM, SLURM preemption)
-        # can never leave a partial/corrupt file at `destination` -- the
-        # `destination.exists()` skip-check above would otherwise treat that
-        # corrupt file as "already downloaded" forever, requiring manual
-        # deletion to recover.
-        temp_path = destination.with_name(f"{destination.name}.tmp-{os.getpid()}")
-        temp_path.write_bytes(response.content)
-        os.replace(temp_path, destination)
+        # Written atomically, so a process killed mid-download (network drop,
+        # OOM, SLURM preemption) can never leave a partial/corrupt file at
+        # `destination` -- the `destination.exists()` skip-check above would
+        # otherwise treat that corrupt file as "already downloaded" forever,
+        # requiring manual deletion to recover.
+        atomic_write_bytes(str(destination), response.content)
 
     extract_dir = raw_dir(root_dir)
     with zipfile.ZipFile(destination, "r") as archive:

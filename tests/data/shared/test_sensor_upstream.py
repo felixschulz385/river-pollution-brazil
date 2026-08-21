@@ -3,7 +3,39 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.data.shared.sensor_upstream import explode_list_matches, prepare_trench_adm2_matches
+from src.data.shared.sensor_upstream import (
+    collapse_same_period_observations,
+    explode_list_matches,
+    prepare_trench_adm2_matches,
+)
+
+
+def test_collapse_same_period_observations_keeps_smallest_ordering_value_per_group():
+    # Guard-rail for the documented "keeps the earliest row" contract --
+    # both current callers discard everything but the (entity, period) key
+    # afterward, so this is the one place that behavior is pinned down.
+    frame = pd.DataFrame(
+        {
+            "station_code": ["S1", "S1", "S2"],
+            "date": pd.to_datetime(["2020-01-01", "2020-01-01", "2020-01-01"]),
+            "timestamp": pd.to_datetime(
+                ["2020-01-01T08:00:00", "2020-01-01T14:00:00", "2020-01-01T09:00:00"]
+            ),
+            "value": [10.0, 20.0, 30.0],
+        }
+    )
+
+    collapsed = collapse_same_period_observations(
+        frame,
+        entity_column="station_code",
+        period_column="date",
+        ordering_column="timestamp",
+    )
+
+    assert len(collapsed) == 2
+    s1_row = collapsed.loc[collapsed["station_code"] == "S1"].iloc[0]
+    assert s1_row["value"] == 10.0
+    assert s1_row["timestamp"] == pd.Timestamp("2020-01-01T08:00:00")
 
 
 def test_explode_list_matches_raises_clear_error_on_mismatched_list_lengths():

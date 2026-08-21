@@ -13,8 +13,6 @@ from typing import Generator
 from selenium import webdriver
 from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import WebDriverException
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 
 DEFAULT_WINDOW_WIDTH = 1600
 DEFAULT_WINDOW_HEIGHT = 1000
@@ -26,11 +24,11 @@ PAGE_LOAD_RETRY_BACKOFF_SECONDS = 2
 
 logger = logging.getLogger(__name__)
 NOISY_WEBDRIVER_LOGGERS = (
-    "WDM",
     "urllib3.connectionpool",
     "selenium.webdriver.remote.remote_connection",
     "selenium.webdriver.common.service",
     "selenium.webdriver.common.driver_finder",
+    "selenium.webdriver.common.selenium_manager",
 )
 
 
@@ -113,7 +111,6 @@ class ManagedBrowser:
         self.page_load_strategy = page_load_strategy
         self.keep_open_on_error = keep_open_on_error
         self._driver: webdriver.Chrome | None = None
-        self._driver_binary_path: str | None = None
         self._profile_dir: Path | None = None
         self._cache_dir: Path | None = None
         self._raw_driver_get = None
@@ -203,11 +200,6 @@ class ManagedBrowser:
             cache_dir=self._cache_dir,
         )
 
-        if self._driver_binary_path is None:
-            logger.debug("Resolving ChromeDriver binary with webdriver_manager.")
-            self._driver_binary_path = ChromeDriverManager().install()
-            logger.debug("Resolved ChromeDriver binary: %s", self._driver_binary_path)
-
         last_error: Exception | None = None
         for attempt in range(1, DRIVER_CREATE_RETRIES + 1):
             try:
@@ -217,8 +209,13 @@ class ManagedBrowser:
                     DRIVER_CREATE_RETRIES,
                     self.page_load_strategy,
                 )
-                service = Service(self._driver_binary_path)
-                driver = webdriver.Chrome(service=service, options=options)
+                # No explicit driver binary/Service: Selenium Manager (built
+                # into Selenium 4.6+) resolves and caches a chromedriver
+                # matching the installed Chrome's own version automatically,
+                # instead of relying on a separately-pinned binary (e.g. a
+                # stale system-wide `chromedriver` on PATH) that can drift
+                # out of sync with Chrome after a browser auto-update.
+                driver = webdriver.Chrome(options=options)
                 try:
                     self._raw_driver_get = driver.get
                     self._raw_driver_quit = driver.quit

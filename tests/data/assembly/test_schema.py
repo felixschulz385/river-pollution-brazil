@@ -64,3 +64,29 @@ datasets:
 
     with pytest.raises(ValueError, match="unsupported mode"):
         load_assembly_config(config_path)
+
+
+def test_load_assembly_config_rejects_unknown_source_type(tmp_path):
+    # A typo'd/misspelled `type:` (e.g. "climate_bucket" instead of
+    # "climate_bucketed") must fail loudly at config-load time, not silently
+    # fall through `build.py`'s type dispatch and get treated as plain wide
+    # data.
+    config_path = tmp_path / "assembly_datasets.yaml"
+    config_path.write_text(
+        """
+datasets:
+  - id: sensor_panel
+    mode: sensor
+    index: [station_code, datetime]
+    output_path: out.parquet
+    sources:
+      - name: climate
+        path: a.parquet
+        type: climate_bucket
+        join_keys: [station_code, year]
+        variables: [tp]
+"""
+    )
+
+    with pytest.raises(ValueError, match="unknown type"):
+        load_assembly_config(config_path)

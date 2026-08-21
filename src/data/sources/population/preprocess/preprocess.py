@@ -73,11 +73,11 @@ def transform_population_frame(frame: pd.DataFrame) -> pd.DataFrame:
                     "masculino": "male",
                 }
             ),
-            age_group=lambda d: (
-                d["age_group"]
-                .astype(str)
-                .map(normalize_age_group)
-            ),
+            # Deliberately not `.astype(str)` first: see the `mun_id` comment
+            # above -- pre-stringifying would turn a real NaN `age_group`
+            # into the literal string "nan", which `normalize_age_group`'s
+            # `pd.isna` guard can no longer catch.
+            age_group=lambda d: d["age_group"].map(normalize_age_group),
             population=lambda d: pd.to_numeric(d["population"], errors="coerce"),
             year=lambda d: pd.to_numeric(d["year"], errors="coerce").astype("Int64"),
         )

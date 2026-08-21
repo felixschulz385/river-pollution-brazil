@@ -5,6 +5,7 @@ from pathlib import Path
 import duckdb
 import numpy as np
 import pandas as pd
+import pytest
 from scipy.sparse import csr_matrix
 
 from src.data.sources.climate import assembly
@@ -136,6 +137,46 @@ def test_assemble_adm2_upstream_bins_by_distance_like_land_cover(
     ].iloc[0]
     assert upstream["mean_value"] == 35.0  # avg(30, 40) at trench 102
     assert bool(upstream["bucket_intersects_adm2"]) is False
+
+
+def test_sensor_rolling_window_spans_calendar_days_not_row_count():
+    # Regression test for the sensor-window rolling aggregation in
+    # `_assemble_sensor_upstream_duckdb`: with a real gap in the daily
+    # series (2020-01-03 missing entirely -- e.g. no upstream trench had
+    # coverage that day), a "7-day" window must still span 7 *calendar*
+    # days, not 7 physical rows. RANGE BETWEEN INTERVAL ... PRECEDING
+    # achieves this; ROWS BETWEEN would silently reach back an extra
+    # calendar day per gap instead.
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(
+                ["2020-01-01", "2020-01-02", "2020-01-04", "2020-01-05", "2020-01-06", "2020-01-07", "2020-01-08"]
+            ),
+            "value": [1.0, 2.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+        }
+    )
+    connection = duckdb.connect(database=":memory:")
+    connection.register("c", frame)
+    result = connection.execute(
+        "SELECT date, AVG(value) OVER ("
+        "ORDER BY date RANGE BETWEEN INTERVAL 6 DAYS PRECEDING AND CURRENT ROW"
+        ") AS mean_7d FROM c ORDER BY date"
+    ).fetchdf()
+
+    # On 2020-01-08, a genuine 7-day calendar window (01-02..01-08) must
+    # exclude 2020-01-01, even though it is only 6 rows back.
+    last_row = result.loc[result["date"] == pd.Timestamp("2020-01-08")].iloc[0]
+    assert last_row["mean_7d"] == pytest.approx((2.0 + 4.0 + 5.0 + 6.0 + 7.0 + 8.0) / 6)
+
+    # Sanity check: the buggy ROWS-based window would have included
+    # 2020-01-01 too, giving a different (wrong) average.
+    rows_result = connection.execute(
+        "SELECT date, AVG(value) OVER ("
+        "ORDER BY date ROWS BETWEEN 6 PRECEDING AND CURRENT ROW"
+        ") AS mean_7d FROM c ORDER BY date"
+    ).fetchdf()
+    buggy_last_row = rows_result.loc[rows_result["date"] == pd.Timestamp("2020-01-08")].iloc[0]
+    assert buggy_last_row["mean_7d"] != last_row["mean_7d"]
 
 
 def test_partitioned_trench_day_paths_warns_on_full_directory_fallback(tmp_path, caplog):

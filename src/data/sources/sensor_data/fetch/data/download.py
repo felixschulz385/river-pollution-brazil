@@ -1,3 +1,5 @@
+import json
+import os
 import random
 import logging
 import re
@@ -216,17 +218,68 @@ def _is_parseable_zip(path: Path) -> bool:
         return False
 
 
+def _zip_verification_cache_path(raw_dir: Path) -> Path:
+    return raw_dir / ".zip_verification_cache.json"
+
+
+def _load_zip_verification_cache(raw_dir: Path) -> dict:
+    path = _zip_verification_cache_path(raw_dir)
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_zip_verification_cache(raw_dir: Path, cache: dict) -> None:
+    path = _zip_verification_cache_path(raw_dir)
+    temp_path = path.with_name(f"{path.name}.tmp-{os.getpid()}")
+    temp_path.write_text(json.dumps(cache))
+    os.replace(temp_path, path)
+
+
+def _cached_is_parseable_zip(path: Path, stat_result, cache: dict) -> tuple[bool, bool]:
+    """Return `(ok, cache_was_updated)`.
+
+    `_is_parseable_zip` does a full CRC32/decompression pass, which is
+    expensive across potentially thousands of previously-downloaded archives
+    re-scanned on every run. A file's (size, mtime) only change if it's
+    rewritten, so a cached verdict keyed on those stays valid across runs
+    without ever masking a genuinely corrupt/truncated file -- if the file
+    changes, it's re-verified.
+    """
+    cached = cache.get(path.name)
+    if (
+        cached is not None
+        and cached.get("size") == stat_result.st_size
+        and cached.get("mtime_ns") == stat_result.st_mtime_ns
+    ):
+        return cached["ok"], False
+    ok = _is_parseable_zip(path)
+    cache[path.name] = {"size": stat_result.st_size, "mtime_ns": stat_result.st_mtime_ns, "ok": ok}
+    return ok, True
+
+
 def _current_raw_archives_frame(raw_dir: Path) -> pd.DataFrame:
+    cache = _load_zip_verification_cache(raw_dir)
+    cache_dirty = False
     records = []
     for path in raw_dir.iterdir():
         try:
-            if not path.is_file():
+            if not path.is_file() or path.name.startswith(".zip_verification_cache.json"):
                 continue
-            if path.suffix.lower() == ".zip" and not _is_parseable_zip(path):
-                continue
-            records.append({"filename": path.name, "file_size_bytes": path.stat().st_size})
+            stat_result = path.stat()
+            if path.suffix.lower() == ".zip":
+                ok, updated = _cached_is_parseable_zip(path, stat_result, cache)
+                cache_dirty = cache_dirty or updated
+                if not ok:
+                    continue
+            records.append({"filename": path.name, "file_size_bytes": stat_result.st_size})
         except FileNotFoundError:
             continue
+    if cache_dirty:
+        _save_zip_verification_cache(raw_dir, cache)
     return pd.DataFrame(records, columns=["filename", "file_size_bytes"])
 
 

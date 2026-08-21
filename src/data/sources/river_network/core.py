@@ -774,10 +774,26 @@ class RiverNetwork:
             raise ValueError("Drainage areas not loaded. Call load_drainage_areas() first.")
 
         logger.info("Loading country boundary from %s layer %s", gadm_path, layer)
-        brazil = gpd.read_file(gadm_path, layer=layer).union_all().simplify(0.01)
+        brazil_gdf = gpd.read_file(gadm_path, layer=layer)
+        brazil = brazil_gdf.union_all().simplify(0.01)
 
         logger.info("Annotating %d drainage areas with country membership", len(self.drainage_areas))
-        self.drainage_areas['within_brazil'] = self.drainage_areas.intersects(brazil)
+        # `brazil` is a bare shapely geometry (no CRS) once pulled out of the
+        # GeoDataFrame, so `GeoSeries.intersects(brazil)` would silently
+        # compare raw coordinates if `self.drainage_areas` isn't already in
+        # the same CRS as the GADM layer. Reproject `drainage_areas` (rather
+        # than `brazil`) to match, since the 0.01 `simplify` tolerance above
+        # is calibrated for `brazil_gdf`'s (degree) units. A `None` CRS on
+        # `drainage_areas` can't be reprojected (`.to_crs()` raises on naive
+        # geometries), so treat it as already matching rather than crashing --
+        # if it's genuinely unset, the raw-coordinate comparison this whole
+        # fix targets was already happening before this fix existed.
+        drainage_areas_matched_crs = (
+            self.drainage_areas
+            if self.drainage_areas.crs is None or self.drainage_areas.crs == brazil_gdf.crs
+            else self.drainage_areas.to_crs(brazil_gdf.crs)
+        )
+        self.drainage_areas['within_brazil'] = drainage_areas_matched_crs.intersects(brazil)
 
         n_within = self.drainage_areas['within_brazil'].sum()
         logger.info(

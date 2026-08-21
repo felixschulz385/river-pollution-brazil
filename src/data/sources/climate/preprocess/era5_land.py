@@ -756,8 +756,10 @@ def _load_geobox_state(path: Path) -> dict:
 
 def _save_geobox_state(path: Path, geobox_state: dict) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("wb") as handle:
+    temp_path = path.with_name(f"{path.name}.tmp-{os.getpid()}")
+    with temp_path.open("wb") as handle:
         pickle.dump(geobox_state, handle)
+    os.replace(temp_path, path)
     return path
 
 
@@ -1052,47 +1054,69 @@ def _missing_store_variables(store_path: Path) -> set[str]:
 
 def bootstrap_era5_store(root_dir=".", sample_path: Path | None = None) -> Path:
     store_path = _era5_store_path(root_dir)
-    geobox_state = load_or_create_geobox_state(root_dir=root_dir, sample_path=sample_path)
-    base = _base_store_dataset(geobox_state)
 
-    if not store_path.exists():
-        store_path.parent.mkdir(parents=True, exist_ok=True)
-        base.to_zarr(
-            store_path,
-            mode="w",
-            compute=False,
-            zarr_format=3,
-            consolidated=False,
-        )
-
-    missing_vars = _missing_store_variables(store_path)
-    if not missing_vars:
+    # Cheap, read-only fast path: this function is called once per input
+    # file, from every concurrent GRIB/ARCO worker, and the common case
+    # (store already has every expected variable) needs neither the geobox
+    # state nor the store lock below -- checking it unlocked, before either,
+    # avoids serializing every worker on one mutex just to confirm there's
+    # nothing to write.
+    if not _missing_store_variables(store_path):
         return store_path
 
-    shape = (len(base.time), len(base.latitude), len(base.longitude))
-    chunks = (
-        ERA5_OUTPUT_CHUNKS[0],
-        len(base.latitude) if ERA5_OUTPUT_CHUNKS[1] == -1 else ERA5_OUTPUT_CHUNKS[1],
-        len(base.longitude) if ERA5_OUTPUT_CHUNKS[2] == -1 else ERA5_OUTPUT_CHUNKS[2],
-    )
-    expected_attrs = _expected_output_var_attrs()
+    # Creating the store (`mode="w"`) and appending new data variables to it
+    # (`mode="a"`) both rewrite the store's zarr group metadata. Callers
+    # (`process_era5_input_file`, the ARCO preprocessing path, etc.) only
+    # hold a lock on the *input file* they're processing, not on the store
+    # itself, so two workers racing to bootstrap the same not-yet-created
+    # store concurrently could both call `to_zarr(mode="w")` or issue
+    # overlapping `mode="a"` appends -- a TOCTOU race that can corrupt the
+    # store's metadata. Locking the whole bootstrap here (rather than at
+    # each call site) covers every caller uniformly. `load_or_create_geobox_state`
+    # is called inside the lock too: on a first run it writes `geobox.pickle`,
+    # which is exactly the same race class the store lock exists to prevent.
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    with climate_file_lock(store_path, owner="climate_store_bootstrap"):
+        geobox_state = load_or_create_geobox_state(root_dir=root_dir, sample_path=sample_path)
+        base = _base_store_dataset(geobox_state)
 
-    for var_name in sorted(missing_vars):
-        var_da = xr.DataArray(
-            da.empty(shape, dtype=np.float32, chunks=chunks),
-            dims=ERA5_OUTPUT_DIMS,
-            coords=base.coords,
-            attrs=expected_attrs[var_name],
-        )
-        xr.Dataset({var_name: var_da}).to_zarr(
-            store_path,
-            mode="a",
-            compute=False,
-            zarr_format=3,
-            consolidated=False,
-        )
+        if not store_path.exists():
+            base.to_zarr(
+                store_path,
+                mode="w",
+                compute=False,
+                zarr_format=3,
+                consolidated=False,
+            )
 
-    return store_path
+        missing_vars = _missing_store_variables(store_path)
+        if not missing_vars:
+            return store_path
+
+        shape = (len(base.time), len(base.latitude), len(base.longitude))
+        chunks = (
+            ERA5_OUTPUT_CHUNKS[0],
+            len(base.latitude) if ERA5_OUTPUT_CHUNKS[1] == -1 else ERA5_OUTPUT_CHUNKS[1],
+            len(base.longitude) if ERA5_OUTPUT_CHUNKS[2] == -1 else ERA5_OUTPUT_CHUNKS[2],
+        )
+        expected_attrs = _expected_output_var_attrs()
+
+        for var_name in sorted(missing_vars):
+            var_da = xr.DataArray(
+                da.empty(shape, dtype=np.float32, chunks=chunks),
+                dims=ERA5_OUTPUT_DIMS,
+                coords=base.coords,
+                attrs=expected_attrs[var_name],
+            )
+            xr.Dataset({var_name: var_da}).to_zarr(
+                store_path,
+                mode="a",
+                compute=False,
+                zarr_format=3,
+                consolidated=False,
+            )
+
+        return store_path
 
 
 def _reduce_resample(da: xr.DataArray, freq: str, kind: str, skipna: bool) -> xr.DataArray:

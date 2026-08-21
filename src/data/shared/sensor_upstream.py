@@ -32,6 +32,21 @@ def collapse_same_period_observations(
     period_column,
     ordering_column,
 ):
+    """Keep exactly one row per (`entity_column`, `period_column`) group: the
+    one with the *smallest* `ordering_column` value (e.g. the earliest
+    timestamp within a day).
+
+    "Earliest" vs. "most recent" only matters to a caller that keeps using
+    the collapsed row's other columns afterward. Both current callers
+    (`prepare_observation_targets`, via `_build_sensor_targets` and
+    `build_location_period_targets`) immediately reduce the result to just
+    the (entity, period) or (location, period) key columns and drop
+    duplicates again, discarding `ordering_column` and everything else this
+    function picked -- so today, which row within a tied group survives is
+    inconsequential. If a future caller starts relying on a collapsed row's
+    other column values, revisit which end of `ordering_column` should win
+    before assuming "first" is correct for that use case.
+    """
     if observations.empty:
         return observations
 

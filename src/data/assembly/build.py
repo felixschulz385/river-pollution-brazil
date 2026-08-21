@@ -75,8 +75,20 @@ def _compute_kernel_weighted_bucket_values(
     weight_sum = df.groupby(group_columns)["_raw_weight"].transform("sum")
     df["_weight"] = np.where(weight_sum > 0, df["_raw_weight"] / weight_sum, 0.0)
     df["_weighted_value"] = df[value_column].fillna(0.0) * df["_weight"]
+    df["_weight_sum"] = weight_sum
 
-    weighted = df.groupby(group_columns, as_index=False)["_weighted_value"].sum()
+    # A group whose buckets are *all* null for this (entity, category) -- e.g.
+    # no upstream trench has climate coverage for this variable -- has
+    # weight_sum == 0. Unlike land-cover composition (which has a natural
+    # pseudocount/prior to fall back on), a climate value has none: the
+    # correct output is "unknown" (NaN), not a fabricated 0.0 that would be
+    # indistinguishable downstream from a genuine zero measurement.
+    weighted = df.groupby(group_columns, as_index=False).agg(
+        _weighted_value=("_weighted_value", "sum"),
+        _weight_sum=("_weight_sum", "first"),
+    )
+    weighted.loc[weighted["_weight_sum"] <= 0, "_weighted_value"] = np.nan
+    weighted = weighted.drop(columns="_weight_sum")
     wide = weighted.pivot(
         index=list(entity_columns), columns=category_column, values="_weighted_value"
     ).reset_index()
@@ -107,6 +119,14 @@ def _pivot_long_source(frame, source):
             frame.duplicated(subset=[*source.join_keys, source.pivot_column], keep=False),
             [*source.join_keys, source.pivot_column],
         ].drop_duplicates()
+        if duplicate_keys.empty:
+            # `frame.pivot` can raise `ValueError` for reasons other than
+            # duplicate (join_keys, pivot_column) rows (e.g. an empty
+            # `value_columns`, a non-hashable pivot value) -- blaming
+            # duplicates when none are actually found would mask the real
+            # error behind an incorrect diagnostic, so let the original
+            # exception speak for itself instead.
+            raise ValueError(f"Source {source.name!r} failed to pivot: {exc}") from exc
         raise ValueError(
             f"Source {source.name!r} has duplicate rows for the same "
             f"({', '.join(source.join_keys)}, {source.pivot_column}) combination, so it can't "

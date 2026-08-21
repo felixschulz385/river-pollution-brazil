@@ -260,8 +260,7 @@ def _clean_mortality_age_frame(frame):
     raw_count_columns = age_columns + ["total"]
     frame[raw_count_columns] = (
         frame[raw_count_columns]
-        .apply(lambda col: col.str.replace("-", "0"), axis=0)
-        .apply(pd.to_numeric, errors="coerce")
+        .apply(_coerce_tabnet_numeric, axis=0)
         .fillna(0)
         .astype("float32")
     )
@@ -353,8 +352,12 @@ def _coerce_tabnet_numeric(series):
     # genuine negative value like "-5,3" gets its sign stripped ("-5,3" ->
     # "05,3" -> 5.3) instead of being parsed as -5.3.
     normalized = normalized.where(normalized != "-", "0")
-    has_decimal_comma = normalized.str.contains(",", na=False)
-    normalized = normalized.where(~has_decimal_comma, normalized.str.replace(".", "", regex=False))
+    # DATASUS-formatted numbers use "." exclusively as a thousands separator
+    # (never a decimal point) and "," as the decimal separator, so it's safe
+    # to strip every "." unconditionally before converting "," to ".": e.g.
+    # "1.234" (a plain integer, no decimal comma) must become 1234, not the
+    # float 1.234, and "12.345,67" must become 12345.67.
+    normalized = normalized.str.replace(".", "", regex=False)
     normalized = normalized.str.replace(",", ".", regex=False)
 
     return pd.to_numeric(
@@ -577,6 +580,16 @@ def _preprocess_sih_icd10_chapter_request(raw_path, output_path):
     )
     long_frame["metric_value"] = _coerce_tabnet_numeric(long_frame["metric_value"])
     long_frame = long_frame.dropna(subset=["metric_value"]).copy()
+    unmapped_chapters = sorted(
+        set(long_frame["raw_icd10_chapter"]) - set(ICD10_CHAPTER_LABELS)
+    )
+    if unmapped_chapters:
+        logger.warning(
+            "Dropping %d ICD-10 chapter column(s) with no entry in "
+            "ICD10_CHAPTER_LABELS (DATASUS header text may have changed): %s",
+            len(unmapped_chapters),
+            unmapped_chapters,
+        )
     long_frame = long_frame[long_frame["raw_icd10_chapter"].isin(ICD10_CHAPTER_LABELS)].copy()
     long_frame["year"] = long_frame["export_year"].astype(int)
     long_frame["source_system"] = long_frame["source_key"]

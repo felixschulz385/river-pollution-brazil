@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-from .constants import ASSEMBLY_MODES, WIDE_SOURCE_TYPE
+from .constants import ASSEMBLY_MODES, SOURCE_TYPES, WIDE_SOURCE_TYPE
 
 
 def validate_required_columns(frame, required_columns, frame_name):
@@ -67,6 +67,13 @@ def _parse_source(raw_source, *, dataset_id):
             f"is missing required keys: {sorted(missing_keys)}."
         )
     source_type = raw_source.get("type", WIDE_SOURCE_TYPE)
+    if source_type not in SOURCE_TYPES:
+        raise ValueError(
+            f"Dataset '{dataset_id}' source '{raw_source.get('name', raw_source.get('path'))}' "
+            f"has unknown type '{source_type}'; must be one of {sorted(SOURCE_TYPES)}. "
+            "An unrecognized type would otherwise silently fall through "
+            "`build.py`'s type dispatch and be treated as a plain wide source."
+        )
     if source_type == "long_pivot" and not raw_source.get("pivot_column"):
         raise ValueError(
             f"Dataset '{dataset_id}' source '{raw_source.get('name', raw_source['path'])}' "

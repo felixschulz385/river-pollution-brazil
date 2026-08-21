@@ -80,3 +80,47 @@ def test_save_load_round_trip_preserves_trenches_and_matrices(tmp_path: Path):
 
     reloaded_upstream = reloaded.get_upstream_trenches(102)
     assert set(reloaded_upstream["trench_id"]) == {101, 102}
+
+
+def test_annotate_drainage_areas_with_country_membership_reprojects_mismatched_crs(tmp_path: Path):
+    # `drainage_areas` lives in a projected CRS (as it would after
+    # `build_trench_adm2_table`'s BRAZIL_PROJECTED_CRS reprojection), while
+    # the GADM boundary file is in WGS84 -- the two must be reconciled before
+    # `.intersects()`, or the raw-coordinate comparison silently returns
+    # (mostly) False for everything.
+    network = RiverNetwork()
+    point_in_brazil_wgs84 = Point(-47.9, -15.8)  # Brasília
+    projected = gpd.GeoDataFrame(
+        {"trench_id": [101], "geometry": [point_in_brazil_wgs84]}, crs=4326
+    ).to_crs(31983)
+    network.drainage_areas = projected
+
+    gadm_path = tmp_path / "gadm.gpkg"
+    brazil_boundary = gpd.GeoDataFrame(
+        {"geometry": [Point(-47.9, -15.8).buffer(5.0)]}, crs=4326
+    )
+    brazil_boundary.to_file(gadm_path, layer="ADM_ADM_0", driver="GPKG")
+
+    network.annotate_drainage_areas_with_country_membership(str(gadm_path), layer="ADM_ADM_0")
+
+    assert bool(network.drainage_areas["within_brazil"].iloc[0]) is True
+
+
+def test_annotate_drainage_areas_with_country_membership_handles_missing_crs(tmp_path: Path):
+    # `drainage_areas.crs` can be `None` (e.g. dropped by an earlier geometry
+    # operation). `.to_crs()` raises on CRS-less geometries, so the mismatch
+    # guard must not route a `None` CRS into a reprojection attempt.
+    network = RiverNetwork()
+    point_in_brazil_wgs84 = Point(-47.9, -15.8)  # Brasília
+    no_crs = gpd.GeoDataFrame({"trench_id": [101], "geometry": [point_in_brazil_wgs84]}, crs=None)
+    network.drainage_areas = no_crs
+
+    gadm_path = tmp_path / "gadm.gpkg"
+    brazil_boundary = gpd.GeoDataFrame(
+        {"geometry": [Point(-47.9, -15.8).buffer(5.0)]}, crs=4326
+    )
+    brazil_boundary.to_file(gadm_path, layer="ADM_ADM_0", driver="GPKG")
+
+    network.annotate_drainage_areas_with_country_membership(str(gadm_path), layer="ADM_ADM_0")
+
+    assert bool(network.drainage_areas["within_brazil"].iloc[0]) is True

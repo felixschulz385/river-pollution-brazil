@@ -38,7 +38,10 @@ def configure_parser(parser, include_action=True):
 def run(args):
     """Execute the requested river-network action for parsed ``args``."""
     bbox = None
-    if all([args.min_lon, args.min_lat, args.max_lon, args.max_lat]):
+    if all(
+        v is not None
+        for v in (args.min_lon, args.min_lat, args.max_lon, args.max_lat)
+    ):
         import geopandas as gpd
         from shapely.geometry import box
 

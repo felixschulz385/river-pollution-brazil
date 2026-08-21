@@ -36,6 +36,26 @@ def batch_output_path(
     return os.path.join(batch_output_dir(root_dir, dataset_name, table_name), f"{batch_id}{suffix}")
 
 
+def atomic_write_text(path: str, text: str, encoding: str = "utf-8") -> None:
+    """Write `text` to `path` via temp-file + `os.replace`, so a crash or
+    SIGKILL mid-write can never leave a truncated/corrupt file behind --
+    readers always see either the old complete file or the new one."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    temp_path = f"{path}.tmp-{os.getpid()}"
+    with open(temp_path, "w", encoding=encoding) as handle:
+        handle.write(text)
+    os.replace(temp_path, path)
+
+
+def atomic_write_bytes(path: str, data: bytes) -> None:
+    """Binary counterpart to `atomic_write_text`."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    temp_path = f"{path}.tmp-{os.getpid()}"
+    with open(temp_path, "wb") as handle:
+        handle.write(data)
+    os.replace(temp_path, path)
+
+
 def load_manifest(root_dir: str, dataset_name: str, table_name: str) -> list[dict]:
     path = manifest_path(root_dir, dataset_name, table_name)
     if not os.path.exists(path):
@@ -62,16 +82,8 @@ def load_manifest(root_dir: str, dataset_name: str, table_name: str) -> list[dic
 
 def write_manifest(root_dir: str, dataset_name: str, table_name: str, entries: Iterable[dict]) -> str:
     path = manifest_path(root_dir, dataset_name, table_name)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    # Write to a temp file and atomically rename it into place, so a crash or
-    # SIGKILL mid-write can never leave a truncated/corrupt manifest behind --
-    # readers always see either the old complete manifest or the new one.
-    temp_path = f"{path}.tmp-{os.getpid()}"
-    with open(temp_path, "w", encoding="utf-8") as handle:
-        for entry in entries:
-            handle.write(json.dumps(entry, ensure_ascii=True, sort_keys=True))
-            handle.write("\n")
-    os.replace(temp_path, path)
+    text = "".join(json.dumps(entry, ensure_ascii=True, sort_keys=True) + "\n" for entry in entries)
+    atomic_write_text(path, text)
     return path
 
 

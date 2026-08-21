@@ -25,6 +25,29 @@ def test_normalize_age_group_zero_pads_numeric_ranges() -> None:
     assert normalize_age_group("80-mais") == "80_plus"
 
 
+def test_normalize_age_group_returns_null_for_missing_values() -> None:
+    # `pd.isna` must see the real null, not a pre-stringified "nan" literal.
+    assert pd.isna(normalize_age_group(None))
+    assert pd.isna(normalize_age_group(float("nan")))
+
+
+def test_transform_population_frame_keeps_missing_age_group_null() -> None:
+    raw = pd.DataFrame(
+        {
+            "ano": ["2020"],
+            "id_municipio": ["1234567"],
+            "id_municipio_nome": ["Foo"],
+            "sexo": ["Masculino"],
+            "grupo_idade": [None],
+            "populacao": ["8"],
+        }
+    )
+
+    result = transform_population_frame(raw)
+
+    assert pd.isna(result.loc[0, "age_group"])
+
+
 def test_transform_population_frame_matches_notebook_logic() -> None:
     raw = pd.DataFrame(
         {

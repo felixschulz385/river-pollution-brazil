@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..shared.batches import atomic_write_text
 from .checks import CheckResult
 from .constants import SOURCES, sidecar_path
 from .fingerprint import compute_fingerprint
@@ -45,15 +45,9 @@ def _read_sidecar(path: Path) -> dict | None:
 
 
 def _write_sidecar(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Write to a temp file and atomically rename it into place (matching
-    # `shared.batches.write_manifest`), so a crash/SIGKILL mid-write (e.g. a
-    # Slurm job hitting its time/mem limit) can never leave a torn sidecar
-    # for a concurrent reader to see.
-    temp_path = path.with_name(f"{path.name}.tmp-{os.getpid()}")
-    with open(temp_path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, sort_keys=True)
-    os.replace(temp_path, path)
+    # Crash/SIGKILL mid-write (e.g. a Slurm job hitting its time/mem limit)
+    # must never leave a torn sidecar for a concurrent reader to see.
+    atomic_write_text(str(path), json.dumps(payload, indent=2, sort_keys=True))
 
 
 class Verification:
