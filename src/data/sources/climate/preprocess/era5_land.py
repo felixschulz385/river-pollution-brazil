@@ -23,6 +23,8 @@ import xarray as xr
 from joblib import Parallel, delayed
 
 from ..constants import (
+    BOUNDARY_HOURS,
+    BRAZIL_UTC_OFFSET_HOURS,
     DATE_COLUMN,
     DEFAULT_ERA5_LAND_STORE_PATH,
     DEFAULT_ERA5_LAND_TRENCH_DAY_PATH,
@@ -1163,6 +1165,16 @@ def _configured_dataset(dataset: xr.Dataset) -> xr.Dataset:
 def resample_era5l_hourly_to_daily(ds: xr.Dataset, var_config: dict) -> xr.Dataset:
     ds = _rename_dataset_dims(ds)
     ds = _configured_dataset(ds)
+    # Bucket by Brazil-local calendar day, not UTC day: shifting every
+    # timestamp back by `BRAZIL_UTC_OFFSET_HOURS` before resampling makes
+    # the resulting daily bin's date label equal the correct local calendar
+    # date (a day-floor of `t - 3h` for `t` in [D 03:00 UTC, D+1 03:00 UTC)
+    # is exactly local day D). This relies on the caller having supplied
+    # `BOUNDARY_HOURS` worth of the next month's UTC hours when this input
+    # spans a full month, or the month's own last local day comes out
+    # short by that many hours -- see `BOUNDARY_HOURS`'s docstring and
+    # `_drop_incomplete_boundary_day`.
+    ds = ds.assign_coords(time=ds["time"] + pd.Timedelta(hours=BRAZIL_UTC_OFFSET_HOURS))
     out = xr.Dataset(attrs=dict(ds.attrs))
     out.attrs.update(
         {
@@ -1170,7 +1182,8 @@ def resample_era5l_hourly_to_daily(ds: xr.Dataset, var_config: dict) -> xr.Datas
             "aggregation_engine": "xarray.resample",
             "aggregation_note": (
                 "Accumulation variables aggregated by daily sum; "
-                "instantaneous/state variables aggregated by daily mean unless configured otherwise."
+                "instantaneous/state variables aggregated by daily mean unless configured otherwise. "
+                "Days are bucketed by Brazil local time (UTC-3), not UTC."
             ),
             "time_label": "left",
             "time_closed": "left",
@@ -1230,13 +1243,32 @@ def prepare_daily_era5_dataset(ds: xr.Dataset) -> xr.Dataset:
     return out
 
 
+def _drop_incomplete_boundary_day(daily: xr.Dataset, period_start) -> xr.Dataset:
+    """Drop any resampled day earlier than `period_start`'s calendar date.
+
+    A month's own file's first `BOUNDARY_HOURS` UTC hours shift (after the
+    -3h local-time bucketing in `resample_era5l_hourly_to_daily`) into the
+    *previous* month's last local day, producing a spurious partial-day
+    bucket built from only those few hours. The previous month's own file
+    already computes that day correctly (using its own full data plus its
+    own borrowed boundary hours), so this fragment must be dropped rather
+    than written -- keeping it would let whichever file is processed last
+    silently overwrite a correct value with a partial one.
+    """
+    return daily.sel(time=slice(pd.Timestamp(period_start).normalize(), None))
+
+
 def _prepare_dataset_for_store(
     dataset: xr.Dataset,
     subtype: str,
     geobox_state: dict,
+    *,
+    period_start=None,
 ) -> xr.Dataset:
     if subtype == "era5_land_hourly":
         prepared = resample_era5l_hourly_to_daily(dataset, ERA5L_VAR_CONFIG)
+        if period_start is not None:
+            prepared = _drop_incomplete_boundary_day(prepared, period_start)
     elif subtype == "era5_land_daily":
         prepared = prepare_daily_era5_dataset(dataset)
     else:
@@ -1293,6 +1325,39 @@ def _active_download_requests_exist(root_dir=".", subtype="era5_land_hourly") ->
     return False
 
 
+def _boundary_input_path(path: Path) -> Path | None:
+    """Path to `path`'s companion boundary file, or `None` if `path` isn't
+    an `era5_land_hourly` file (the only subtype with a boundary concept --
+    `era5_land_daily` gets its local-time fix server-side via CDS's
+    `time_zone` request parameter instead)."""
+    match = ERA5_FILENAME_PATTERN.fullmatch(path.name)
+    if match is None or match.group(1) != "hourly":
+        return None
+    return path.parent / f"era5_land_hourly_boundary_{match.group('year')}_{match.group('month')}.grib"
+
+
+def _period_start_from_filename(path: Path) -> pd.Timestamp | None:
+    match = ERA5_FILENAME_PATTERN.fullmatch(path.name)
+    if match is None:
+        return None
+    return pd.Timestamp(f"{match.group('year')}-{match.group('month')}-01")
+
+
+def _hourly_boundary_ready(path: Path) -> bool:
+    """Whether `path`'s companion boundary file (see `_boundary_input_path`)
+    has finished downloading. Files with no boundary concept are always
+    ready. Unlike `_manifest_ready_for_preprocess`, a genuinely *missing*
+    boundary file is NOT treated as ready -- it must actually exist and be
+    downloaded, since without it this month's own last local day can't be
+    computed correctly (see `BOUNDARY_HOURS`)."""
+    boundary_path = _boundary_input_path(path)
+    if boundary_path is None:
+        return True
+    if not boundary_path.exists():
+        return False
+    return _manifest_ready_for_preprocess(load_download_manifest(boundary_path))
+
+
 def process_era5_input_file(path: Path, *, root_dir=".", subtype="era5_land_hourly") -> Path:
     if subtype not in SUPPORTED_ERA5_PREPROCESS_SUBTYPES:
         raise ValueError(f"Unsupported ERA5 preprocess subtype: {subtype}")
@@ -1313,14 +1378,30 @@ def process_era5_input_file(path: Path, *, root_dir=".", subtype="era5_land_hour
             file_lock=str(lock_path_for(path)),
         )
 
+        boundary_path = _boundary_input_path(path)
+        if boundary_path is not None and not boundary_path.exists():
+            boundary_path = None
         dataset = _open_era5_dataset(path)
+        boundary_dataset = _open_era5_dataset(boundary_path) if boundary_path is not None else None
         try:
             try:
-                prepared = _prepare_dataset_for_store(dataset, subtype=subtype, geobox_state=geobox_state)
+                combined = (
+                    xr.concat([dataset, boundary_dataset], dim="time")
+                    if boundary_dataset is not None
+                    else dataset
+                )
+                prepared = _prepare_dataset_for_store(
+                    combined,
+                    subtype=subtype,
+                    geobox_state=geobox_state,
+                    period_start=_period_start_from_filename(path),
+                )
                 with climate_file_lock(store_path, owner="climate_preprocess_worker"):
                     write_dataset_region(prepared, store_path)
             finally:
                 _close_dataset(dataset)
+                if boundary_dataset is not None:
+                    _close_dataset(boundary_dataset)
         except Exception as exc:
             _write_preprocess_manifest(
                 path,
@@ -1335,6 +1416,11 @@ def process_era5_input_file(path: Path, *, root_dir=".", subtype="era5_land_hour
             raise
 
         _delete_raw_input_file(path)
+        if boundary_path is not None:
+            # Consumed for good once its main file is processed -- the
+            # *next* month's file has its own, separately-fetched boundary
+            # companion, so this one has no further purpose.
+            _delete_raw_input_file(boundary_path)
         _write_preprocess_manifest(
             path,
             subtype=subtype,
@@ -1366,7 +1452,7 @@ def preprocess_era5_land(root_dir=".", stage="all", n_jobs: int | None = None) -
             for path in discover_era5_input_files(root_dir=root_dir, subtype=subtype):
                 _wait_for_lock_release(path)
                 manifest = load_download_manifest(path)
-                if _manifest_ready_for_preprocess(manifest):
+                if _manifest_ready_for_preprocess(manifest) and _hourly_boundary_ready(path):
                     input_files.append((path, subtype))
         if not input_files:
             raise FileNotFoundError(
@@ -1416,7 +1502,7 @@ def preprocess_era5_land_worker(
             for path in discover_era5_input_files(root_dir=root_dir, subtype=subtype):
                 _wait_for_lock_release(path)
                 manifest = load_download_manifest(path)
-                if _manifest_ready_for_preprocess(manifest):
+                if _manifest_ready_for_preprocess(manifest) and _hourly_boundary_ready(path):
                     ready_files.append((path, subtype))
 
         if ready_files:

@@ -674,6 +674,10 @@ pass's distance-bucket fix).
       regression. Revisit this if an analysis ever needs tight same-day precision between a
       precipitation value and a water-quality sample (e.g. "did it rain in the hours right
       before this sample") rather than a rolling/lagged relationship.
+      **Reopened and actually fixed, 2026-08-21 (see "Climate hourly-origin local-time fix"
+      below).** The "adjacent file's hours" architecture change flagged above as the real fix
+      turned out to be tractable after all: fetch a few extra hours per month instead of
+      restructuring the resample pipeline.
 - [x] `sensor_data/fetch/data/access_reader.py:67-71,104` (`connect_access_database`, used via
       `with connect_access_database(...) as connection:` in `load_mdb_tables`) — pyodbc's
       `Connection.__enter__`/`__exit__` only commit/rollback, they do **not** close the
@@ -1370,3 +1374,80 @@ real this pass.
 No code changes resulted from the pyodbc verification (all three fixes behaved as designed);
 one code change resulted from the Selenium verification (`webdriver_manager` → Selenium
 Manager), described above. `tests/data` (186 tests) passes in full under the `311` conda env.
+
+## Climate hourly-origin local-time fix — 2026-08-21
+
+Reopens the "accept the ~3h UTC-vs-local-time offset" decision recorded in the fourth pass
+above. That decision's own rationale named the real fix and rejected it only because of a
+specific failure mode at month boundaries; this pass closes that failure mode instead of
+working around it, so the offset no longer needs to be accepted.
+
+**The problem, restated:** `resample_era5l_hourly_to_daily` (shared by both the
+`era5_land_hourly` GRIB path, which backs `sro`/`ssro`/`pev`, and the ARCO ingestion path,
+which backs `tp`/`2t`/`2d`/`swvl1`/`swvl2` — the majority of the pipeline's variables) bucketed
+by UTC calendar day. Shifting timestamps back `BRAZIL_UTC_OFFSET_HOURS` (-3h) before bucketing
+fixes that, but a month's own file is then short its last Brazil-local day by exactly
+`BOUNDARY_HOURS` (3) hours — those hours live in the *next* month's file/data, not this one's.
+The fourth pass tried the shift, hit this, and reverted it rather than restructure the
+resample pipeline to see across file boundaries.
+
+**The fix:** instead of restructuring the resample step, fetch those `BOUNDARY_HOURS` extra
+hours per month as their own small, separate request/slice, so each month's own file/window is
+self-sufficient — no cross-file coordination needed at resample time, just an extra ~3
+timesteps of input per month (vs. ~720 for a full month).
+
+- `climate/constants.py` — added `BOUNDARY_HOURS = abs(BRAZIL_UTC_OFFSET_HOURS)` alongside
+  `BRAZIL_UTC_OFFSET_HOURS`, both now referenced by every hourly-origin path.
+- `preprocess/era5_land.py`:
+  - `resample_era5l_hourly_to_daily` now always shifts timestamps back
+    `BRAZIL_UTC_OFFSET_HOURS` before resampling (removing the asymmetry the fourth pass left
+    between this function and the CDS-side daily path).
+  - New `_drop_incomplete_boundary_day(daily, period_start)`: a month's own first
+    `BOUNDARY_HOURS` UTC hours shift into the *previous* month's last local day, producing a
+    spurious partial-day bucket built from only those few hours (the previous month's own file
+    already computes that day correctly) — dropped rather than written, or whichever file
+    processes last would silently overwrite a correct value with a partial one.
+  - `process_era5_input_file` now locates and opens a main file's companion
+    `era5_land_hourly_boundary_{year}_{month}.grib` (via new `_boundary_input_path`), concats
+    its hours onto the main dataset before resampling, passes `period_start` for trimming, and
+    deletes the boundary file alongside the main one once processed.
+  - New `_hourly_boundary_ready(path)`, used by both `preprocess_era5_land` and
+    `preprocess_era5_land_worker`'s discovery loops alongside the existing
+    `_manifest_ready_for_preprocess`: an hourly file isn't considered ready to preprocess until
+    its boundary companion has actually finished downloading (unlike a missing *main* manifest,
+    a missing boundary file is never treated as "ready anyway" — without it the last local day
+    can't be computed correctly).
+- `fetch/era5_land_hourly.py` — new `build_era5_land_hourly_boundary_request(year, month)`
+  (requests the following month's day 1, hours `00:00`-`02:00`; CDS's year/month/day/time
+  request format can't mix days from two different months in one request, so this has to be a
+  separate request rather than a widened main one) and `fetch_era5_land_hourly` now submits
+  every month's boundary batch before its main batch, using the same resumable
+  `retrieve_yearly_dataset_in_monthly_batches` manifest machinery — so a plain re-run of the
+  existing fetch entrypoint (which was already going to happen) fetches boundary data for every
+  month, including ones fetched under the old code, with no separate backfill step needed.
+- `preprocess/era5_land_arco.py` — no new request needed here: ARCO's `source_ds` is already a
+  continuously-available cloud dataset, so `_month_time_bounds` just widens the per-month
+  `time=slice(...)` to include `BOUNDARY_HOURS` past the month's own end. If the ARCO store
+  doesn't yet have those hours (near-real-time ingestion lag), the month (and everything after
+  it chronologically) is deferred to a later run via the same `break`-on-insufficient-data
+  pattern already used for "no data yet at all," rather than processing an incomplete last day.
+
+**Verification:** could not run this against the live CDS API or a real multi-month ARCO
+pull in this pass (that's a real, slow, rate-limited operation against production data, not
+something to trigger as a side effect of a code change) — verified instead with synthetic
+multi-month fixtures exercising the full mechanism: a single out-of-place hour proven to
+bucket into the correct Brazil-local day (`test_resample_hourly_to_daily_buckets_by_brazil_local_day_not_utc`),
+the boundary-trim logic in isolation (`test_drop_incomplete_boundary_day_removes_only_earlier_dates`),
+end-to-end two-month GRIB processing through `preprocess_era5_land` with real per-file
+year/month-shaped synthetic data (`_fake_open_era5_dataset_for_month`), the readiness gate
+correctly blocking (and later admitting) an hourly file pending its boundary companion,
+the ARCO path correctly deferring a month lacking its boundary hours
+(`test_preprocess_era5_land_arco_defers_month_without_boundary_hours`), and both new CDS
+request shapes (`build_era5_land_hourly_boundary_request`, including year rollover at
+December). Existing fetch-side tests asserting exact submit-call counts/ordering for
+`fetch_era5_land_hourly` were updated for the new two-phase (boundary then main) submission
+sequence. `tests/data` (194 tests, up from 186) passes in full under the `311` conda env.
+
+**Residual gap, unchanged from before:** the annual climate mean (`ANNUAL_MEAN_VARIABLES`)
+still has no completeness gate the way MIN/MAX does (see the third pass) — unrelated to this
+fix, still an accepted, separately-tracked gap.

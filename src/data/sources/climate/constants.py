@@ -38,6 +38,15 @@ ERA5_LAND_SUBTYPE_DATASETS = {
 # resample) bucket by this offset rather than by UTC calendar day, to keep
 # their "date" values aligned with the outcomes they're joined against.
 BRAZIL_UTC_OFFSET_HOURS = -3
+# Number of UTC hours from the *next* month's day 1 that a month's own hourly
+# GRIB/ARCO input needs appended before resampling by local day, so its own
+# last Brazil-local day (built by shifting timestamps back
+# `BRAZIL_UTC_OFFSET_HOURS` hours before bucketing by calendar date) isn't
+# short by that many hours. See `preprocess/era5_land.py`'s
+# `resample_era5l_hourly_to_daily`/`_drop_incomplete_boundary_day`,
+# `fetch/era5_land_hourly.py`'s `build_era5_land_hourly_boundary_request`,
+# and `preprocess/era5_land_arco.py`'s widened ARCO time slice.
+BOUNDARY_HOURS = abs(BRAZIL_UTC_OFFSET_HOURS)
 
 ERA5_LAND_PREPROCESS_SUBTYPES = set(ERA5_LAND_SUBTYPE_DATASETS)
 ERA5_LAND_PREPROCESS_STAGES = {"all", "zarr", "parquet"}

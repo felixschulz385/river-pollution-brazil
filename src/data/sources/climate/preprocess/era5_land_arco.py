@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from ..constants import BOUNDARY_HOURS
 from ..fetch.common import ERA5_AREA, _timestamp, climate_file_lock
 from ..fetch.era5_land_arco import ARCO_GROUPS, open_arco_group_dataset
 from .era5_land import (
@@ -15,6 +16,7 @@ from .era5_land import (
     ERA5_OUTPUT_END,
     ERA5_OUTPUT_START,
     ERA5L_VAR_CONFIG,
+    _drop_incomplete_boundary_day,
     _ensure_store_shape,
     _era5_store_path,
     _normalize_time_index,
@@ -118,8 +120,19 @@ def _pending_year_months(start: str, end: str, progress: dict, group: str) -> li
     ]
 
 
-def _month_time_bounds(period: pd.Period) -> tuple[pd.Timestamp, pd.Timestamp]:
-    return period.start_time, period.end_time
+def _month_time_bounds(period: pd.Period) -> tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp]:
+    """Return `(month_start, month_end, boundary_end)`.
+
+    `boundary_end` extends `BOUNDARY_HOURS` past the month's own last hour,
+    into the following month's first `BOUNDARY_HOURS` UTC hours --
+    `resample_era5l_hourly_to_daily` buckets by Brazil-local calendar day
+    (shifting timestamps back before flooring to a date), so this month's
+    own last local day needs those hours to be complete.
+    """
+    month_start = period.start_time
+    month_end = period.end_time
+    boundary_end = (period + 1).start_time + pd.Timedelta(hours=BOUNDARY_HOURS - 1)
+    return month_start, month_end, boundary_end
 
 
 def preprocess_era5_land_arco(
@@ -157,7 +170,7 @@ def preprocess_era5_land_arco(
             source_ds = _rename_dataset_dims(source_ds)
 
             for period in pending_months:
-                month_start, month_end = _month_time_bounds(period)
+                month_start, month_end, boundary_end = _month_time_bounds(period)
                 month_ds = source_ds.sel(time=slice(month_start, month_end))
                 if month_ds.sizes.get("time", 0) == 0:
                     logger.warning(
@@ -165,7 +178,27 @@ def preprocess_era5_land_arco(
                     )
                     break
 
-                daily = resample_era5l_hourly_to_daily(month_ds, var_config)
+                # This month's own last Brazil-local day needs `BOUNDARY_HOURS`
+                # of the *next* month's first UTC hours (see `_month_time_bounds`);
+                # if the ARCO store doesn't have them yet, defer this month
+                # (and, since later months need this same not-yet-arrived data
+                # too, everything after it) rather than writing an incomplete day.
+                boundary_ds = source_ds.sel(time=slice(month_end, boundary_end))
+                if boundary_ds.sizes.get("time", 0) < BOUNDARY_HOURS:
+                    logger.warning(
+                        "ARCO group %s doesn't yet have the %d boundary hour(s) "
+                        "needed to complete %s's own last Brazil-local day; "
+                        "stopping early.",
+                        group,
+                        BOUNDARY_HOURS,
+                        period,
+                    )
+                    break
+
+                daily = resample_era5l_hourly_to_daily(
+                    xr.concat([month_ds, boundary_ds], dim="time"), var_config
+                )
+                daily = _drop_incomplete_boundary_day(daily, month_start)
                 _assert_matches_geobox(daily, geobox_state)
                 daily = _ensure_store_shape(daily, geobox_state)
                 daily = daily.assign_coords(

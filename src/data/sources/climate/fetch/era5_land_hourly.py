@@ -1,4 +1,4 @@
-from ..constants import ERA5_LAND_SUBTYPE_DATASETS
+from ..constants import BOUNDARY_HOURS, ERA5_LAND_SUBTYPE_DATASETS
 from .common import (
     ERA5_AREA,
     ERA5_HOURS,
@@ -35,7 +35,46 @@ def build_era5_land_hourly_request(year, month):
     }
 
 
+def _next_year_month(year, month) -> tuple[str, str]:
+    year, month = int(year), int(month)
+    return (str(year + 1), "01") if month == 12 else (str(year), f"{month + 1:02d}")
+
+
+def build_era5_land_hourly_boundary_request(year, month):
+    """Request `(year, month)`'s "boundary" hours: the first `BOUNDARY_HOURS`
+    UTC hours of the *following* month.
+
+    `preprocess.era5_land.resample_era5l_hourly_to_daily` buckets by
+    Brazil-local calendar day, which shifts every timestamp back
+    `BRAZIL_UTC_OFFSET_HOURS` hours before flooring to a date -- so
+    `(year, month)`'s own file is short its last local day by exactly these
+    hours (they live in the following month's file). Fetched as a separate,
+    tiny request (`BOUNDARY_HOURS` timesteps vs. ~720 for a full month)
+    rather than widening the main request, since CDS's year/month/day/time
+    request format can't mix days from two different months in one request.
+    """
+    next_year, next_month = _next_year_month(year, month)
+    return {
+        "variable": VARIABLES,
+        "year": [next_year],
+        "month": [next_month],
+        "day": ["01"],
+        "time": ERA5_HOURS[:BOUNDARY_HOURS],
+        "area": ERA5_AREA,
+        "data_format": "grib",
+    }
+
+
 def fetch_era5_land_hourly(root_dir="."):
+    retrieve_yearly_dataset_in_monthly_batches(
+        root_dir=root_dir,
+        dataset=DATASET,
+        request_factory=build_era5_land_hourly_boundary_request,
+        output_subdir="era5_land_hourly",
+        file_prefix="era5_land_hourly_boundary",
+        max_running_remote_requests=1,
+        verify_batch=lambda path: verify_era5_grib_batch(path, bands=VERIFICATION_BANDS),
+    )
     return retrieve_yearly_dataset_in_monthly_batches(
         root_dir=root_dir,
         dataset=DATASET,

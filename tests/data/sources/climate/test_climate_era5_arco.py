@@ -153,6 +153,56 @@ def test_arco_progress_round_trip(tmp_path: Path) -> None:
     assert not _is_month_processed(reloaded, "sfc-2m-temperature", "1985-02")
 
 
+def test_preprocess_era5_land_arco_defers_month_without_boundary_hours(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """January's own last Brazil-local day needs BOUNDARY_HOURS of
+    February's first UTC hours (see BOUNDARY_HOURS); if the ARCO store
+    doesn't have them yet, the month must be skipped -- not processed with
+    an incomplete last day."""
+    geobox_state = {
+        "geobox": FakeGeoBox(latitude=[-10.0, -11.0], longitude=[-50.0, -49.0]),
+        "latitude": np.array([-10.0, -11.0]),
+        "longitude": np.array([-50.0, -49.0]),
+        "spatial_ref": None,
+    }
+    monkeypatch.setattr(
+        "src.data.sources.climate.preprocess.era5_land.load_or_create_geobox_state",
+        lambda root_dir=".", sample_path=None: geobox_state,
+    )
+    monkeypatch.setattr(
+        "src.data.sources.climate.preprocess.era5_land_arco.load_or_create_geobox_state",
+        lambda root_dir=".": geobox_state,
+    )
+    monkeypatch.setattr(
+        "src.data.sources.climate.preprocess.era5_land_arco.ARCO_GROUPS",
+        {"sfc-2m-temperature": {"id": "007", "vars": ["t2m", "d2m"]}},
+    )
+
+    # Only January's own hours -- nothing from February yet.
+    hours = pd.date_range("1985-01-01", "1985-01-31T23:00", freq="1h")
+    fixture = xr.Dataset(
+        {
+            "t2m": (("time", "latitude", "longitude"), np.full((len(hours), 2, 2), 290.0, dtype=np.float32)),
+            "d2m": (("time", "latitude", "longitude"), np.full((len(hours), 2, 2), 285.0, dtype=np.float32)),
+        },
+        coords={
+            "time": hours,
+            "latitude": np.array([-11.0, -10.0]),
+            "longitude": np.array([-50.0, -49.0]),
+        },
+    )
+    monkeypatch.setattr(
+        "src.data.sources.climate.preprocess.era5_land_arco.open_arco_group_dataset",
+        lambda group, root_dir=".", chunks="geo": fixture,
+    )
+
+    preprocess_era5_land_arco(root_dir=tmp_path, start="1985-01-01", end="1985-01-31")
+
+    progress = _load_arco_progress(tmp_path)
+    assert not _is_month_processed(progress, "sfc-2m-temperature", "1985-01")
+
+
 def test_preprocess_era5_land_arco_writes_store_and_marks_progress(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -175,11 +225,16 @@ def test_preprocess_era5_land_arco_writes_store_and_marks_progress(
         {"sfc-2m-temperature": {"id": "007", "vars": ["t2m", "d2m"]}},
     )
 
-    hours = pd.date_range("1985-01-01", periods=48, freq="1h")
+    # Covers the full month plus BOUNDARY_HOURS into February: the ARCO
+    # ingestion path needs those extra hours from the *next* month to
+    # complete January's own last Brazil-local day (see `BOUNDARY_HOURS`),
+    # and won't process the month at all without them.
+    hours = pd.date_range("1985-01-01", "1985-02-01T02:00", freq="1h")
+    n_hours = len(hours)
     fixture = xr.Dataset(
         {
-            "t2m": (("time", "latitude", "longitude"), np.full((48, 2, 2), 290.0, dtype=np.float32)),
-            "d2m": (("time", "latitude", "longitude"), np.full((48, 2, 2), 285.0, dtype=np.float32)),
+            "t2m": (("time", "latitude", "longitude"), np.full((n_hours, 2, 2), 290.0, dtype=np.float32)),
+            "d2m": (("time", "latitude", "longitude"), np.full((n_hours, 2, 2), 285.0, dtype=np.float32)),
         },
         coords={
             "time": hours,

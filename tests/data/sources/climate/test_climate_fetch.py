@@ -22,6 +22,7 @@ from src.data.sources.climate.fetch.era5_land_daily import (
 from src.data.sources.climate.fetch.era5_land_hourly import (
     DATASET as HOURLY_DATASET,
     VARIABLES as HOURLY_VARIABLES,
+    build_era5_land_hourly_boundary_request,
     build_era5_land_hourly_request,
     fetch_era5_land_hourly,
 )
@@ -126,20 +127,45 @@ def test_fetch_era5_land_hourly_builds_expected_yearly_requests(
 
     output_paths = fetch_era5_land_hourly(root_dir=tmp_path)
 
+    # `fetch_era5_land_hourly` submits every month's tiny "boundary" request
+    # (the following month's first BOUNDARY_HOURS UTC hours -- see
+    # `build_era5_land_hourly_boundary_request`) before its main monthly
+    # requests; the returned paths are only the main batches.
     assert output_paths[0].name == f"era5_land_hourly_{FIRST_YEAR}_01.grib"
     assert output_paths[-1].name == f"era5_land_hourly_{LAST_YEAR}_12.grib"
     assert len(output_paths) == TOTAL_MONTHLY_BATCHES
-    assert len(submit_calls) == TOTAL_MONTHLY_BATCHES
-    assert [call[0] for call in submit_calls[:3]] == [HOURLY_DATASET, HOURLY_DATASET, HOURLY_DATASET]
-    assert submit_calls[0][1]["year"] == [FIRST_YEAR]
-    assert submit_calls[0][1]["month"] == ["01"]
-    assert submit_calls[0][1] == build_era5_land_hourly_request(FIRST_YEAR, "01")
+    assert len(submit_calls) == 2 * TOTAL_MONTHLY_BATCHES
+
+    boundary_calls = submit_calls[:TOTAL_MONTHLY_BATCHES]
+    main_calls = submit_calls[TOTAL_MONTHLY_BATCHES:]
+    assert [call[0] for call in main_calls[:3]] == [HOURLY_DATASET, HOURLY_DATASET, HOURLY_DATASET]
+    assert main_calls[0][1]["year"] == [FIRST_YEAR]
+    assert main_calls[0][1]["month"] == ["01"]
+    assert main_calls[0][1] == build_era5_land_hourly_request(FIRST_YEAR, "01")
+    assert boundary_calls[0][1] == build_era5_land_hourly_boundary_request(FIRST_YEAR, "01")
+
     manifest = load_download_manifest(output_paths[0])
     assert manifest is not None
     assert manifest["status"] == "submitted"
     assert manifest["dataset"] == HOURLY_DATASET
-    assert manifest["request_id"] == "req-1"
     assert not output_paths[0].exists()
+
+
+def test_build_era5_land_hourly_boundary_request_targets_following_month_day_one() -> None:
+    request = build_era5_land_hourly_boundary_request("2020", "01")
+
+    assert request["year"] == ["2020"]
+    assert request["month"] == ["02"]
+    assert request["day"] == ["01"]
+    assert request["time"] == ["00:00", "01:00", "02:00"]
+
+
+def test_build_era5_land_hourly_boundary_request_rolls_over_to_next_year() -> None:
+    request = build_era5_land_hourly_boundary_request("2020", "12")
+
+    assert request["year"] == ["2021"]
+    assert request["month"] == ["01"]
+    assert request["day"] == ["01"]
 
 
 def test_build_era5_land_daily_request_uses_brazil_local_time_zone() -> None:
@@ -582,6 +608,14 @@ def test_fetch_era5_land_hourly_stops_remote_checks_after_running_limit(
             f'{{\n  "dataset": "{HOURLY_DATASET}",\n  "request": {{"year": ["{FIRST_YEAR}"], "month": ["{month}"]}},\n  "request_id": "req-{month}",\n  "status": "submitted"\n}}',
             encoding="utf-8",
         )
+        # `fetch_era5_land_hourly` also submits/checks each month's small
+        # boundary request; pre-mark these "submitted" too so the boundary
+        # phase doesn't trigger new `submit()` calls the test disallows.
+        boundary_target = output_dir / f"era5_land_hourly_boundary_{FIRST_YEAR}_{month}.grib"
+        manifest_path_for(boundary_target).write_text(
+            f'{{\n  "dataset": "{HOURLY_DATASET}",\n  "request": {{"year": ["{FIRST_YEAR}"], "month": ["{month}"]}},\n  "request_id": "req-b{month}",\n  "status": "submitted"\n}}',
+            encoding="utf-8",
+        )
 
     checked_request_ids = []
 
@@ -608,7 +642,9 @@ def test_fetch_era5_land_hourly_stops_remote_checks_after_running_limit(
 
     fetch_era5_land_hourly(root_dir=tmp_path)
 
-    assert checked_request_ids == ["req-01"]
+    # Boundary batches are retrieved first, so the boundary phase's own
+    # first-running-request short-circuit is checked before the main phase's.
+    assert checked_request_ids == ["req-b01", "req-01"]
 
 
 def test_stale_remote_status_running_does_not_starve_other_batches(
@@ -645,6 +681,21 @@ def test_stale_remote_status_running_does_not_starve_other_batches(
         f'  "dataset": "{HOURLY_DATASET}",\n'
         f'  "request": {{"year": ["{FIRST_YEAR}"], "month": ["02"]}},\n'
         f'  "request_id": "req-submitted",\n'
+        f'  "status": "submitted",\n'
+        f'  "remote_status": "accepted"\n'
+        f'}}',
+        encoding="utf-8",
+    )
+
+    # `fetch_era5_land_hourly`'s boundary phase also has its own 1-request
+    # active budget; give it one already-active manifest so it doesn't try
+    # to submit a fresh boundary request, which `DummyClient.submit` rejects.
+    boundary_submitted_target = output_dir / f"era5_land_hourly_boundary_{FIRST_YEAR}_02.grib"
+    manifest_path_for(boundary_submitted_target).write_text(
+        f'{{\n'
+        f'  "dataset": "{HOURLY_DATASET}",\n'
+        f'  "request": {{"year": ["{FIRST_YEAR}"], "month": ["02"]}},\n'
+        f'  "request_id": "req-boundary-submitted",\n'
         f'  "status": "submitted",\n'
         f'  "remote_status": "accepted"\n'
         f'}}',
@@ -698,6 +749,21 @@ def test_fetch_era5_land_hourly_skips_fresh_remote_checks(
         f'  "dataset": "{HOURLY_DATASET}",\n'
         f'  "request": {{"year": ["{FIRST_YEAR}"], "month": ["01"]}},\n'
         '  "request_id": "req-01",\n'
+        '  "status": "submitted",\n'
+        '  "remote_status": "accepted",\n'
+        '  "remote_checked_at": "2026-04-24T10:00:00+00:00"\n'
+        '}',
+        encoding="utf-8",
+    )
+    # `fetch_era5_land_hourly`'s boundary phase has its own 1-request active
+    # budget; give it one already-active, freshly-checked manifest too, so
+    # it doesn't try to submit or check a fresh boundary request either.
+    boundary_target = output_dir / f"era5_land_hourly_boundary_{FIRST_YEAR}_01.grib"
+    manifest_path_for(boundary_target).write_text(
+        '{\n'
+        f'  "dataset": "{HOURLY_DATASET}",\n'
+        f'  "request": {{"year": ["{FIRST_YEAR}"], "month": ["02"]}},\n'
+        '  "request_id": "req-boundary-01",\n'
         '  "status": "submitted",\n'
         '  "remote_status": "accepted",\n'
         '  "remote_checked_at": "2026-04-24T10:00:00+00:00"\n'

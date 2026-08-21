@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import numpy as np
@@ -7,11 +8,14 @@ import pandas as pd
 import pytest
 import xarray as xr
 
+from src.data.sources.climate.constants import BOUNDARY_HOURS
 from src.data.sources.climate.preprocess.era5_land import (
     ERA5L_VAR_CONFIG,
     ERA5_OUTPUT_TIME_INDEX,
+    _drop_incomplete_boundary_day,
     _field_band_names,
     _field_valid_datetimes,
+    _hourly_boundary_ready,
     _open_era5_dataset,
     bootstrap_era5_store,
     load_or_create_geobox_state,
@@ -22,6 +26,43 @@ from src.data.sources.climate.preprocess.era5_land import (
     write_dataset_region,
 )
 from src.data.sources.climate.fetch.common import load_download_manifest, write_download_manifest
+
+
+def _fake_open_era5_dataset_for_month(path) -> xr.Dataset:
+    """Realistic stand-in for `_open_era5_dataset`: returns a full month of
+    synthetic hourly data for a main `era5_land_hourly_YYYY_MM.grib` path,
+    or `BOUNDARY_HOURS` hours of the following month for its
+    `era5_land_hourly_boundary_YYYY_MM.grib` companion -- matching what the
+    real fetch pipeline produces for each filename."""
+    name = Path(path).name
+    boundary_match = re.fullmatch(r"era5_land_hourly_boundary_(\d{4})_(\d{2})\.grib", name)
+    if boundary_match:
+        year, month = int(boundary_match.group(1)), int(boundary_match.group(2))
+        next_year, next_month = (year + 1, 1) if month == 12 else (year, month + 1)
+        start = f"{next_year:04d}-{next_month:02d}-01T00:00"
+        return _hourly_dataset(start=start, periods=BOUNDARY_HOURS)
+
+    main_match = re.fullmatch(r"era5_land_hourly_(\d{4})_(\d{2})\.grib", name)
+    if main_match:
+        import calendar
+
+        year, month = int(main_match.group(1)), int(main_match.group(2))
+        n_hours = calendar.monthrange(year, month)[1] * 24
+        start = f"{year:04d}-{month:02d}-01T00:00"
+        return _hourly_dataset(start=start, periods=n_hours)
+
+    raise AssertionError(f"Unexpected path passed to fake _open_era5_dataset: {path}")
+
+
+def _write_boundary_fixture(raw_dir: Path, year: str, month: str) -> None:
+    boundary_path = raw_dir / f"era5_land_hourly_boundary_{year}_{month}.grib"
+    boundary_path.write_text("grib", encoding="utf-8")
+    write_download_manifest(
+        boundary_path,
+        dataset="reanalysis-era5-land",
+        request={"year": [year], "month": [month]},
+        status="downloaded",
+    )
 
 
 def test_field_valid_datetimes_uses_earthkit_default_ls_columns() -> None:
@@ -158,19 +199,23 @@ class FakeGeoBox:
         }
 
 
-def _hourly_dataset() -> xr.Dataset:
-    time = pd.date_range("1985-01-01", periods=48, freq="1h")
+def _hourly_dataset(start: str = "1985-01-01T03:00", periods: int = 48) -> xr.Dataset:
+    # Starts at 03:00 UTC (not midnight) so that after the -3h Brazil-local
+    # shift `resample_era5l_hourly_to_daily` applies, a 48-hour window
+    # buckets into exactly 2 complete local days with no partial-day
+    # fragment at either end -- see `BRAZIL_UTC_OFFSET_HOURS`.
+    time = pd.date_range(start, periods=periods, freq="1h")
     lat = np.array([-10.0, -11.0], dtype=np.float64)
     lon = np.array([-50.0, -49.0], dtype=np.float64)
-    base = np.arange(48 * 2 * 2, dtype=np.float32).reshape(48, 2, 2)
+    base = np.arange(periods * 2 * 2, dtype=np.float32).reshape(periods, 2, 2)
 
     return xr.Dataset(
         data_vars={
-            "tp": (("time", "latitude", "longitude"), np.ones((48, 2, 2), dtype=np.float32) * 0.001),
+            "tp": (("time", "latitude", "longitude"), np.ones((periods, 2, 2), dtype=np.float32) * 0.001),
             "2t": (("time", "latitude", "longitude"), 273.15 + base),
             "2d": (("time", "latitude", "longitude"), 270.15 + base),
-            "swvl1": (("time", "latitude", "longitude"), np.ones((48, 2, 2), dtype=np.float32) * 0.2),
-            "swvl2": (("time", "latitude", "longitude"), np.ones((48, 2, 2), dtype=np.float32) * 0.4),
+            "swvl1": (("time", "latitude", "longitude"), np.ones((periods, 2, 2), dtype=np.float32) * 0.2),
+            "swvl2": (("time", "latitude", "longitude"), np.ones((periods, 2, 2), dtype=np.float32) * 0.4),
         },
         coords={"time": time, "latitude": lat, "longitude": lon},
     )
@@ -344,6 +389,36 @@ def test_resample_hourly_to_daily_nulls_instantaneous_mean_on_missing_hour() -> 
     assert np.isnan(daily["2t"].isel(time=0, latitude=0, longitude=0).item())
 
 
+def test_resample_hourly_to_daily_buckets_by_brazil_local_day_not_utc() -> None:
+    # Brazil local day D (UTC-3) spans UTC [D 03:00, D+1 03:00) -- a single
+    # hour at 1985-01-01T02:00 UTC is *before* that cutoff, so it belongs to
+    # the *previous* Brazil-local day (1984-12-31), not 1985-01-01.
+    time = pd.date_range("1985-01-01T02:00", periods=1, freq="1h")
+    ds = xr.Dataset(
+        data_vars={"tp": (("time", "latitude", "longitude"), np.array([[[5.0]]], dtype=np.float32))},
+        coords={"time": time, "latitude": np.array([-10.0]), "longitude": np.array([-50.0])},
+    )
+
+    daily = resample_era5l_hourly_to_daily(ds, ERA5L_VAR_CONFIG)
+
+    assert pd.Timestamp(daily["time"].item()) == pd.Timestamp("1984-12-31")
+
+
+def test_drop_incomplete_boundary_day_removes_only_earlier_dates() -> None:
+    time = pd.to_datetime(["1985-01-31", "1985-02-01", "1985-02-02"])
+    ds = xr.Dataset(
+        data_vars={"tp": (("time",), np.array([1.0, 2.0, 3.0], dtype=np.float32))},
+        coords={"time": time},
+    )
+
+    trimmed = _drop_incomplete_boundary_day(ds, pd.Timestamp("1985-02-01"))
+
+    assert list(pd.DatetimeIndex(trimmed["time"].values)) == [
+        pd.Timestamp("1985-02-01"),
+        pd.Timestamp("1985-02-02"),
+    ]
+
+
 def test_prepare_daily_era5_dataset_writes_daily_values_without_resampling() -> None:
     prepared = prepare_daily_era5_dataset(_daily_dataset())
 
@@ -386,13 +461,56 @@ def test_write_dataset_region_writes_to_matching_month_slice(
             close()
 
 
-def test_preprocess_era5_land_processes_files_and_leaves_store_reusable(
+def test_hourly_boundary_ready_requires_downloaded_boundary_file(tmp_path: Path) -> None:
+    raw_dir = tmp_path / "data" / "climate" / "raw" / "era5_land_hourly"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    main_path = raw_dir / "era5_land_hourly_1985_01.grib"
+    main_path.write_text("grib", encoding="utf-8")
+
+    # No boundary file at all yet.
+    assert _hourly_boundary_ready(main_path) is False
+
+    boundary_path = raw_dir / "era5_land_hourly_boundary_1985_01.grib"
+    boundary_path.write_text("grib", encoding="utf-8")
+    write_download_manifest(
+        boundary_path,
+        dataset="reanalysis-era5-land",
+        request={"year": ["1985"], "month": ["02"]},
+        status="submitted",
+    )
+    # Boundary file exists but is still mid-download per its manifest.
+    assert _hourly_boundary_ready(main_path) is False
+
+    write_download_manifest(
+        boundary_path,
+        dataset="reanalysis-era5-land",
+        request={"year": ["1985"], "month": ["02"]},
+        status="downloaded",
+    )
+    assert _hourly_boundary_ready(main_path) is True
+
+
+def test_hourly_boundary_ready_is_always_true_for_daily_subtype(tmp_path: Path) -> None:
+    daily_path = tmp_path / "era5_land_daily_1985_01.grib"
+    daily_path.write_text("grib", encoding="utf-8")
+
+    assert _hourly_boundary_ready(daily_path) is True
+
+
+def test_preprocess_era5_land_defers_hourly_file_until_boundary_downloaded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     raw_dir = tmp_path / "data" / "climate" / "raw" / "era5_land_hourly"
     raw_dir.mkdir(parents=True, exist_ok=True)
-    for month in ("01", "02"):
-        (raw_dir / f"era5_land_hourly_1985_{month}.grib").write_text("grib", encoding="utf-8")
+    target = raw_dir / "era5_land_hourly_1985_01.grib"
+    target.write_text("grib", encoding="utf-8")
+    write_download_manifest(
+        target,
+        dataset="reanalysis-era5-land",
+        request={"year": ["1985"], "month": ["01"]},
+        status="downloaded",
+    )
+    # No boundary file created -- the main file is otherwise fully ready.
 
     geobox_state = {
         "geobox": FakeGeoBox(latitude=[-10.0, -11.0], longitude=[-50.0, -49.0]),
@@ -406,7 +524,38 @@ def test_preprocess_era5_land_processes_files_and_leaves_store_reusable(
     )
     monkeypatch.setattr(
         "src.data.sources.climate.preprocess.era5_land._open_era5_dataset",
-        lambda path: _hourly_dataset(),
+        _fake_open_era5_dataset_for_month,
+    )
+
+    with pytest.raises(FileNotFoundError, match="No ERA5 GRIB files ready to preprocess"):
+        preprocess_era5_land(root_dir=tmp_path, stage="zarr")
+
+    # The raw file must still be there -- it was never processed.
+    assert target.exists()
+
+
+def test_preprocess_era5_land_processes_files_and_leaves_store_reusable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw_dir = tmp_path / "data" / "climate" / "raw" / "era5_land_hourly"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    for month in ("01", "02"):
+        (raw_dir / f"era5_land_hourly_1985_{month}.grib").write_text("grib", encoding="utf-8")
+        _write_boundary_fixture(raw_dir, "1985", month)
+
+    geobox_state = {
+        "geobox": FakeGeoBox(latitude=[-10.0, -11.0], longitude=[-50.0, -49.0]),
+        "latitude": np.array([-10.0, -11.0]),
+        "longitude": np.array([-50.0, -49.0]),
+        "spatial_ref": None,
+    }
+    monkeypatch.setattr(
+        "src.data.sources.climate.preprocess.era5_land.load_or_create_geobox_state",
+        lambda root_dir=".", sample_path=None: geobox_state,
+    )
+    monkeypatch.setattr(
+        "src.data.sources.climate.preprocess.era5_land._open_era5_dataset",
+        _fake_open_era5_dataset_for_month,
     )
     for month in ("01", "02"):
         write_download_manifest(
@@ -443,6 +592,7 @@ def test_preprocess_era5_land_deletes_raw_file_and_updates_manifest(
         status="downloaded",
         request_id="req-1",
     )
+    _write_boundary_fixture(raw_dir, "1985", "01")
 
     geobox_state = {
         "geobox": FakeGeoBox(latitude=[-10.0, -11.0], longitude=[-50.0, -49.0]),
@@ -456,7 +606,7 @@ def test_preprocess_era5_land_deletes_raw_file_and_updates_manifest(
     )
     monkeypatch.setattr(
         "src.data.sources.climate.preprocess.era5_land._open_era5_dataset",
-        lambda path: _hourly_dataset(),
+        _fake_open_era5_dataset_for_month,
     )
 
     store_path = preprocess_era5_land(root_dir=tmp_path, stage="zarr")
@@ -494,7 +644,7 @@ def test_preprocess_worker_waits_for_new_downloaded_files(
     )
     monkeypatch.setattr(
         "src.data.sources.climate.preprocess.era5_land._open_era5_dataset",
-        lambda path: _hourly_dataset(),
+        _fake_open_era5_dataset_for_month,
     )
 
     waits = {"count": 0}
@@ -510,6 +660,7 @@ def test_preprocess_worker_waits_for_new_downloaded_files(
                 request={"year": ["1985"], "month": ["01"]},
                 status="downloaded",
             )
+            _write_boundary_fixture(raw_dir, "1985", "01")
 
     monkeypatch.setattr("src.data.sources.climate.preprocess.era5_land._worker_wait", fake_wait)
     monkeypatch.setattr(
