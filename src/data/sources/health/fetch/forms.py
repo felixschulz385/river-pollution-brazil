@@ -1,4 +1,3 @@
-import csv
 import io
 import logging
 import os
@@ -15,6 +14,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+from ..csv_utils import parse_datasus_csv_rows
 from ..webdriver import create_chrome_driver
 
 logger = logging.getLogger(__name__)
@@ -326,19 +326,9 @@ class DatasusTabnetForm:
         raise TimeoutException("Timed out waiting for DATASUS CSV download.")
 
     def _parse_result_table_with_csv_reader(self, raw_text):
-        rows = list(csv.reader(io.StringIO(raw_text), delimiter=";", quotechar='"'))
-        if not rows:
+        header, normalized_rows = parse_datasus_csv_rows(io.StringIO(raw_text))
+        if header is None:
             return pd.DataFrame()
-
-        header = rows[0]
-        normalized_rows = []
-        expected_width = len(header)
-        for row in rows[1:]:
-            if len(row) < expected_width:
-                row = row + [None] * (expected_width - len(row))
-            elif len(row) > expected_width:
-                row = row[: expected_width - 1] + [";".join(row[expected_width - 1 :])]
-            normalized_rows.append(row)
         return pd.DataFrame(normalized_rows, columns=header)
 
     def reset_query(self):

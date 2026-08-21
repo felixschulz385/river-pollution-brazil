@@ -1,8 +1,29 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
-from src.data.shared.sensor_upstream import prepare_trench_adm2_matches
+from src.data.shared.sensor_upstream import explode_list_matches, prepare_trench_adm2_matches
+
+
+def test_explode_list_matches_raises_clear_error_on_mismatched_list_lengths():
+    frame = pd.DataFrame(
+        {
+            "trench_id": [1, 2],
+            "adm2_list": [["A", "B"], ["C"]],
+            "intersection_lengths": [[10.0, 20.0], [5.0, 6.0]],
+        }
+    )
+
+    with pytest.raises(ValueError, match="Mismatched list lengths"):
+        explode_list_matches(
+            frame,
+            id_columns=["trench_id"],
+            values_column="adm2_list",
+            value_name="adm2",
+            weights_column="intersection_lengths",
+            weight_name="weight",
+        )
 
 
 class _RnModule:

@@ -8,6 +8,31 @@ from .constants import (
 )
 
 
+def build_trench_length_lookup(rivers):
+    """Return trench lengths keyed by trench id."""
+    required_columns = {TRENCH_ID_COLUMN, "distance"}
+    missing_columns = required_columns.difference(rivers.columns)
+    if missing_columns:
+        raise ValueError(
+            "River trench data is missing required length columns: "
+            f"{sorted(missing_columns)}."
+        )
+    return (
+        rivers[[TRENCH_ID_COLUMN, "distance"]]
+        .drop_duplicates(subset=[TRENCH_ID_COLUMN], keep="first")
+        .rename(columns={"distance": "trench_length_km"})
+    )
+
+
+def land_cover_feature_stem(lc_column):
+    """Return the integer-coded land-cover class id used in long outputs."""
+    if lc_column == LAND_COVER_TOTAL_COLUMN:
+        return -1
+    if lc_column.startswith(LAND_COVER_CLASS_PREFIX):
+        return int(lc_column.removeprefix(LAND_COVER_CLASS_PREFIX))
+    raise ValueError(f"Unsupported land-cover column for long output: {lc_column}")
+
+
 def validate_required_columns(frame, required_columns, frame_name):
     """Raise a clear error if a table is missing required columns."""
     missing_columns = set(required_columns).difference(frame.columns)
@@ -56,6 +81,10 @@ def land_cover_assembly_columns(land_cover_df):
 
 def normalize_optional_int(value):
     """Convert optional integer-like legend values to Python ints or None."""
+    if not pd.api.types.is_scalar(value):
+        raise TypeError(
+            f"normalize_optional_int expects a scalar value, got {type(value).__name__}"
+        )
     if pd.isna(value) or value == "":
         return None
     return int(value)

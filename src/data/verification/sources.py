@@ -24,7 +24,7 @@ from typing import Callable
 
 import pandas as pd
 
-from .checks import CheckResult, check_required_columns, check_value_range
+from .checks import CheckResult, check_null_fraction, check_required_columns, check_value_range
 
 
 @dataclass
@@ -99,6 +99,27 @@ def _missing_artifact(label: str, path: Path) -> OutputArtifactCheck:
     return OutputArtifactCheck(label=label, path=path, exists=path.exists(), checks=[])
 
 
+def _artifact_check(
+    label: str,
+    path: Path,
+    build_checks: Callable[[pd.DataFrame], list[CheckResult]],
+) -> OutputArtifactCheck:
+    """Load one parquet artifact and build its checks, or report it missing.
+
+    Centralizes the "load parquet -> missing -> build checks" pattern that
+    used to be repeated by hand in every adapter's `check_outputs()`: reads
+    `path` via `_safe_read_parquet`, returns a `_missing_artifact` result if
+    it's absent or unreadable, otherwise hands the loaded frame to
+    `build_checks` and wraps the result. A fix to this "load -> missing ->
+    build checks" handling now only needs to change here instead of being
+    re-verified in every adapter.
+    """
+    frame = _safe_read_parquet(path)
+    if frame is None:
+        return _missing_artifact(label, path)
+    return OutputArtifactCheck(label=label, path=path, exists=True, checks=build_checks(frame))
+
+
 # --------------------------------------------------------------------------
 # river_network
 # --------------------------------------------------------------------------
@@ -124,35 +145,28 @@ def _river_network_check_outputs(root_dir) -> list[OutputArtifactCheck]:
     )
 
     river_dir = Path(root_dir) / PROCESSED_DIR
-    results = []
-
-    trenches_path = river_dir / TRENCHES_FILENAME
-    trenches = _safe_read_parquet(trenches_path)
-    if trenches is None:
-        results.append(_missing_artifact("river_trenches", trenches_path))
-    else:
-        checks = [
-            check_required_columns(
-                trenches,
-                ["trench_id", "upstream_node", "downstream_node", "distance", "system_id"],
-            ),
-            _non_empty_check(trenches),
-            _uniqueness_check(trenches, TRENCH_ID_COLUMN),
-        ]
-        results.append(OutputArtifactCheck(label="river_trenches", path=trenches_path, exists=True, checks=checks))
-
-    drainage_path = river_dir / DRAINAGE_AREAS_FILENAME
-    drainage = _safe_read_parquet(drainage_path)
-    if drainage is None:
-        results.append(_missing_artifact("drainage_areas", drainage_path))
-    else:
-        checks = [
-            check_required_columns(drainage, ["trench_id", "drainage_area", "within_brazil"]),
-            _non_empty_check(drainage),
-        ]
-        results.append(OutputArtifactCheck(label="drainage_areas", path=drainage_path, exists=True, checks=checks))
-
-    return results
+    return [
+        _artifact_check(
+            "river_trenches",
+            river_dir / TRENCHES_FILENAME,
+            lambda frame: [
+                check_required_columns(
+                    frame,
+                    ["trench_id", "upstream_node", "downstream_node", "distance", "system_id"],
+                ),
+                _non_empty_check(frame),
+                _uniqueness_check(frame, TRENCH_ID_COLUMN),
+            ],
+        ),
+        _artifact_check(
+            "drainage_areas",
+            river_dir / DRAINAGE_AREAS_FILENAME,
+            lambda frame: [
+                check_required_columns(frame, ["trench_id", "drainage_area", "within_brazil"]),
+                _non_empty_check(frame),
+            ],
+        ),
+    ]
 
 
 def _river_network_fingerprint_paths(root_dir) -> list[Path]:
@@ -215,23 +229,24 @@ def _land_cover_check_outputs(root_dir) -> list[OutputArtifactCheck]:
         DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH,
     )
 
-    path = Path(root_dir) / DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH
-    frame = _safe_read_parquet(path)
-    if frame is None:
-        return [_missing_artifact("land_cover_sensor_upstream", path)]
+    def build_checks(frame):
+        checks = [
+            check_required_columns(frame, ["station_code", "year"]),
+            _non_empty_check(frame),
+        ]
+        # Long-format table: land_cover_class is a row value, and the fraction is
+        # a single "share" column (not per-class "{class}_shr" columns), so one
+        # range check covers every class's rows.
+        if BUCKET_SHARE_COLUMN in frame.columns:
+            checks.append(
+                check_value_range(
+                    frame, BUCKET_SHARE_COLUMN, lo=-1e-6, hi=1.0 + 1e-6, name=f"value_range:{BUCKET_SHARE_COLUMN}"
+                )
+            )
+        return checks
 
-    checks = [
-        check_required_columns(frame, ["station_code", "year"]),
-        _non_empty_check(frame),
-    ]
-    # Long-format table: land_cover_class is a row value, and the fraction is
-    # a single "share" column (not per-class "{class}_shr" columns), so one
-    # range check covers every class's rows.
-    if BUCKET_SHARE_COLUMN in frame.columns:
-        checks.append(
-            check_value_range(frame, BUCKET_SHARE_COLUMN, lo=-1e-6, hi=1.0 + 1e-6, name=f"value_range:{BUCKET_SHARE_COLUMN}")
-        )
-    return [OutputArtifactCheck(label="land_cover_sensor_upstream", path=path, exists=True, checks=checks)]
+    path = Path(root_dir) / DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH
+    return [_artifact_check("land_cover_sensor_upstream", path, build_checks)]
 
 
 def _land_cover_fingerprint_paths(root_dir) -> list[Path]:
@@ -269,25 +284,28 @@ def _sensor_data_check_outputs(root_dir) -> list[OutputArtifactCheck]:
         STREAMFLOW_MAX_VALID_DISCHARGE,
     )
 
-    path = get_processed_dir(root_dir, stage="aggregate") / ASSEMBLED_SENSOR_DATA_PARQUET
-    frame = _safe_read_parquet(path)
-    if frame is None:
-        return [_missing_artifact("water_quality_streamflow", path)]
-
-    checks = [
-        check_required_columns(frame, ["station_code", "datetime"]),
-        _non_empty_check(frame),
-    ]
-    # The final assembled table renames "discharge" to "streamflow_discharge_day"
-    # (plus rolling-mean columns); the plain "discharge" column never survives
-    # to this output.
-    if STREAMFLOW_DAY_COLUMN in frame.columns:
-        checks.append(
-            check_value_range(
-                frame, STREAMFLOW_DAY_COLUMN, lo=0.0, hi=STREAMFLOW_MAX_VALID_DISCHARGE, name=f"value_range:{STREAMFLOW_DAY_COLUMN}"
+    def build_checks(frame):
+        checks = [
+            check_required_columns(frame, ["station_code", "datetime"]),
+            _non_empty_check(frame),
+        ]
+        # The final assembled table renames "discharge" to "streamflow_discharge_day"
+        # (plus rolling-mean columns); the plain "discharge" column never survives
+        # to this output.
+        if STREAMFLOW_DAY_COLUMN in frame.columns:
+            checks.append(
+                check_value_range(
+                    frame,
+                    STREAMFLOW_DAY_COLUMN,
+                    lo=0.0,
+                    hi=STREAMFLOW_MAX_VALID_DISCHARGE,
+                    name=f"value_range:{STREAMFLOW_DAY_COLUMN}",
+                )
             )
-        )
-    return [OutputArtifactCheck(label="water_quality_streamflow", path=path, exists=True, checks=checks)]
+        return checks
+
+    path = get_processed_dir(root_dir, stage="aggregate") / ASSEMBLED_SENSOR_DATA_PARQUET
+    return [_artifact_check("water_quality_streamflow", path, build_checks)]
 
 
 def _sensor_data_fingerprint_paths(root_dir) -> list[Path]:
@@ -352,20 +370,7 @@ def _climate_check_outputs(root_dir) -> list[OutputArtifactCheck]:
     )
     from src.data.sources.climate.fetch.verify import ERA5L_VALUE_RANGES
 
-    results = []
-    # Both output tables are long-format: the variable code lives as a row
-    # value in `climate_variable`, not baked into the column name, so each
-    # variable's range must be checked against a filtered slice, not a
-    # column-name prefix match.
-    for label, rel_path, value_column in (
-        ("climate_sensor_upstream", DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH, "mean_day"),
-        ("climate_adm2_upstream_yearly", DEFAULT_ADM2_UPSTREAM_YEARLY_OUTPUT_PATH, "mean_value"),
-    ):
-        path = Path(root_dir) / rel_path
-        frame = _safe_read_parquet(path)
-        if frame is None:
-            results.append(_missing_artifact(label, path))
-            continue
+    def build_checks(frame, value_column):
         checks = [_non_empty_check(frame)]
         if CLIMATE_VARIABLE_COLUMN not in frame.columns:
             checks.append(
@@ -375,16 +380,31 @@ def _climate_check_outputs(root_dir) -> list[OutputArtifactCheck]:
                     message=f"Column '{CLIMATE_VARIABLE_COLUMN}' not present.",
                 )
             )
-        else:
-            for variable, (lo, hi) in ERA5L_VALUE_RANGES.items():
-                subset = frame.loc[frame[CLIMATE_VARIABLE_COLUMN] == variable]
-                name = f"value_range:{variable}:{value_column}"
-                if subset.empty:
-                    checks.append(CheckResult(name=name, ok=False, message=f"No rows for variable '{variable}'."))
-                    continue
-                checks.append(check_value_range(subset, value_column, lo=lo, hi=hi, name=name))
-        results.append(OutputArtifactCheck(label=label, path=path, exists=True, checks=checks))
-    return results
+            return checks
+        for variable, (lo, hi) in ERA5L_VALUE_RANGES.items():
+            subset = frame.loc[frame[CLIMATE_VARIABLE_COLUMN] == variable]
+            name = f"value_range:{variable}:{value_column}"
+            if subset.empty:
+                checks.append(CheckResult(name=name, ok=False, message=f"No rows for variable '{variable}'."))
+                continue
+            checks.append(check_value_range(subset, value_column, lo=lo, hi=hi, name=name))
+        return checks
+
+    # Both output tables are long-format: the variable code lives as a row
+    # value in `climate_variable`, not baked into the column name, so each
+    # variable's range must be checked against a filtered slice, not a
+    # column-name prefix match.
+    return [
+        _artifact_check(
+            label,
+            Path(root_dir) / rel_path,
+            lambda frame, value_column=value_column: build_checks(frame, value_column),
+        )
+        for label, rel_path, value_column in (
+            ("climate_sensor_upstream", DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH, "mean_day"),
+            ("climate_adm2_upstream_yearly", DEFAULT_ADM2_UPSTREAM_YEARLY_OUTPUT_PATH, "mean_value"),
+        )
+    ]
 
 
 def _climate_fingerprint_paths(root_dir) -> list[Path]:
@@ -410,9 +430,9 @@ def _climate_fingerprint_paths(root_dir) -> list[Path]:
 # --------------------------------------------------------------------------
 
 def _biomes_list_fetched(root_dir, force: bool = False) -> FetchListing:
-    from src.data.sources.biomes.constants import BIOMES_ARCHIVE_FILENAME
+    from src.data.sources.biomes.constants import archive_path
 
-    path = Path(root_dir) / "data" / "biomes" / "raw" / BIOMES_ARCHIVE_FILENAME
+    path = archive_path(root_dir)
     present = 1 if path.exists() else 0
     return FetchListing(
         present=present, expected=1, detail=f"Biomes archive {'present' if present else 'missing'} at {path}."
@@ -428,30 +448,34 @@ def _biomes_check_outputs(root_dir) -> list[OutputArtifactCheck]:
         STATION_CODE_COLUMN,
     )
 
-    results = []
-    for label, rel_path, required_columns in (
-        ("biome_adm2", DEFAULT_ADM2_OUTPUT_PATH, [MUN_ID_COLUMN, BIOME_COLUMN]),
-        ("biome_sensor", DEFAULT_SENSOR_OUTPUT_PATH, [STATION_CODE_COLUMN, BIOME_COLUMN]),
-    ):
-        path = Path(root_dir) / rel_path
-        frame = _safe_read_parquet(path)
-        if frame is None:
-            results.append(_missing_artifact(label, path))
-            continue
+    def build_checks(frame, required_columns):
         checks = [check_required_columns(frame, required_columns), _non_empty_check(frame)]
-        results.append(OutputArtifactCheck(label=label, path=path, exists=True, checks=checks))
-    return results
+        if BIOME_COLUMN in frame.columns:
+            checks.append(check_null_fraction(frame, BIOME_COLUMN, max_null_fraction=0.0))
+        return checks
+
+    return [
+        _artifact_check(
+            label,
+            Path(root_dir) / rel_path,
+            lambda frame, required_columns=required_columns: build_checks(frame, required_columns),
+        )
+        for label, rel_path, required_columns in (
+            ("biome_adm2", DEFAULT_ADM2_OUTPUT_PATH, [MUN_ID_COLUMN, BIOME_COLUMN]),
+            ("biome_sensor", DEFAULT_SENSOR_OUTPUT_PATH, [STATION_CODE_COLUMN, BIOME_COLUMN]),
+        )
+    ]
 
 
 def _biomes_fingerprint_paths(root_dir) -> list[Path]:
     from src.data.sources.biomes.constants import (
-        BIOMES_ARCHIVE_FILENAME,
         DEFAULT_ADM2_OUTPUT_PATH,
         DEFAULT_SENSOR_OUTPUT_PATH,
+        archive_path,
     )
 
     return [
-        Path(root_dir) / "data" / "biomes" / "raw" / BIOMES_ARCHIVE_FILENAME,
+        archive_path(root_dir),
         Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH,
         Path(root_dir) / DEFAULT_SENSOR_OUTPUT_PATH,
     ]
@@ -475,26 +499,25 @@ def _population_check_outputs(root_dir) -> list[OutputArtifactCheck]:
     from src.data.sources.population.constants import DEFAULT_POPULATION_OUTPUT_FILENAME
     from src.data.sources.population.constants import processed_dir as _population_processed_dir
 
-    path = _population_processed_dir(root_dir) / DEFAULT_POPULATION_OUTPUT_FILENAME
-    frame = _safe_read_parquet(path)
-    if frame is None:
-        return [_missing_artifact("population", path)]
-
-    checks = [
-        check_required_columns(frame, ["mun_id", "year", "sex", "age_group", "population"]),
-        _non_empty_check(frame),
-    ]
-    for categorical_column in ("sex", "age_group"):
-        if categorical_column in frame.columns:
-            observed = frame[categorical_column].dropna().unique().tolist()
-            checks.append(
-                CheckResult(
-                    name=f"categorical:{categorical_column}",
-                    ok=bool(observed),
-                    message=f"{len(observed)} distinct values observed.",
+    def build_checks(frame):
+        checks = [
+            check_required_columns(frame, ["mun_id", "year", "sex", "age_group", "population"]),
+            _non_empty_check(frame),
+        ]
+        for categorical_column in ("sex", "age_group"):
+            if categorical_column in frame.columns:
+                observed = frame[categorical_column].dropna().unique().tolist()
+                checks.append(
+                    CheckResult(
+                        name=f"categorical:{categorical_column}",
+                        ok=bool(observed),
+                        message=f"{len(observed)} distinct values observed.",
+                    )
                 )
-            )
-    return [OutputArtifactCheck(label="population", path=path, exists=True, checks=checks)]
+        return checks
+
+    path = _population_processed_dir(root_dir) / DEFAULT_POPULATION_OUTPUT_FILENAME
+    return [_artifact_check("population", path, build_checks)]
 
 
 def _population_fingerprint_paths(root_dir) -> list[Path]:
@@ -561,14 +584,7 @@ def _health_list_fetched(root_dir, force: bool = False) -> FetchListing:
 
 
 def _health_check_outputs(root_dir) -> list[OutputArtifactCheck]:
-    health_dir = Path(root_dir) / "data" / "health" / "processed"
-    results = []
-    for filename in _HEALTH_OUTPUT_FILES:
-        path = health_dir / filename
-        frame = _safe_read_parquet(path)
-        if frame is None:
-            results.append(_missing_artifact(filename, path))
-            continue
+    def build_checks(frame, filename):
         checks = [_non_empty_check(frame)]
         if filename in _HEALTH_BIRTH_OUTCOME_FILES:
             checks.append(check_required_columns(frame, _HEALTH_BIRTH_OUTCOME_REQUIRED_COLUMNS))
@@ -582,8 +598,17 @@ def _health_check_outputs(root_dir) -> list[OutputArtifactCheck]:
                 checks.append(
                     check_value_range(frame, "metric_value", lo=0.0, hi=float("inf"), name="value_range:metric_value")
                 )
-        results.append(OutputArtifactCheck(label=filename, path=path, exists=True, checks=checks))
-    return results
+        return checks
+
+    health_dir = Path(root_dir) / "data" / "health" / "processed"
+    return [
+        _artifact_check(
+            filename,
+            health_dir / filename,
+            lambda frame, filename=filename: build_checks(frame, filename),
+        )
+        for filename in _HEALTH_OUTPUT_FILES
+    ]
 
 
 def _health_fingerprint_paths(root_dir) -> list[Path]:
@@ -641,33 +666,44 @@ def _assembly_check_outputs(root_dir) -> list[OutputArtifactCheck]:
             )
         ]
 
-    results = []
-    for dataset_id, dataset in datasets.items():
-        path = Path(root_dir) / dataset.output_path
-        frame = _safe_read_parquet(path)
-        if frame is None:
-            results.append(_missing_artifact(dataset_id, path))
-            continue
+    def build_checks(frame, dataset):
         # Only wide-type sources' declared `variables`/`categorical_variables`
         # map 1:1 onto output column names; long_pivot/*_bucketed sources
         # produce derived column names (e.g. pivoted or kernel-weighted
         # composition columns), so checking those literally would be a
         # guaranteed false failure rather than a real signal.
-        required_columns = sorted(
+        wide_variable_columns = sorted(
             {
                 column
                 for source in dataset.sources
                 if source.type == WIDE_SOURCE_TYPE
                 for column in (*source.variables, *source.categorical_variables)
             }
-            | set(dataset.index)
         )
+        required_columns = sorted(set(wide_variable_columns) | set(dataset.index))
         checks = [
             check_required_columns(frame, required_columns),
             _non_empty_check(frame),
         ]
-        results.append(OutputArtifactCheck(label=dataset_id, path=path, exists=True, checks=checks))
-    return results
+        # A left join against a source missing rows for some keys produces an
+        # all-NaN column with no error; catch a joined-in column coming back
+        # (almost) entirely null, which check_required_columns can't detect
+        # since the column is still present.
+        for column in wide_variable_columns:
+            if column in frame.columns:
+                checks.append(
+                    check_null_fraction(frame, column, max_null_fraction=0.99, name=f"null_fraction:{column}")
+                )
+        return checks
+
+    return [
+        _artifact_check(
+            dataset_id,
+            Path(root_dir) / dataset.output_path,
+            lambda frame, dataset=dataset: build_checks(frame, dataset),
+        )
+        for dataset_id, dataset in datasets.items()
+    ]
 
 
 def _assembly_fingerprint_paths(root_dir) -> list[Path]:

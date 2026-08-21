@@ -63,7 +63,13 @@ def _compute_kernel_weighted_bucket_values(
     )
 
     df = long_df.copy()
-    df["_raw_weight"] = df[bucket_column].map(raw_weights).astype(float)
+    # A bucket label absent from `bucket_map` (e.g. a negative self-trench bucket,
+    # which `land_cover.composition`'s equivalent inner join also excludes) must
+    # drop out of the weighting, not poison it: `.map` alone would leave NaN for
+    # those rows, and NaN propagating into the per-group `weight_sum` below would
+    # silently zero the *entire* (entity, category) group's output via
+    # `np.where(weight_sum > 0, ...)`, not just exclude the unmapped row.
+    df["_raw_weight"] = df[bucket_column].map(raw_weights).astype(float).fillna(0.0)
     df.loc[df[value_column].isna(), "_raw_weight"] = 0.0
     group_columns = [*entity_columns, category_column]
     weight_sum = df.groupby(group_columns)["_raw_weight"].transform("sum")
@@ -90,11 +96,22 @@ def _pivot_long_source(frame, source):
     for column, value in source.filter.items():
         frame = frame[frame[column] == value]
 
-    wide = frame.pivot(
-        index=list(source.join_keys),
-        columns=source.pivot_column,
-        values=list(source.value_columns),
-    )
+    try:
+        wide = frame.pivot(
+            index=list(source.join_keys),
+            columns=source.pivot_column,
+            values=list(source.value_columns),
+        )
+    except ValueError as exc:
+        duplicate_keys = frame.loc[
+            frame.duplicated(subset=[*source.join_keys, source.pivot_column], keep=False),
+            [*source.join_keys, source.pivot_column],
+        ].drop_duplicates()
+        raise ValueError(
+            f"Source {source.name!r} has duplicate rows for the same "
+            f"({', '.join(source.join_keys)}, {source.pivot_column}) combination, so it can't "
+            f"be pivoted; first few duplicated keys:\n{duplicate_keys.head(5)}"
+        ) from exc
     wide.columns = [
         f"{pivot_value}_{value_column}" for value_column, pivot_value in wide.columns
     ]

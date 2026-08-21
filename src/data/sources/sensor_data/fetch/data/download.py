@@ -192,13 +192,42 @@ def _download_log_connection(root_dir: str) -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(get_download_log_database_path(root_dir)))
 
 
+def _is_parseable_zip(path: Path) -> bool:
+    """Check the file is a structurally intact ZIP, without requiring MDB
+    members (unlike `_is_valid_archive`).
+
+    A legitimately-downloaded-but-empty export is a valid, parseable ZIP with
+    no MDB members and should still count as "this station was archived", so
+    it isn't retried forever. A partially written file (e.g. `shutil.move`
+    interrupted, or the process killed between file creation and the
+    `sensor_downloads` log write) fails the ZIP signature/central-directory
+    check below and must NOT count as archived, or the station gets
+    permanently (and silently) marked done with no data ever recorded.
+    """
+    try:
+        if path.stat().st_size <= 22:
+            return False
+        with path.open("rb") as handle:
+            if handle.read(4) != b"PK\x03\x04":
+                return False
+        with zipfile.ZipFile(path, "r") as archive_file:
+            return archive_file.testzip() is None
+    except (OSError, zipfile.BadZipFile):
+        return False
+
+
 def _current_raw_archives_frame(raw_dir: Path) -> pd.DataFrame:
-    return pd.DataFrame(
-        {
-            "filename": [path.name for path in raw_dir.iterdir() if path.is_file()],
-            "file_size_bytes": [path.stat().st_size for path in raw_dir.iterdir() if path.is_file()],
-        }
-    )
+    records = []
+    for path in raw_dir.iterdir():
+        try:
+            if not path.is_file():
+                continue
+            if path.suffix.lower() == ".zip" and not _is_parseable_zip(path):
+                continue
+            records.append({"filename": path.name, "file_size_bytes": path.stat().st_size})
+        except FileNotFoundError:
+            continue
+    return pd.DataFrame(records, columns=["filename", "file_size_bytes"])
 
 
 def _compute_pending_station_ids(
@@ -407,8 +436,11 @@ def _station_has_any_archives(raw_dir: Path, station_code: str) -> bool:
 def _existing_category_keys(raw_dir: Path, station_code: str) -> set[tuple[str, str, str]]:
     """Infer already-downloaded categories from category-aware archive names."""
     existing_keys: set[tuple[str, str, str]] = set()
+    # `__` is the boundary between the tab and category slugs (see `source_label` below);
+    # `_slugify_label` always collapses runs of underscores to one, so slugs never contain
+    # `__` themselves and the split is unambiguous even though either slug may contain `_`.
     pattern = re.compile(
-        rf"^{re.escape(str(station_code))}_(?P<tab>[a-z0-9_]+)_(?P<category>[a-z0-9_]+)_mdb_",
+        rf"^{re.escape(str(station_code))}_(?P<tab>[a-z0-9_]+)__(?P<category>[a-z0-9_]+)_mdb_",
         re.IGNORECASE,
     )
     for path in raw_dir.iterdir():
@@ -449,22 +481,36 @@ def _refresh_session(driver):
     _wait_for_series_page(driver)
 
 
+def _station_code_matches(name: str, station_code: str) -> bool:
+    """Match `station_code` as a delimited token, not a raw substring.
+
+    Station codes are numeric, so a plain `*{code}*` glob would also match an
+    unrelated station whose code contains this one as a substring (e.g. code
+    "12" matching a leftover "..._112_...zip" from another station's
+    in-flight or stale download) -- require non-digit boundaries around it.
+    """
+    return re.search(rf"(?<!\d){re.escape(str(station_code))}(?!\d)", name) is not None
+
+
 def _wait_for_download_completion(download_dir: Path, station_code: str, timeout_seconds: int = 120) -> Path:
     """Wait until Chrome finishes writing the requested station archive."""
-    candidate_pattern = f"*{station_code}*.zip"
-    existing_files = {path.name for path in download_dir.glob(candidate_pattern)}
 
-    for partial in download_dir.glob(f"*{station_code}*.crdownload"):
+    def _matching(suffix):
+        return [
+            path
+            for path in download_dir.glob(f"*{suffix}")
+            if _station_code_matches(path.name, station_code)
+        ]
+
+    existing_files = {path.name for path in _matching(".zip")}
+
+    for partial in _matching(".crdownload"):
         partial.unlink(missing_ok=True)
 
     deadline = pd.Timestamp.utcnow() + pd.Timedelta(seconds=timeout_seconds)
     while pd.Timestamp.utcnow() < deadline:
-        partial_files = list(download_dir.glob(f"*{station_code}*.crdownload"))
-        candidate_files = [
-            path
-            for path in download_dir.glob(candidate_pattern)
-            if path.name not in existing_files
-        ]
+        partial_files = _matching(".crdownload")
+        candidate_files = [path for path in _matching(".zip") if path.name not in existing_files]
         if candidate_files and not partial_files:
             newest = max(candidate_files, key=lambda path: path.stat().st_mtime)
             if newest.stat().st_size > 0:
@@ -723,7 +769,7 @@ def _download_matching_rows_in_active_tab(
             try:
                 _safe_click(driver, mdb_buttons[0])
                 downloaded_path = _wait_for_download_completion(download_dir, station_code)
-                source_label = f"{_slugify_label(result_tab)}_{station_type_slug}"
+                source_label = f"{_slugify_label(result_tab)}__{station_type_slug}"
                 archive_path = _store_downloaded_file(
                     downloaded_path,
                     raw_dir,
@@ -888,7 +934,13 @@ def download_by_id(
     run_id: str | None = None,
     browser_manager: ManagedBrowser | None = None,
 ):
-    """Download all MDB categories exposed for one station, with retries."""
+    """Download all MDB categories exposed for one station, with retries.
+
+    Returns `(records, driver)`. On a session-loss restart, `driver` is a new
+    WebDriver instance -- the caller must use the returned driver for
+    subsequent stations, not its own stale reference, or every station
+    immediately after a restart pays for a doomed attempt on the dead driver.
+    """
     if fetch_mode not in FETCH_MODES:
         raise ValueError(f"Unknown fetch mode: {fetch_mode}")
 
@@ -927,7 +979,7 @@ def download_by_id(
                     station_code,
                     len(successful_records),
                 )
-                return list(aggregated_records.values())
+                return list(aggregated_records.values()), driver
         except Exception as exc:
             session_lost = _browser_session_lost(exc)
             if not session_lost:
@@ -970,7 +1022,7 @@ def download_by_id(
             attempts=5,
             last_error=f"No downloadable archive found for station {station_code}.",
         )
-    return list(aggregated_records.values())
+    return list(aggregated_records.values()), driver
 
 
 def fetch_station_data(
@@ -1040,7 +1092,7 @@ def fetch_station_data(
                 )
                 driver = browser.restart()
                 _refresh_session(driver)
-            station_records = download_by_id(
+            station_records, driver = download_by_id(
                 station_id,
                 station_name,
                 driver,
@@ -1053,9 +1105,11 @@ def fetch_station_data(
             )
             download_records.extend(station_records)
             download_record_buffer.extend(station_records)
-            # The query table is checkpointed every few stations so interrupted
-            # scraping sessions can resume without starting over.
-            if idx % 10 == 0 and download_record_buffer:
+            # Checkpointed after every station (each download takes seconds, so
+            # this is cheap) rather than every 10, so a crash mid-run can't lose
+            # a station's already-logged results and make its partially
+            # successful categories look "never attempted" on resume.
+            if download_record_buffer:
                 append_dataframe_table(
                     root_dir,
                     SENSOR_DOWNLOADS_TABLE,

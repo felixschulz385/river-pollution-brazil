@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 from ..schema import (
@@ -81,6 +82,63 @@ def classify_value(variable: str, value) -> str:
     return "OK"
 
 
+def classify_values(variable: pd.Series, value: pd.Series) -> pd.Series:
+    """Vectorized equivalent of `classify_value`, same precedence order.
+
+    `value` is assumed to already exclude NaN/inf (as `build_cleaning_flags`
+    does before calling this); non-finite values would fall through every
+    mask below and land on "OK", matching `classify_value`'s NaN handling.
+    """
+    variable_values = variable.to_numpy(dtype=object)
+    numeric_values = value.to_numpy(dtype=float)
+    n = len(numeric_values)
+
+    exact_sentinel = np.isin(numeric_values, list(EXACT_SENTINELS))
+
+    global_range = np.zeros(n, dtype=bool)
+    for lower, upper in GLOBAL_RANGE_SENTINELS:
+        global_range |= (numeric_values >= lower) & (numeric_values <= upper)
+
+    nonnegative_violation = np.isin(variable_values, list(NONNEGATIVE_VARIABLES)) & (numeric_values < 0)
+
+    physical_violation = np.zeros(n, dtype=bool)
+    for var, (lower, upper) in PHYSICAL_LIMITS.items():
+        var_mask = variable_values == var
+        physical_violation |= var_mask & ((numeric_values < lower) | (numeric_values > upper))
+
+    range_sentinel = np.zeros(n, dtype=bool)
+    for var, ranges in RANGE_SENTINELS.items():
+        var_mask = variable_values == var
+        for lower, upper in ranges:
+            range_sentinel |= var_mask & (numeric_values >= lower) & (numeric_values <= upper)
+
+    very_large_violation = np.zeros(n, dtype=bool)
+    for var, threshold in VERY_LARGE_SUSPECT_THRESHOLDS.items():
+        var_mask = variable_values == var
+        very_large_violation |= var_mask & (numeric_values >= threshold)
+
+    labels = np.select(
+        [
+            exact_sentinel,
+            global_range,
+            nonnegative_violation,
+            physical_violation,
+            range_sentinel,
+            very_large_violation,
+        ],
+        [
+            "REMOVE_CODED",
+            "REMOVE_CODED",
+            "REMOVE_INVALID",
+            "REMOVE_INVALID",
+            "REMOVE_CODED",
+            "REMOVE_CODED",
+        ],
+        default="OK",
+    )
+    return pd.Series(labels, index=value.index)
+
+
 def summarize_measurements(long_frame: pd.DataFrame) -> pd.DataFrame:
     if long_frame.empty:
         return pd.DataFrame(columns=SUMMARY_COLUMNS)
@@ -141,10 +199,7 @@ def build_cleaning_flags(frame: pd.DataFrame, measurement_columns: dict[str, str
         [float("inf"), float("-inf")]
     )
     flags = long_frame.loc[finite_values].copy()
-    flags["cleaning_label"] = flags.apply(
-        lambda row: classify_value(row["variable"], row["value"]),
-        axis=1,
-    )
+    flags["cleaning_label"] = classify_values(flags["variable"], flags["value"])
     summary = summarize_measurements(flags.loc[flags["cleaning_label"] == "OK"].copy())
     flags = _mark_giant_values_as_coded(flags, summary)
     summary = summarize_measurements(flags.loc[flags["cleaning_label"] == "OK"].copy())

@@ -457,10 +457,13 @@ class RiverNetwork:
 
             # Use transitive closure to compute reachability.
             reach_sparse = adj_sparse.copy()
-            # Compute transitive closure by matrix squaring
+            # Compute transitive closure by matrix squaring: each iteration
+            # doubles the path length covered, so reach_result must be
+            # squared against itself (not against the original adjacency)
+            # for the loop to converge in O(log N) iterations.
             reach_result = reach_sparse
             for _ in range(int(np.log2(len(nodes))) + 1):
-                new_reach = reach_result + reach_result @ reach_sparse
+                new_reach = reach_result + reach_result @ reach_result
                 new_reach.data = np.where(new_reach.data > 0, 1, 0)
                 if new_reach.nnz == reach_result.nnz:
                     break

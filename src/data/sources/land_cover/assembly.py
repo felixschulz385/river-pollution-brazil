@@ -24,7 +24,6 @@ from .constants import (
     DEFAULT_WATER_QUALITY_PATH,
     DISTANCE_BUCKET_COLUMN,
     LAND_COVER_CLASS_COLUMN,
-    LAND_COVER_CLASS_PREFIX,
     LAND_COVER_TOTAL_COLUMN,
     LEGACY_SENSOR_UPSTREAM_DISTANCE_BUCKETS_VARIANT,
     SENSOR_ASSEMBLY_VARIANT,
@@ -35,11 +34,21 @@ from .constants import (
     YEAR_COLUMN,
 )
 from src.data.sources import river_network as rn_module
-from .schema import land_cover_assembly_columns, validate_required_columns
+from .schema import (
+    build_trench_length_lookup,
+    land_cover_assembly_columns,
+    land_cover_feature_stem,
+    validate_required_columns,
+)
 from src.data.shared.sensor_upstream import (
-    build_group_index_lookup,
+    assign_distance_buckets,
+    bucket_label,
+    build_system_trench_lookup,
+    build_trench_system_position_lookup,
+    combine_station_upstream_distances,
     normalize_network_frame,
-    sparse_row,
+    resolve_upstream_trench_distances,
+    shift_upstream_distances,
     validate_network_index_tables,
 )
 
@@ -155,47 +164,14 @@ def _load_network(river_network_path):
 
 
 def _build_system_trench_lookup(rivers):
-    """Build per-system trench id arrays, positions, and valid indices."""
-    system_trench_id_arrays, system_trench_positions = build_group_index_lookup(
-        rivers,
-        location_column=TRENCH_ID_COLUMN,
-        system_column=rn_module.SYSTEM_ID_KEY,
-        position_column=rn_module.TRENCH_INDEX_COLUMN,
+    return build_system_trench_lookup(
+        rivers, rn_module=rn_module, trench_id_column=TRENCH_ID_COLUMN
     )
-    system_valid_positions = {
-        system_id: set(positions.values())
-        for system_id, positions in system_trench_positions.items()
-    }
-    return system_trench_id_arrays, system_trench_positions, system_valid_positions
 
 
 def _build_trench_system_position_lookup(rivers):
-    """Build an O(1) lookup from trench id to system id and trench index."""
-    trench_rows = rivers[
-        [TRENCH_ID_COLUMN, rn_module.SYSTEM_ID_KEY, rn_module.TRENCH_INDEX_COLUMN]
-    ].drop_duplicates()
-    duplicated = trench_rows[TRENCH_ID_COLUMN].duplicated(keep=False)
-    if duplicated.any():
-        duplicate_ids = trench_rows.loc[duplicated, TRENCH_ID_COLUMN].unique()[:10]
-        raise ValueError(
-            "Expected one river-network row per trench id. "
-            f"Found duplicate trench ids, e.g. {duplicate_ids}."
-        )
-    return {
-        int(trench_id): (int(system_id), int(trench_index))
-        for trench_id, system_id, trench_index in trench_rows.itertuples(
-            index=False,
-            name=None,
-        )
-    }
-
-
-def _build_trench_length_lookup(rivers):
-    """Return trench lengths keyed by trench id."""
-    return (
-        rivers[[TRENCH_ID_COLUMN, "distance"]]
-        .drop_duplicates(subset=[TRENCH_ID_COLUMN], keep="first")
-        .rename(columns={"distance": "trench_length_km"})
+    return build_trench_system_position_lookup(
+        rivers, rn_module=rn_module, trench_id_column=TRENCH_ID_COLUMN
     )
 
 
@@ -206,177 +182,43 @@ def _resolve_upstream_trench_distances(
     system_valid_positions,
     trench_system_position_lookup,
 ):
-    """Return production upstream trench ids and distances for one target trench.
-
-    Deliberately not delegated to shared.sensor_upstream.resolve_reachable_distances:
-    that function re-derives each trench's system/position by scanning
-    network.trenches on every call, while this version takes a precomputed O(1)
-    trench_system_position_lookup -- required here since this runs once per trench
-    across millions of trenches.
-    """
-    try:
-        system_id, target_position = trench_system_position_lookup[int(trench_id)]
-    except KeyError as exc:
-        raise KeyError(f"Unknown trench_id in river network: {trench_id}") from exc
-
-    system_trench_ids = system_trench_id_arrays.get(
-        system_id,
-        np.asarray([], dtype=np.int64),
+    return resolve_upstream_trench_distances(
+        trench_id,
+        network,
+        system_trench_id_arrays,
+        system_valid_positions,
+        trench_system_position_lookup,
+        trench_id_column=TRENCH_ID_COLUMN,
+        distance_column=UPSTREAM_DISTANCE_COLUMN,
     )
-    if len(system_trench_ids) == 0:
-        return pd.DataFrame(columns=[TRENCH_ID_COLUMN, UPSTREAM_DISTANCE_COLUMN])
-
-    if target_position not in system_valid_positions[system_id]:
-        raise ValueError(
-            f"Trench index {target_position} for trench_id {trench_id} is invalid."
-        )
-
-    reach_row = sparse_row(
-        network.trench_reachability_matrices[system_id],
-        target_position,
-    )
-    dist_row = sparse_row(
-        network.trench_distance_matrices[system_id],
-        target_position,
-    )
-
-    reach_indices = reach_row.indices.astype(np.int64, copy=False)
-    if len(reach_indices) == 0:
-        return pd.DataFrame(
-            {
-                TRENCH_ID_COLUMN: [int(trench_id)],
-                UPSTREAM_DISTANCE_COLUMN: [0.0],
-            }
-        )
-
-    distance_lookup = dict(
-        zip(
-            dist_row.indices.astype(np.int64, copy=False).tolist(),
-            dist_row.data.astype(float, copy=False).tolist(),
-        )
-    )
-    upstream = pd.DataFrame(
-        {
-            TRENCH_ID_COLUMN: system_trench_id_arrays[system_id][reach_indices].astype(
-                np.int64,
-                copy=False,
-            ),
-            UPSTREAM_DISTANCE_COLUMN: np.asarray(
-                [float(distance_lookup.get(int(col_idx), 0.0)) for col_idx in reach_indices],
-                dtype=float,
-            ),
-        }
-    )
-    if int(trench_id) not in set(upstream[TRENCH_ID_COLUMN].tolist()):
-        upstream = pd.concat(
-            [
-                upstream,
-                pd.DataFrame(
-                    {
-                        TRENCH_ID_COLUMN: [int(trench_id)],
-                        UPSTREAM_DISTANCE_COLUMN: [0.0],
-                    }
-                ),
-            ],
-            ignore_index=True,
-        )
-    return upstream.sort_values(
-        [UPSTREAM_DISTANCE_COLUMN, TRENCH_ID_COLUMN]
-    ).reset_index(drop=True)
 
 
 def _shift_upstream_distances(upstream_distances, trench_lengths):
-    """Shift production distances so zero is the upstream end of the seed trench."""
-    if upstream_distances.empty:
-        return pd.DataFrame(
-            columns=[
-                TRENCH_ID_COLUMN,
-                UPSTREAM_DISTANCE_COLUMN,
-                "trench_length_km",
-                ADJUSTED_DISTANCE_COLUMN,
-            ]
-        )
-
-    shifted = upstream_distances.merge(
+    return shift_upstream_distances(
+        upstream_distances,
         trench_lengths,
-        on=TRENCH_ID_COLUMN,
-        how="left",
-        validate="one_to_one",
+        trench_id_column=TRENCH_ID_COLUMN,
+        distance_column=UPSTREAM_DISTANCE_COLUMN,
+        adjusted_distance_column=ADJUSTED_DISTANCE_COLUMN,
     )
-    if shifted["trench_length_km"].isna().any():
-        missing_ids = shifted.loc[
-            shifted["trench_length_km"].isna(),
-            TRENCH_ID_COLUMN,
-        ].tolist()
-        raise ValueError(
-            "Missing trench length(s) for shifted upstream-distance calculation: "
-            f"{missing_ids[:10]}"
-        )
-    shifted[ADJUSTED_DISTANCE_COLUMN] = (
-        shifted[UPSTREAM_DISTANCE_COLUMN] - shifted["trench_length_km"]
-    )
-    return shifted
 
 
 def _combine_station_upstream_distances(station_trench_ids, upstream_distance_cache):
-    """Merge all trench-level upstream tables for one station into one min-distance table."""
-    distance_frames = [
-        upstream_distance_cache[int(trench_id)]
-        for trench_id in station_trench_ids
-        if int(trench_id) in upstream_distance_cache
-    ]
-    if not distance_frames:
-        return pd.DataFrame(
-            columns=[
-                TRENCH_ID_COLUMN,
-                UPSTREAM_DISTANCE_COLUMN,
-                "trench_length_km",
-                ADJUSTED_DISTANCE_COLUMN,
-            ]
-        )
-
-    combined = pd.concat(distance_frames, ignore_index=True)
-    return (
-        combined.sort_values(
-            [ADJUSTED_DISTANCE_COLUMN, UPSTREAM_DISTANCE_COLUMN, TRENCH_ID_COLUMN]
-        )
-        .drop_duplicates(subset=[TRENCH_ID_COLUMN], keep="first")
-        .reset_index(drop=True)
+    return combine_station_upstream_distances(
+        station_trench_ids,
+        upstream_distance_cache,
+        trench_id_column=TRENCH_ID_COLUMN,
+        distance_column=UPSTREAM_DISTANCE_COLUMN,
+        adjusted_distance_column=ADJUSTED_DISTANCE_COLUMN,
     )
 
 
 def _bucket_label(lower_bound_km):
-    """Return the integer lower bound used to index one bucket."""
-    return int(lower_bound_km)
+    return bucket_label(lower_bound_km)
 
 
 def _assign_sensor_distance_buckets(distances):
-    """Assign shifted upstream distances to lower-bound-indexed 25 km buckets.
-
-    Deliberately not delegated to shared.sensor_upstream.label_values_by_intervals:
-    that function uses (lower, upper] closed-on-right bucket boundaries, while this
-    scheme is closed-on-left/open-on-right ([lower, upper)) -- swapping them would
-    silently shift which bucket a distance sitting exactly on a 25 km boundary falls
-    into.
-    """
-    distances = pd.Series(distances, copy=False)
-    bucket_values = pd.Series(pd.NA, index=distances.index, dtype="Int64")
-    for lower_bound, upper_bound in SENSOR_DISTANCE_BUCKETS:
-        if np.isinf(upper_bound):
-            mask = distances.ge(lower_bound)
-        else:
-            mask = distances.ge(lower_bound) & distances.lt(upper_bound)
-        bucket_values.loc[mask] = _bucket_label(lower_bound)
-    return bucket_values
-
-
-def _land_cover_feature_stem(lc_column):
-    """Return the integer-coded land-cover class id used in long outputs."""
-    if lc_column == LAND_COVER_TOTAL_COLUMN:
-        return -1
-    if lc_column.startswith(LAND_COVER_CLASS_PREFIX):
-        return int(lc_column.removeprefix(LAND_COVER_CLASS_PREFIX))
-    raise ValueError(f"Unsupported land-cover column for long output: {lc_column}")
+    return assign_distance_buckets(distances, SENSOR_DISTANCE_BUCKETS)
 
 
 def _empty_sensor_bucket_rows(target_key, lc_columns):
@@ -391,7 +233,7 @@ def _empty_sensor_bucket_rows(target_key, lc_columns):
                     STATION_CODE_COLUMN: station_code,
                     YEAR_COLUMN: year,
                     DISTANCE_BUCKET_COLUMN: bucket_value,
-                    LAND_COVER_CLASS_COLUMN: _land_cover_feature_stem(lc_column),
+                    LAND_COVER_CLASS_COLUMN: land_cover_feature_stem(lc_column),
                     BUCKET_REACHABLE_COUNT_COLUMN: 0,
                     BUCKET_COUNT_COLUMN: 0.0,
                     BUCKET_SHARE_COLUMN: np.nan,
@@ -440,7 +282,7 @@ def _aggregate_sensor_station_year(
 
         bucket_total = float(bucket[LAND_COVER_TOTAL_COLUMN].sum())
         bucket_counts = {
-            _land_cover_feature_stem(lc_column): float(bucket[lc_column].sum())
+            land_cover_feature_stem(lc_column): float(bucket[lc_column].sum())
             for lc_column in lc_columns
         }
         bucket_summaries[bucket_value] = {
@@ -456,7 +298,7 @@ def _aggregate_sensor_station_year(
         summary = bucket_summaries[bucket_value]
         bucket_total = summary["total"]
         for lc_column in lc_columns:
-            class_name = _land_cover_feature_stem(lc_column)
+            class_name = land_cover_feature_stem(lc_column)
             count_value = float(summary["counts"].get(class_name, 0.0))
             rows.append(
                 {
@@ -514,7 +356,7 @@ def _assemble_sensor_land_cover(
         system_valid_positions,
     ) = _build_system_trench_lookup(rivers)
     trench_system_position_lookup = _build_trench_system_position_lookup(rivers)
-    trench_lengths = _build_trench_length_lookup(rivers)
+    trench_lengths = build_trench_length_lookup(rivers)
 
     target_trench_ids = (
         station_trenches[TRENCH_ID_COLUMN].drop_duplicates().astype(np.int64).tolist()

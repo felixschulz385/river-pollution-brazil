@@ -295,13 +295,20 @@ def resolve_reachable_distances(
     )
     distance_lookup = dict(zip(dist_row.indices.tolist(), dist_row.data.tolist()))
 
-    reachable_records = [
-        {
-            location_column: int(system_ids[col_idx]),
-            distance_column: float(distance_lookup.get(col_idx, 0.0)),
-        }
-        for col_idx in reach_row.indices.tolist()
-    ]
+    reachable_records = []
+    for col_idx in reach_row.indices.tolist():
+        if col_idx not in distance_lookup and col_idx != target_position:
+            raise ValueError(
+                f"Reachability/distance matrices disagree for system {system_id}: "
+                f"trench index {col_idx} is reachable from {target_position} but has no "
+                "corresponding distance entry."
+            )
+        reachable_records.append(
+            {
+                location_column: int(system_ids[col_idx]),
+                distance_column: float(distance_lookup.get(col_idx, 0.0)),
+            }
+        )
     if location_id not in [record[location_column] for record in reachable_records]:
         reachable_records.append(
             {
@@ -313,6 +320,229 @@ def resolve_reachable_distances(
     return pd.DataFrame(reachable_records).sort_values(
         [distance_column, location_column]
     ).reset_index(drop=True)
+
+
+def build_system_trench_lookup(rivers, *, rn_module, trench_id_column):
+    """Build per-system trench id arrays, positions, and valid indices."""
+    system_trench_id_arrays, system_trench_positions = build_group_index_lookup(
+        rivers,
+        location_column=trench_id_column,
+        system_column=rn_module.SYSTEM_ID_KEY,
+        position_column=rn_module.TRENCH_INDEX_COLUMN,
+    )
+    system_valid_positions = {
+        system_id: set(positions.values())
+        for system_id, positions in system_trench_positions.items()
+    }
+    return system_trench_id_arrays, system_trench_positions, system_valid_positions
+
+
+def build_trench_system_position_lookup(rivers, *, rn_module, trench_id_column):
+    """Build an O(1) lookup from trench id to system id and trench index."""
+    trench_rows = rivers[
+        [trench_id_column, rn_module.SYSTEM_ID_KEY, rn_module.TRENCH_INDEX_COLUMN]
+    ].drop_duplicates()
+    duplicated = trench_rows[trench_id_column].duplicated(keep=False)
+    if duplicated.any():
+        duplicate_ids = trench_rows.loc[duplicated, trench_id_column].unique()[:10]
+        raise ValueError(
+            "Expected one river-network row per trench id. "
+            f"Found duplicate trench ids, e.g. {duplicate_ids}."
+        )
+    return {
+        int(trench_id): (int(system_id), int(trench_index))
+        for trench_id, system_id, trench_index in trench_rows.itertuples(
+            index=False,
+            name=None,
+        )
+    }
+
+
+def resolve_upstream_trench_distances(
+    trench_id,
+    network,
+    system_trench_id_arrays,
+    system_valid_positions,
+    trench_system_position_lookup,
+    *,
+    trench_id_column,
+    distance_column,
+):
+    """Return upstream trench ids and distances for one seed trench.
+
+    Unlike `resolve_reachable_distances`, which re-derives each trench's
+    system/position by scanning `network.trenches` on every call, this takes
+    a precomputed O(1) `trench_system_position_lookup` (from
+    `build_trench_system_position_lookup`) -- needed by callers that run this
+    once per trench across millions of trenches.
+    """
+    try:
+        system_id, target_position = trench_system_position_lookup[int(trench_id)]
+    except KeyError as exc:
+        raise KeyError(f"Unknown trench_id in river network: {trench_id}") from exc
+
+    system_trench_ids = system_trench_id_arrays.get(
+        system_id,
+        np.asarray([], dtype=np.int64),
+    )
+    if len(system_trench_ids) == 0:
+        return pd.DataFrame(columns=[trench_id_column, distance_column])
+
+    if target_position not in system_valid_positions[system_id]:
+        raise ValueError(
+            f"Trench index {target_position} for trench_id {trench_id} is invalid."
+        )
+
+    reach_row = sparse_row(
+        network.trench_reachability_matrices[system_id],
+        target_position,
+    )
+    dist_row = sparse_row(
+        network.trench_distance_matrices[system_id],
+        target_position,
+    )
+
+    reach_indices = reach_row.indices.astype(np.int64, copy=False)
+    if len(reach_indices) == 0:
+        return pd.DataFrame(
+            {
+                trench_id_column: [int(trench_id)],
+                distance_column: [0.0],
+            }
+        )
+
+    distance_lookup = dict(
+        zip(
+            dist_row.indices.astype(np.int64, copy=False).tolist(),
+            dist_row.data.astype(float, copy=False).tolist(),
+        )
+    )
+    upstream = pd.DataFrame(
+        {
+            trench_id_column: system_trench_id_arrays[system_id][reach_indices].astype(
+                np.int64,
+                copy=False,
+            ),
+            distance_column: np.asarray(
+                [float(distance_lookup.get(int(col_idx), 0.0)) for col_idx in reach_indices],
+                dtype=float,
+            ),
+        }
+    )
+    if int(trench_id) not in set(upstream[trench_id_column].tolist()):
+        upstream = pd.concat(
+            [
+                upstream,
+                pd.DataFrame(
+                    {
+                        trench_id_column: [int(trench_id)],
+                        distance_column: [0.0],
+                    }
+                ),
+            ],
+            ignore_index=True,
+        )
+    return upstream.sort_values(
+        [distance_column, trench_id_column]
+    ).reset_index(drop=True)
+
+
+def shift_upstream_distances(
+    upstream_distances,
+    trench_lengths,
+    *,
+    trench_id_column,
+    distance_column,
+    adjusted_distance_column,
+):
+    """Shift upstream distances so zero is the upstream end of the seed trench."""
+    if upstream_distances.empty:
+        return pd.DataFrame(
+            columns=[
+                trench_id_column,
+                distance_column,
+                "trench_length_km",
+                adjusted_distance_column,
+            ]
+        )
+
+    shifted = upstream_distances.merge(
+        trench_lengths,
+        on=trench_id_column,
+        how="left",
+        validate="one_to_one",
+    )
+    if shifted["trench_length_km"].isna().any():
+        missing_ids = shifted.loc[
+            shifted["trench_length_km"].isna(),
+            trench_id_column,
+        ].tolist()
+        raise ValueError(
+            "Missing trench length(s) for shifted upstream-distance calculation: "
+            f"{missing_ids[:10]}"
+        )
+    shifted[adjusted_distance_column] = (
+        shifted[distance_column] - shifted["trench_length_km"]
+    )
+    return shifted
+
+
+def combine_station_upstream_distances(
+    station_trench_ids,
+    upstream_distance_cache,
+    *,
+    trench_id_column,
+    distance_column,
+    adjusted_distance_column,
+):
+    """Merge all trench-level upstream tables for one station into one min-distance table."""
+    distance_frames = [
+        upstream_distance_cache[int(trench_id)]
+        for trench_id in station_trench_ids
+        if int(trench_id) in upstream_distance_cache
+    ]
+    if not distance_frames:
+        return pd.DataFrame(
+            columns=[
+                trench_id_column,
+                distance_column,
+                "trench_length_km",
+                adjusted_distance_column,
+            ]
+        )
+
+    combined = pd.concat(distance_frames, ignore_index=True)
+    return (
+        combined.sort_values(
+            [adjusted_distance_column, distance_column, trench_id_column]
+        )
+        .drop_duplicates(subset=[trench_id_column], keep="first")
+        .reset_index(drop=True)
+    )
+
+
+def bucket_label(lower_bound_km):
+    """Return the integer lower bound used to index one discrete distance bucket."""
+    return int(lower_bound_km)
+
+
+def assign_distance_buckets(distances, buckets):
+    """Assign shifted upstream distances to lower-bound-indexed discrete buckets.
+
+    Unlike `label_values_by_intervals`, which uses (lower, upper] closed-on-
+    right bucket boundaries, this uses closed-on-left/open-on-right
+    ([lower, upper)) boundaries -- swapping them would silently shift which
+    bucket a distance sitting exactly on a boundary falls into.
+    """
+    distances = pd.Series(distances, copy=False)
+    bucket_values = pd.Series(pd.NA, index=distances.index, dtype="Int64")
+    for lower_bound, upper_bound in buckets:
+        if np.isinf(upper_bound):
+            mask = distances.ge(lower_bound)
+        else:
+            mask = distances.ge(lower_bound) & distances.lt(upper_bound)
+        bucket_values.loc[mask] = bucket_label(lower_bound)
+    return bucket_values
 
 
 DISTANCE_KERNELS = ("uniform", "triangular", "epanechnikov", "gaussian", "exponential")
@@ -476,6 +706,19 @@ def explode_list_matches(
             lambda values: values if isinstance(values, list) else []
         )
         explode_columns.append(renamed_weight)
+
+        # `DataFrame.explode` requires every row's exploded list-columns to
+        # have equal length; a raw `ValueError` from pandas doesn't say which
+        # row or columns are at fault. An out-of-sync pair (e.g. a
+        # partially-written or manually edited upstream table) should fail
+        # clearly instead of crashing the whole aggregation.
+        mismatched = matches[value_name].str.len() != matches[renamed_weight].str.len()
+        if mismatched.any():
+            bad_rows = matches.loc[mismatched, list(id_columns)].to_dict("records")
+            raise ValueError(
+                f"Mismatched list lengths between {value_name!r} and {renamed_weight!r} "
+                f"for {mismatched.sum()} row(s); first offending row: {bad_rows[0]}."
+            )
     matches = matches.explode(explode_columns, ignore_index=True)
     return matches.dropna(subset=[value_name])
 

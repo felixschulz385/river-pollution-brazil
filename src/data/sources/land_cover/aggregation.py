@@ -15,16 +15,20 @@ from .constants import (
     DEFAULT_RIVER_NETWORK_PATH,
     DISTANCE_BUCKET_COLUMN,
     LAND_COVER_CLASS_COLUMN,
-    LAND_COVER_CLASS_PREFIX,
     LAND_COVER_TOTAL_COLUMN,
     MUN_ID_COLUMN,
+    SENSOR_DISTANCE_BUCKET_STARTS_KM,
     SENSOR_DISTANCE_BUCKET_WIDTH_KM,
     TRENCH_ID_COLUMN,
     YEAR_COLUMN,
     derive_mun_id_from_adm2_id,
 )
 from src.data.sources import river_network as rn_module
-from .schema import validate_land_cover_output_columns
+from .schema import (
+    build_trench_length_lookup,
+    land_cover_feature_stem,
+    validate_land_cover_output_columns,
+)
 from src.data.shared.sensor_upstream import (
     BUCKET_INTERSECTS_ADM2_COLUMN,
     build_group_index_lookup,
@@ -43,22 +47,6 @@ def _normalize_network_frame(frame):
     if frame is None:
         return None
     return frame.reset_index(drop=True).copy()
-
-
-def _build_trench_length_lookup(rivers):
-    """Return trench lengths keyed by trench id."""
-    required_columns = {TRENCH_ID_COLUMN, "distance"}
-    missing_columns = required_columns.difference(rivers.columns)
-    if missing_columns:
-        raise ValueError(
-            "River trench data is missing required length columns: "
-            f"{sorted(missing_columns)}."
-        )
-    return (
-        rivers[[TRENCH_ID_COLUMN, "distance"]]
-        .drop_duplicates(subset=[TRENCH_ID_COLUMN], keep="first")
-        .rename(columns={"distance": "trench_length_km"})
-    )
 
 
 def _apply_shifted_origin(trench_distance_lookup, trench_lengths):
@@ -85,20 +73,22 @@ def _apply_shifted_origin(trench_distance_lookup, trench_lengths):
 
 
 def _assign_distance_bucket(distances):
-    """Return 25 km lower-bound bucket labels on the shifted distance scale."""
+    """Return 25 km lower-bound bucket labels on the shifted distance scale.
+
+    Unlike the sensor-panel variant (`assembly.py`'s `_assign_sensor_distance_buckets`),
+    negative buckets are kept here on purpose -- they represent the ADM2-touching
+    trench's own downstream portion, behind the shifted-distance zero point -- so
+    this can't just delegate to `shared.sensor_upstream.assign_distance_buckets`
+    with `SENSOR_DISTANCE_BUCKETS`, whose bucket list starts at 0 and would drop
+    them. The upper end is clamped to the last bucket start (500 km) to match
+    `SENSOR_DISTANCE_BUCKETS`/`LAND_COVER_COMPOSITION_BUCKET_MAP`, which are both
+    keyed only up to 500 -- an uncapped label beyond that is silently dropped by
+    `composition.py`'s inner join against `LAND_COVER_COMPOSITION_BUCKET_MAP`.
+    """
     distances = np.asarray(distances, dtype=float)
-    return (
-        np.floor(distances / SENSOR_DISTANCE_BUCKET_WIDTH_KM) * SENSOR_DISTANCE_BUCKET_WIDTH_KM
-    ).astype(int)
-
-
-def _land_cover_feature_stem(lc_column):
-    """Return the integer-coded land-cover class id used in long outputs."""
-    if lc_column == LAND_COVER_TOTAL_COLUMN:
-        return -1
-    if lc_column.startswith(LAND_COVER_CLASS_PREFIX):
-        return int(lc_column.removeprefix(LAND_COVER_CLASS_PREFIX))
-    raise ValueError(f"Unsupported land-cover column for long output: {lc_column}")
+    buckets = np.floor(distances / SENSOR_DISTANCE_BUCKET_WIDTH_KM) * SENSOR_DISTANCE_BUCKET_WIDTH_KM
+    buckets = np.minimum(buckets, SENSOR_DISTANCE_BUCKET_STARTS_KM[-1])
+    return buckets.astype(int)
 
 
 def aggregate_along_rivers(
@@ -138,7 +128,7 @@ def aggregate_along_rivers(
         raise ValueError("River network must include drainage polygon data.")
 
     rivers = network.trenches
-    trench_lengths = _build_trench_length_lookup(rivers)
+    trench_lengths = build_trench_length_lookup(rivers)
     missing_drainage_columns = {TRENCH_ID_COLUMN}.difference(drainage_polygons.columns)
     if missing_drainage_columns:
         raise ValueError(
@@ -169,6 +159,11 @@ def aggregate_along_rivers(
         for column in land_cover_df.columns
         if column not in [TRENCH_ID_COLUMN, YEAR_COLUMN]
     ]
+    if LAND_COVER_TOTAL_COLUMN not in lc_columns:
+        raise ValueError(
+            f"Land-cover input is missing the `{LAND_COVER_TOTAL_COLUMN}` column required "
+            "to compute bucket shares."
+        )
     logger.info("Land cover columns: %s", lc_columns)
 
     land_cover_by_trench_year = land_cover_df.groupby(
@@ -274,7 +269,7 @@ def aggregate_along_rivers(
                         continue
 
                     bucket_sums = df_bucket[lc_columns].sum()
-                    bucket_total = float(bucket_sums.get(LAND_COVER_TOTAL_COLUMN, 0.0))
+                    bucket_total = float(bucket_sums[LAND_COVER_TOTAL_COLUMN])
                     bucket_intersects_adm2 = bool(
                         df_bucket[TRENCH_ID_COLUMN].isin(intersecting_trench_ids).any()
                     )
@@ -285,7 +280,7 @@ def aggregate_along_rivers(
                                 MUN_ID_COLUMN: derive_mun_id_from_adm2_id(adm2_id),
                                 YEAR_COLUMN: int(year),
                                 DISTANCE_BUCKET_COLUMN: int(bucket),
-                                LAND_COVER_CLASS_COLUMN: _land_cover_feature_stem(lc_column),
+                                LAND_COVER_CLASS_COLUMN: land_cover_feature_stem(lc_column),
                                 BUCKET_REACHABLE_COUNT_COLUMN: int(len(df_bucket)),
                                 BUCKET_COUNT_COLUMN: count_value,
                                 BUCKET_SHARE_COLUMN: (

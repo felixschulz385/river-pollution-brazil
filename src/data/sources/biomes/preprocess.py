@@ -184,7 +184,10 @@ def build_station_biomes(root_dir=".", shapefile_path=None, output_path=None):
             how="left",
             distance_col="_distance",
         ).drop_duplicates(subset=[STATION_CODE_COLUMN], keep="first")
-        joined.loc[unmatched.index, BIOME_COLUMN] = nearest[BIOME_COLUMN].to_numpy()
+        nearest_biome_by_code = nearest.set_index(STATION_CODE_COLUMN)[BIOME_COLUMN]
+        joined.loc[unmatched.index, BIOME_COLUMN] = joined.loc[
+            unmatched.index, STATION_CODE_COLUMN
+        ].map(nearest_biome_by_code)
 
     result = (
         pd.DataFrame(joined[[STATION_CODE_COLUMN, BIOME_COLUMN]])

@@ -293,10 +293,6 @@ def _available_tables(connection) -> set[str]:
     return set(tables["table_name"])
 
 
-def _resolve_source_table(connection) -> str:
-    return _resolve_first_available_table(connection, WATER_QUALITY_SOURCE_TABLES)
-
-
 def _resolve_first_available_table(connection, table_names) -> str:
     tables = _available_tables(connection)
     for table_name in table_names:
@@ -307,44 +303,32 @@ def _resolve_first_available_table(connection, table_names) -> str:
     )
 
 
-def _read_source_table(root_dir="."):
+def _connect_sensor_database(root_dir="."):
     import duckdb
 
     database_path = get_sensor_database_path(root_dir)
     if not Path(database_path).exists():
         raise FileNotFoundError(f"Sensor database not found: {database_path}")
-    with duckdb.connect(str(database_path)) as connection:
-        source_table = _resolve_source_table(connection)
-        frame = connection.execute(
-            f"SELECT * FROM {_quote_identifier(source_table)}"
-        ).fetchdf()
-    return source_table, frame
-
-
-def _read_table(root_dir=".", table_name=None):
-    import duckdb
-
-    database_path = get_sensor_database_path(root_dir)
-    if not Path(database_path).exists():
-        raise FileNotFoundError(f"Sensor database not found: {database_path}")
-    with duckdb.connect(str(database_path)) as connection:
-        if table_name not in _available_tables(connection):
-            raise ValueError(f"Table {table_name!r} not found in {database_path}.")
-        return connection.execute(f"SELECT * FROM {_quote_identifier(table_name)}").fetchdf()
+    return duckdb.connect(str(database_path))
 
 
 def _read_first_available_table(root_dir=".", table_names=None):
-    import duckdb
-
-    database_path = get_sensor_database_path(root_dir)
-    if not Path(database_path).exists():
-        raise FileNotFoundError(f"Sensor database not found: {database_path}")
-    with duckdb.connect(str(database_path)) as connection:
+    """Read whichever of `table_names` exists first, returning (table_name, frame)."""
+    with _connect_sensor_database(root_dir) as connection:
         source_table = _resolve_first_available_table(connection, table_names)
         frame = connection.execute(
             f"SELECT * FROM {_quote_identifier(source_table)}"
         ).fetchdf()
     return source_table, frame
+
+
+def _read_source_table(root_dir="."):
+    return _read_first_available_table(root_dir, WATER_QUALITY_SOURCE_TABLES)
+
+
+def _read_table(root_dir=".", table_name=None):
+    _, frame = _read_first_available_table(root_dir, [table_name])
+    return frame
 
 
 def _preprocess_output_dir(root_dir=".") -> Path:

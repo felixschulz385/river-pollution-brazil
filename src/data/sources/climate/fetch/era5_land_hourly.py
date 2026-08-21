@@ -1,13 +1,14 @@
+from ..constants import ERA5_LAND_SUBTYPE_DATASETS
 from .common import (
     ERA5_AREA,
-    ERA5_DAYS,
     ERA5_HOURS,
+    days_in_month,
     retrieve_yearly_dataset_in_monthly_batches,
 )
 from .verify import verify_era5_grib_batch
 
 
-DATASET = "reanalysis-era5-land"
+DATASET = ERA5_LAND_SUBTYPE_DATASETS["era5_land_hourly"]
 # total_precipitation, 2m_temperature, 2m_dewpoint_temperature, and the two
 # volumetric_soil_water_layer variables are sourced from CDS's ARCO Zarr store
 # instead (see fetch/era5_land_arco.py + preprocess/era5_land_arco.py) - they
@@ -27,7 +28,7 @@ def build_era5_land_hourly_request(year, month):
         "variable": VARIABLES,
         "year": [year],
         "month": [month],
-        "day": ERA5_DAYS,
+        "day": days_in_month(year, month),
         "time": ERA5_HOURS,
         "area": ERA5_AREA,
         "data_format": "grib",

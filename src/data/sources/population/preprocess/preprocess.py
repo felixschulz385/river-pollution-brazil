@@ -6,8 +6,10 @@ from pathlib import Path
 
 import pandas as pd
 
+from ..constants import DEFAULT_POPULATION_OUTPUT_FILENAME
 from ..constants import processed_dir as _processed_dir
 from ..constants import raw_dir as _raw_dir
+from src.data.sources.land_cover.constants import derive_mun_id_from_adm2_id
 
 
 def normalize_text(value: str) -> str:
@@ -59,7 +61,12 @@ def transform_population_frame(frame: pd.DataFrame) -> pd.DataFrame:
             }
         )
         .assign(
-            mun_id=lambda d: d["mun_id"].astype(str).str[:6],
+            # Deliberately not `.astype(str)` first: `derive_mun_id_from_adm2_id`
+            # needs to see a real null to reject it -- pre-stringifying would
+            # turn a NaN `mun_id` into the literal string "nan", which the null
+            # check can no longer catch and which would otherwise get silently
+            # truncated into a bogus "na" join key.
+            mun_id=lambda d: d["mun_id"].map(derive_mun_id_from_adm2_id),
             sex=lambda d: d["sex"].map(normalize_text).replace(
                 {
                     "feminino": "female",
@@ -91,7 +98,11 @@ def preprocess_population_data(
     if not source.exists():
         raise FileNotFoundError(f"Raw population file not found: {source}")
 
-    destination = Path(output_path) if output_path else _processed_dir(root_dir) / "population.parquet"
+    destination = (
+        Path(output_path)
+        if output_path
+        else _processed_dir(root_dir) / DEFAULT_POPULATION_OUTPUT_FILENAME
+    )
     destination.parent.mkdir(parents=True, exist_ok=True)
 
     frame = pd.read_parquet(source)

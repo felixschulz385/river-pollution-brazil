@@ -1,6 +1,7 @@
 import os
 import logging
 import hashlib
+from datetime import datetime, timezone
 
 import pandas as pd
 
@@ -214,6 +215,19 @@ def _build_sih_manifest_entry(
 def _parse_sih_period_value(period_value):
     yy = int(period_value[4:6])
     year = 1900 + yy if yy >= 95 else 2000 + yy
+    # SIH period files only exist from 1995 onward, so any two-digit year
+    # below 95 is assumed to mean 20xx. That assumption silently breaks if
+    # DATASUS ever exposes an out-of-range code (e.g. a legacy backfill coded
+    # below 95 that doesn't actually mean 20xx); catch it with a plausibility
+    # bound instead of letting it decode to a nonsensical future year like
+    # 2094 that would then just silently vanish downstream once filtered
+    # against `year_min`/`year_max`.
+    current_year = datetime.now(timezone.utc).year
+    if not (1995 <= year <= current_year + 1):
+        raise ValueError(
+            f"Implausible year {year} decoded from SIH period value {period_value!r} "
+            f"(two-digit year {yy:02d}); expected 1995-{current_year + 1}."
+        )
     month = int(period_value[6:8])
     return year, month
 
@@ -527,7 +541,23 @@ def _execute_sih_manifest_entries(
             raise
         finally:
             if len(form.driver.window_handles) > 1:
-                form.reset_query()
+                try:
+                    form.reset_query()
+                except Exception:
+                    # `reset_query()` raising here (e.g. the results window
+                    # ended up in an unexpected state and `.limpa` isn't
+                    # found) must not replace/mask whatever exception (if
+                    # any) is already propagating out of the `try` above --
+                    # that would hide the real failure behind an unrelated
+                    # cleanup error. Log and move on; the next manifest entry
+                    # may still see a stale window, but that's a lesser
+                    # problem than losing the original error.
+                    logger.warning(
+                        "Failed to reset DATASUS query state after batch %s; "
+                        "the next batch may see stale form/window state.",
+                        entry["batch_id"],
+                        exc_info=True,
+                    )
     return {
         "table_dir": batch_table_dir(root_dir, HEALTH_DATASET_NAME, table_name),
         "manifest_path": manifest_path(root_dir, HEALTH_DATASET_NAME, table_name),
@@ -542,13 +572,11 @@ def fetch_mortality_age_tables(root_dir=".", headless=False, download_dir=None):
         "pre_1996": {
             "url": MORTALITY_URLS["pre_1996"],
             "years": [str(year).zfill(2) for year in range(79, 95)],
-            "default_year": "22",
             "output": os.path.join(output_dir, "mortality_age_counts_pre_1996_raw.parquet"),
         },
         "post_1995": {
             "url": MORTALITY_URLS["post_1995"],
             "years": [str(year).zfill(2) for year in list(range(96, 100)) + list(range(0, 22))],
-            "default_year": "95",
             "output": os.path.join(output_dir, "mortality_age_counts_post_1995_raw.parquet"),
         },
     }
@@ -561,8 +589,7 @@ def fetch_mortality_age_tables(root_dir=".", headless=False, download_dir=None):
             for year in config["years"]:
                 form.open(config["url"])
                 form.select_column("Faixa_Etária")
-                if year != config["default_year"]:
-                    form.select_option_value(f"obtbr{year}.dbf")
+                form.select_option_value(f"obtbr{year}.dbf")
                 form.select_output_format_prn()
                 form.submit_query()
 
@@ -747,14 +774,18 @@ def fetch_birth_outcome_tables(root_dir=".", headless=False, download_dir=None, 
         raw_tables = []
         try:
             for year in years:
-                print(f"Fetching {outcome_name} data for year {year}...")
+                logger.info("Fetching %s data for year %s...", outcome_name, year)
                 form.open("http://tabnet.datasus.gov.br/cgi/tabcgi.exe?sinasc/cnv/nvbr.def")
                 form.select_column(column_option)
 
                 year_code = str(year % 100).zfill(2)
                 latest_year_code = str(latest_year % 100).zfill(2)
+                # The "Período" multiselect needs at least one value selected;
+                # for `year == latest_year` the two calls used to collapse to
+                # nothing (both were gated behind `year != latest_year`),
+                # leaving the query without an explicit period filter.
+                form.select_option_value(f"nvbr{year_code}.dbf")
                 if year != latest_year:
-                    form.select_option_value(f"nvbr{year_code}.dbf")
                     form.select_option_value(f"nvbr{latest_year_code}.dbf")
 
                 form.select_output_format_prn()

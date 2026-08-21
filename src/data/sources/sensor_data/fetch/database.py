@@ -143,19 +143,23 @@ def _read_metadata(
     }
 
 
+def _table_exists_on_connection(connection, table_name: str) -> bool:
+    return (
+        connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?",
+            [table_name],
+        ).fetchone()[0]
+        > 0
+    )
+
+
 def table_exists(root_dir: str, table_name: str) -> bool:
     """Check whether a given logical table is already present in the database."""
     database_path = _database_path_for_table(root_dir, table_name)
     if not database_path.exists():
         return False
     with _connect(root_dir, table_name=table_name) as connection:
-        return (
-            connection.execute(
-                "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?",
-                [table_name],
-            ).fetchone()[0]
-            > 0
-        )
+        return _table_exists_on_connection(connection, table_name)
 
 
 def write_dataframe_table(
@@ -188,13 +192,7 @@ def append_dataframe_table(
     quoted_table_name = _quote_identifier(table_name)
     with _connect(root_dir, table_name=table_name) as connection:
         connection.register("_table_frame", prepared_frame)
-        table_already_exists = (
-            connection.execute(
-                "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?",
-                [table_name],
-            ).fetchone()[0]
-            > 0
-        )
+        table_already_exists = _table_exists_on_connection(connection, table_name)
         if not table_already_exists:
             connection.execute(f"CREATE TABLE {quoted_table_name} AS SELECT * FROM _table_frame")
             _write_metadata(connection, table_name, json_columns=json_columns)

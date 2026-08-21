@@ -64,9 +64,32 @@ def test_load_cds_credentials_reads_project_secret(tmp_path: Path) -> None:
     }
 
 
-def test_load_cds_credentials_requires_file(tmp_path: Path) -> None:
+def test_load_cds_credentials_requires_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Isolate from a real ~/.cdsapirc that may exist on the machine running
+    # this test -- load_cds_credentials() falls back to it when the
+    # project-local secret is absent, which this test deliberately is.
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "empty-home")
+
     with pytest.raises(ClimateCredentialsError, match="Missing CDS credentials file"):
         load_cds_credentials(root_dir=tmp_path)
+
+
+def test_load_cds_credentials_falls_back_to_home_cdsapirc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    (fake_home / ".cdsapirc").write_text(
+        "url: https://cds.climate.copernicus.eu/api\nkey: user:secret\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    credentials = load_cds_credentials(root_dir=tmp_path / "no-project-secret")
+
+    assert credentials == {
+        "url": "https://cds.climate.copernicus.eu/api",
+        "key": "user:secret",
+    }
 
 
 def test_load_cds_credentials_rejects_malformed_file(tmp_path: Path) -> None:
@@ -117,6 +140,25 @@ def test_fetch_era5_land_hourly_builds_expected_yearly_requests(
     assert manifest["dataset"] == HOURLY_DATASET
     assert manifest["request_id"] == "req-1"
     assert not output_paths[0].exists()
+
+
+def test_build_era5_land_daily_request_uses_brazil_local_time_zone() -> None:
+    request = build_era5_land_daily_request(FIRST_YEAR, 1)
+
+    assert request["time_zone"] == "utc-03:00"
+
+
+def test_build_era5_land_requests_use_actual_days_in_month() -> None:
+    # 2021 is not a leap year: February has 28 days, not 31.
+    hourly_request = build_era5_land_hourly_request("2021", "02")
+    daily_request = build_era5_land_daily_request("2021", "02")
+
+    assert hourly_request["day"] == [f"{day:02d}" for day in range(1, 29)]
+    assert daily_request["day"] == [f"{day:02d}" for day in range(1, 29)]
+
+    # 2020 is a leap year: February has 29 days.
+    leap_request = build_era5_land_hourly_request("2020", "02")
+    assert leap_request["day"] == [f"{day:02d}" for day in range(1, 30)]
 
 
 def test_fetch_era5_land_daily_skips_existing_files(

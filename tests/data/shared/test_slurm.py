@@ -70,6 +70,41 @@ def test_render_sbatch_script_includes_directives_and_command(config_path):
     assert "python -m src.cli data preprocess --source climate --phase extract" in script
 
 
+def test_render_sbatch_script_quotes_shell_metacharacters_in_spec_values(config_path):
+    spec = load_job_spec("climate.preprocess.extract", config_path=config_path)
+    spec["conda_env"] = "311; rm -rf /"
+    spec["project_dir"] = "/project $(whoami)"
+
+    script = render_sbatch_script(spec, ["data", "preprocess"], log_dir="log/climate")
+
+    assert "conda activate '311; rm -rf /'" in script
+    assert "cd '/project $(whoami)'" in script
+
+
+def test_render_sbatch_script_rejects_invalid_extra_env_name(config_path):
+    spec = load_job_spec("climate.preprocess.extract", config_path=config_path)
+    spec["extra_env"] = {"NOT VALID; rm -rf /": "1"}
+
+    with pytest.raises(SlurmJobSpecError):
+        render_sbatch_script(spec, ["data", "preprocess"], log_dir="log/climate")
+
+
+def test_render_sbatch_script_rejects_newline_in_job_name(config_path):
+    spec = load_job_spec("climate.preprocess.extract", config_path=config_path)
+    spec["job_name"] = "extract\n#SBATCH --partition=forged"
+
+    with pytest.raises(SlurmJobSpecError):
+        render_sbatch_script(spec, ["data", "preprocess"], log_dir="log/climate")
+
+
+def test_render_sbatch_script_rejects_newline_in_mem(config_path):
+    spec = load_job_spec("climate.preprocess.extract", config_path=config_path)
+    spec["mem"] = "128G\n#SBATCH --partition=forged"
+
+    with pytest.raises(SlurmJobSpecError):
+        render_sbatch_script(spec, ["data", "preprocess"], log_dir="log/climate")
+
+
 def test_submit_job_parses_job_id(monkeypatch):
     def fake_run(cmd, input, text, capture_output, check):
         assert cmd == ["sbatch"]

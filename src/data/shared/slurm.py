@@ -9,12 +9,15 @@ runs."
 
 from __future__ import annotations
 
+import re
 import shlex
 import subprocess
 from pathlib import Path
 from typing import Sequence
 
 import yaml
+
+_ENV_VAR_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 DEFAULT_JOB_CONFIG_PATH = Path(__file__).resolve().parents[3] / "setup" / "slurm_jobs.yaml"
 
@@ -38,6 +41,28 @@ def load_job_spec(key: str, config_path: Path = DEFAULT_JOB_CONFIG_PATH) -> dict
 
 def render_sbatch_script(spec: dict, command_argv: Sequence[str], log_dir: str) -> str:
     """Render an sbatch script that runs `python -m src.cli <command_argv>`."""
+    # `#SBATCH` lines are directives read by Slurm's own parser, not bash, but a
+    # value containing a newline could still forge an extra directive; reject
+    # that up front. Values used on lines bash actually executes (`eval`,
+    # `conda activate`, `cd`, `mkdir`, `export`) are additionally
+    # `shlex.quote`d below, since those are real shell-injection surfaces.
+    for key in (
+        "job_name",
+        "partition",
+        "time",
+        "qos",
+        "conda_hook",
+        "conda_env",
+        "project_dir",
+        "cpus_per_task",
+        "mem",
+    ):
+        value = spec.get(key)
+        if isinstance(value, str) and "\n" in value:
+            raise SlurmJobSpecError(f"Slurm job spec field {key!r} must not contain newlines.")
+    if "\n" in str(log_dir):
+        raise SlurmJobSpecError("log_dir must not contain newlines.")
+
     job_name = spec["job_name"]
     lines = [
         "#!/bin/bash",
@@ -55,15 +80,17 @@ def render_sbatch_script(spec: dict, command_argv: Sequence[str], log_dir: str) 
         "",
         "set -euo pipefail",
         "",
-        f'eval "$({spec["conda_hook"]} shell.bash hook)"',
-        f"conda activate {spec['conda_env']}",
+        f'eval "$({shlex.quote(spec["conda_hook"])} shell.bash hook)"',
+        f"conda activate {shlex.quote(spec['conda_env'])}",
         "",
-        f"cd {spec['project_dir']}",
-        f"mkdir -p {log_dir}",
+        f"cd {shlex.quote(spec['project_dir'])}",
+        f"mkdir -p {shlex.quote(str(log_dir))}",
         "",
     ]
     for name, value in (spec.get("extra_env") or {}).items():
-        lines.append(f"export {name}={value}")
+        if not _ENV_VAR_NAME_PATTERN.match(name):
+            raise SlurmJobSpecError(f"Invalid extra_env variable name: {name!r}")
+        lines.append(f"export {name}={shlex.quote(str(value))}")
     if spec.get("extra_env"):
         lines.append("")
 

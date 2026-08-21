@@ -1,3 +1,4 @@
+import logging
 import os
 import csv
 import unicodedata
@@ -8,6 +9,9 @@ from src.data.shared.batches import load_manifest
 from src.data.sources.health.fetch.datasus import SIH_CHANNEL_METRICS, SIH_SELECTED_MORBIDITY_CHANNELS
 from src.data.sources.health.fetch.datasus import SIH_ALL_METRICS_KEY
 from ..constants import HEALTH_DATASET_NAME
+from ..csv_utils import normalize_rows_to_header_width
+
+logger = logging.getLogger(__name__)
 
 SIH_METRIC_NAMES = {
     "hospitalizations": "hospitalizations_count",
@@ -178,17 +182,15 @@ def _read_datasus_csv(path):
 
     header = rows[0]
     body = rows[1:]
-    if body and body[-1] and body[-1][0].strip('"') == "Total":
+    # An export can carry more than one trailing summary/subtotal line
+    # depending on the request type, not just a single grand-total row; strip
+    # all of them, not just `body[-1]`.
+    while body and body[-1] and body[-1][0].strip('"') == "Total":
+        logger.debug(
+            "Dropping DATASUS grand-total row from %s: %r", path, body[-1]
+        )
         body = body[:-1]
-    expected_width = len(header)
-    normalized_rows = []
-    for row in body:
-        if len(row) < expected_width:
-            row = row + [None] * (expected_width - len(row))
-        elif len(row) > expected_width:
-            row = row[: expected_width - 1] + [";".join(row[expected_width - 1 :])]
-        normalized_rows.append(row)
-    return pd.DataFrame(normalized_rows, columns=header)
+    return pd.DataFrame(normalize_rows_to_header_width(header, body), columns=header)
 
 
 def _empty_total_hospitalization_frame():
@@ -345,7 +347,12 @@ def _coerce_tabnet_numeric(series):
     if is_numeric_dtype(series):
         return pd.to_numeric(series, errors="coerce")
 
-    normalized = series.astype(str).str.strip().str.replace("-", "0", regex=False)
+    normalized = series.astype(str).str.strip()
+    # DATASUS uses a bare "-" as its no-data placeholder for a whole cell.
+    # Only replace that exact placeholder, not every "-" substring, or a
+    # genuine negative value like "-5,3" gets its sign stripped ("-5,3" ->
+    # "05,3" -> 5.3) instead of being parsed as -5.3.
+    normalized = normalized.where(normalized != "-", "0")
     has_decimal_comma = normalized.str.contains(",", na=False)
     normalized = normalized.where(~has_decimal_comma, normalized.str.replace(".", "", regex=False))
     normalized = normalized.str.replace(",", ".", regex=False)
@@ -360,7 +367,15 @@ def _extract_municipality_fields(frame):
     frame = frame.copy()
     frame["municipality_code"] = frame["Município"].str.extract(r"(\d{6})")[0].str.zfill(6)
     frame["municipality_name"] = frame["Município"].str.extract(r"\d{6}(.*)")[0].str.strip()
-    return frame.dropna(subset=["municipality_code"])
+    cleaned = frame.dropna(subset=["municipality_code"])
+    n_dropped = len(frame) - len(cleaned)
+    if n_dropped:
+        logger.warning(
+            "Dropped %d row(s) with no parseable 6-digit municipality code out of %d.",
+            n_dropped,
+            len(frame),
+        )
+    return cleaned
 
 
 def _metric_name(metric_value):
@@ -818,8 +833,8 @@ def _clean_birth_outcome_frame(frame):
     frame["mun_name"] = frame["Município"].str.extract(r"\d{6}(.*)")[0].str.strip()
     frame = frame.drop(columns=["Município"])
     value_columns = [col for col in frame.columns if col not in {"mun_id", "mun_name", "year", "Total"}]
-    frame[value_columns] = frame[value_columns].apply(lambda col: col.str.replace("-", "0"), axis=0).astype("float32")
-    frame["Total"] = frame["Total"].str.replace("-", "0").astype("float32")
+    frame[value_columns] = frame[value_columns].apply(_coerce_tabnet_numeric, axis=0).astype("float32")
+    frame["Total"] = _coerce_tabnet_numeric(frame["Total"]).astype("float32")
     frame = frame[["mun_id", "mun_name", "year"] + value_columns + ["Total"]]
     return frame.dropna(subset=["mun_id"])
 

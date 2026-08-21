@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 from src.data.sources.river_network.constants import PROCESSED_DIR as _RIVER_NETWORK_PROCESSED_DIR
 from src.data.sources.sensor_data.constants import (
@@ -133,5 +134,13 @@ ADM2_ID_TO_MUN_ID_TRUNCATION = 1  # trailing digits dropped from `adm2_id` to de
 
 
 def derive_mun_id_from_adm2_id(adm2_id):
-    """Derive the 6-digit IBGE `mun_id` by dropping `adm2_id`'s trailing check digit."""
+    """Derive the 6-digit IBGE `mun_id` by dropping `adm2_id`'s trailing check digit.
+
+    Only rejects null input -- callers use varying-length placeholder values in
+    tests, so this can't enforce the real 7-digit IBGE length. A null/NaN
+    `adm2_id` (`str(nan)` -> `"nan"`) would otherwise be silently truncated into
+    a bogus `"na"` join key instead of raising here.
+    """
+    if pd.isna(adm2_id):
+        raise ValueError(f"Cannot derive mun_id from a null adm2_id: {adm2_id!r}")
     return str(adm2_id)[:-ADM2_ID_TO_MUN_ID_TRUNCATION]

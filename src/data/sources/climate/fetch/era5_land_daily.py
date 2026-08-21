@@ -1,8 +1,9 @@
-from .common import ERA5_AREA, ERA5_DAYS, retrieve_yearly_dataset_in_monthly_batches
+from ..constants import BRAZIL_UTC_OFFSET_HOURS, ERA5_LAND_SUBTYPE_DATASETS
+from .common import ERA5_AREA, days_in_month, retrieve_yearly_dataset_in_monthly_batches
 from .verify import verify_era5_grib_batch
 
 
-DATASET = "derived-era5-land-daily-statistics"
+DATASET = ERA5_LAND_SUBTYPE_DATASETS["era5_land_daily"]
 VARIABLES = [
     "2m_temperature",
     "2m_dewpoint_temperature",
@@ -18,10 +19,10 @@ def build_era5_land_daily_request(year, month):
         "variable": VARIABLES,
         "year": year,
         "month": month,
-        "day": ERA5_DAYS,
+        "day": days_in_month(year, month),
         "daily_statistic": "daily_mean",
         "frequency": "1_hourly",
-        "time_zone": "utc+00:00",
+        "time_zone": f"utc{BRAZIL_UTC_OFFSET_HOURS:+03d}:00",
         "area": ERA5_AREA,
     }
 

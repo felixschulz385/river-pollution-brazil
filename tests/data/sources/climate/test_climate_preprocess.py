@@ -10,6 +10,8 @@ import xarray as xr
 from src.data.sources.climate.preprocess.era5_land import (
     ERA5L_VAR_CONFIG,
     ERA5_OUTPUT_TIME_INDEX,
+    _field_band_names,
+    _field_valid_datetimes,
     _open_era5_dataset,
     bootstrap_era5_store,
     load_or_create_geobox_state,
@@ -22,6 +24,39 @@ from src.data.sources.climate.preprocess.era5_land import (
 from src.data.sources.climate.fetch.common import load_download_manifest, write_download_manifest
 
 
+def test_field_valid_datetimes_uses_earthkit_default_ls_columns() -> None:
+    # earthkit-data's current default `ls()` schema uses "collection.key"
+    # column names (e.g. "time.valid_datetime"), not the legacy flat eccodes
+    # names ("valid_datetime", "dataDate", ...) this code used to assume.
+    metadata = pd.DataFrame(
+        {"time.valid_datetime": pd.to_datetime(["2020-01-01T07:00:00"])}
+    )
+    result = _field_valid_datetimes(metadata)
+    assert result.tolist() == [pd.Timestamp("2020-01-01T07:00:00")]
+
+
+def test_field_valid_datetimes_legacy_fallback_does_not_double_count_step() -> None:
+    # Legacy fallback path (no "time.valid_datetime"/"valid_datetime" column):
+    # `dataTime` is the GRIB *reference* time and `stepRange`'s end offset
+    # must be added on top of it to reach the valid time. Reference 06:00 +
+    # a "0-1" (accumulation) step must land on 07:00, not double-add the step.
+    metadata = pd.DataFrame(
+        {
+            "dataDate": [20200101],
+            "dataTime": [600],
+            "stepRange": ["0-1"],
+        }
+    )
+    result = _field_valid_datetimes(metadata)
+    assert result.tolist() == [pd.Timestamp("2020-01-01T07:00:00")]
+
+
+def test_field_band_names_uses_earthkit_default_ls_columns() -> None:
+    metadata = pd.DataFrame({"parameter.variable": ["2t", "tp"]})
+    result = _field_band_names(metadata)
+    assert result.tolist() == ["2t", "tp"]
+
+
 class _FakeEra5FieldList:
     """Mimics the tiny slice of earthkit.data.FieldList's interface that
     _open_era5_dataset relies on."""
@@ -31,6 +66,9 @@ class _FakeEra5FieldList:
         self._values = values
         self._latitude = latitude
         self._longitude = longitude
+
+    def to_fieldlist(self):
+        return self
 
     def ls(self):
         return self._metadata
@@ -257,6 +295,15 @@ def test_resample_hourly_to_daily_applies_expected_aggregations() -> None:
     assert daily["2t_daily_min"].isel(time=0, latitude=0, longitude=0).item() == pytest.approx(0.0)
     assert daily["2t_daily_max"].isel(time=1, latitude=0, longitude=0).item() == pytest.approx(188.0, abs=1e-4)
     assert daily["2t"].attrs["units"] == "degC"
+
+
+def test_resample_hourly_to_daily_nulls_instantaneous_mean_on_missing_hour() -> None:
+    ds = _hourly_dataset()
+    ds["2t"][0, 0, 0] = np.nan
+
+    daily = resample_era5l_hourly_to_daily(ds, ERA5L_VAR_CONFIG)
+
+    assert np.isnan(daily["2t"].isel(time=0, latitude=0, longitude=0).item())
 
 
 def test_prepare_daily_era5_dataset_writes_daily_values_without_resampling() -> None:

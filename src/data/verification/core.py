@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,8 +46,14 @@ def _read_sidecar(path: Path) -> dict | None:
 
 def _write_sidecar(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as handle:
+    # Write to a temp file and atomically rename it into place (matching
+    # `shared.batches.write_manifest`), so a crash/SIGKILL mid-write (e.g. a
+    # Slurm job hitting its time/mem limit) can never leave a torn sidecar
+    # for a concurrent reader to see.
+    temp_path = path.with_name(f"{path.name}.tmp-{os.getpid()}")
+    with open(temp_path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, sort_keys=True)
+    os.replace(temp_path, path)
 
 
 class Verification:
@@ -62,6 +69,7 @@ class Verification:
         adapter = SOURCE_ADAPTERS[source]
         sidecar = sidecar_path(self.root_dir, source)
 
+        fingerprint_reliable = True
         try:
             fingerprint_paths = adapter.fingerprint_paths(self.root_dir)
         except Exception:
@@ -71,9 +79,16 @@ class Verification:
                 source,
             )
             fingerprint_paths = []
+            fingerprint_reliable = False
         fingerprint = compute_fingerprint(fingerprint_paths)
+        if not fingerprint_reliable:
+            # Never persist a fingerprint computed from a crash fallback: a
+            # constant "empty" fingerprint would otherwise match itself on
+            # every subsequent run and serve this run's result from cache
+            # forever, even after the underlying crash is fixed.
+            fingerprint = f"error:{_timestamp()}"
 
-        existing = None if force else _read_sidecar(sidecar)
+        existing = None if (force or not fingerprint_reliable) else _read_sidecar(sidecar)
         if (
             existing is not None
             and existing.get("fingerprint") == fingerprint
@@ -128,7 +143,17 @@ class Verification:
             status = "not_present_locally"
         elif all_checks and not all(check.ok for check in all_checks):
             status = "failed"
-        elif output_artifacts and not all(artifact.exists for artifact in output_artifacts):
+        elif not output_artifacts:
+            # An adapter that returns no artifacts at all has checked
+            # nothing; report as outstanding rather than falling through to
+            # "verified" with zero checks having actually run.
+            logger.warning(
+                "Source '%s': check_outputs() returned no artifacts despite data being "
+                "present; reporting as outstanding.",
+                source,
+            )
+            status = "outstanding"
+        elif not all(artifact.exists for artifact in output_artifacts):
             status = "outstanding"
         else:
             status = "verified"

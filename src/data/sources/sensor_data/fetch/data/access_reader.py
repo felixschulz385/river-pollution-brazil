@@ -20,11 +20,35 @@ def normalize_object_columns(frame: pd.DataFrame) -> pd.DataFrame:
     """Trim text values and coerce decimal-comma strings when the full column allows it."""
     normalized = frame.copy()
     for column in normalized.columns:
-        if normalized[column].dtype != object:
+        # Text columns from `pd.read_sql` may come back as classic `object`
+        # dtype or (pandas >= 3.0's default) `str` dtype depending on the
+        # pandas version -- checking only `dtype == object` silently skips
+        # every text column under the newer default, defeating the
+        # decimal-comma coercion below. `is_string_dtype`/`is_object_dtype`
+        # both correctly exclude datetime64 columns, which must stay
+        # untouched here.
+        column_dtype = normalized[column].dtype
+        if not (
+            pd.api.types.is_object_dtype(column_dtype)
+            or pd.api.types.is_string_dtype(column_dtype)
+        ):
             continue
         text_values = normalized[column].astype(str).str.strip()
         text_values = text_values.replace({"": pd.NA, "nan": pd.NA, "None": pd.NA})
-        numeric_candidate = pd.to_numeric(text_values.str.replace(",", ".", regex=False), errors="coerce")
+        # A value with both "." and "," is unambiguously pt-BR formatted
+        # (period = thousands separator, comma = decimal separator, e.g.
+        # "1.234,56"); strip the periods before swapping the comma in. A
+        # bare comma with no period (e.g. "1,234") is inherently ambiguous
+        # between a decimal separator and a thousands separator with no way
+        # to tell from the string alone -- this coerces it as a decimal
+        # (matching this function's existing pt-BR-decimal assumption), which
+        # would silently be a 1000x scale error if that particular column
+        # actually used comma as a thousands separator instead.
+        has_both_separators = text_values.str.contains(".", regex=False, na=False) & text_values.str.contains(
+            ",", regex=False, na=False
+        )
+        digits_only = text_values.where(~has_both_separators, text_values.str.replace(".", "", regex=False))
+        numeric_candidate = pd.to_numeric(digits_only.str.replace(",", ".", regex=False), errors="coerce")
         if text_values.notna().sum() > 0 and numeric_candidate.notna().sum() == text_values.notna().sum():
             normalized[column] = numeric_candidate
         else:
@@ -90,15 +114,31 @@ def load_mdb_tables(
     archive_records: list[dict[str, object]] = []
     has_nonempty_table = False
 
-    with connect_access_database(mdb_path) as connection:
+    # pyodbc's context manager only commits/rolls back the transaction on
+    # exit, it does NOT close the connection -- leaving the ODBC handle (and
+    # any file lock the Access driver holds on `mdb_path`) open until GC
+    # gets to it. Close explicitly so the caller's `shutil.rmtree` on the
+    # extracted temp dir doesn't silently fail on a still-locked file.
+    connection = connect_access_database(mdb_path)
+    try:
         tables_to_read = source_tables if source_tables is not None else list_user_tables(connection)
         for source_table in tables_to_read:
             try:
                 frame = read_access_table(connection, source_table)
             except pyodbc.Error:
-                if source_tables is not None:
-                    continue
-                raise
+                # Skip just this table rather than aborting the whole MDB file,
+                # regardless of whether tables were auto-discovered or requested
+                # explicitly -- one unreadable/unsupported table (e.g. an Access
+                # data type pyodbc can't marshal) shouldn't lose every other
+                # table's data for this station.
+                logger.warning(
+                    "Skipping unreadable table '%s' in %s (station %s).",
+                    source_table,
+                    mdb_path,
+                    station_code,
+                    exc_info=True,
+                )
+                continue
 
             table_name = source_table
             row_count = len(frame)
@@ -123,6 +163,8 @@ def load_mdb_tables(
             processed["source_mdb_name"] = Path(mdb_path).name
             processed["source_table_name"] = source_table
             parsed_tables.setdefault(table_name, []).append(processed)
+    finally:
+        connection.close()
 
     return parsed_tables, archive_records, has_nonempty_table
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -118,9 +119,8 @@ def load_assembly_config(config_path):
         raw_config = yaml.safe_load(config_file) or {}
     raw_datasets = raw_config.get("datasets", [])
     datasets = [_parse_dataset(raw_dataset) for raw_dataset in raw_datasets]
-    duplicate_ids = {
-        dataset.id for dataset in datasets if [d.id for d in datasets].count(dataset.id) > 1
-    }
+    id_counts = Counter(dataset.id for dataset in datasets)
+    duplicate_ids = {dataset_id for dataset_id, count in id_counts.items() if count > 1}
     if duplicate_ids:
         raise ValueError(f"Duplicate dataset ids in {config_path}: {sorted(duplicate_ids)}.")
     return {dataset.id: dataset for dataset in datasets}

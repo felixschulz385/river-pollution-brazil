@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 import code
 
@@ -62,6 +63,25 @@ def test_transform_population_frame_matches_notebook_logic() -> None:
             "population": 31,
         },
     ]
+
+
+def test_transform_population_frame_raises_on_null_municipality_id() -> None:
+    # A null `id_municipio` (e.g. a BigQuery data-quality gap) must raise, not
+    # get silently coerced to the string "nan" and truncated into a bogus "na"
+    # mun_id that would corrupt downstream joins.
+    raw = pd.DataFrame(
+        {
+            "ano": ["2020"],
+            "id_municipio": [None],
+            "id_municipio_nome": ["Foo"],
+            "sexo": ["Masculino"],
+            "grupo_idade": ["5 a 9 anos"],
+            "populacao": ["8"],
+        }
+    )
+
+    with pytest.raises(ValueError, match="null adm2_id"):
+        transform_population_frame(raw)
 
 
 def test_preprocess_population_data_writes_expected_output(tmp_path) -> None:

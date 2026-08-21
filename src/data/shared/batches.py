@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Iterable
 
+logger = logging.getLogger(__name__)
+
 
 def table_raw_dir(root_dir: str, *parts: str) -> str:
-    path = os.path.join(root_dir, "data", *parts)
-    os.makedirs(path, exist_ok=True)
-    return path
+    return os.path.join(root_dir, "data", *parts)
 
 
 def batch_table_dir(root_dir: str, dataset_name: str, table_name: str) -> str:
@@ -18,9 +19,7 @@ def batch_table_dir(root_dir: str, dataset_name: str, table_name: str) -> str:
 
 
 def batch_output_dir(root_dir: str, dataset_name: str, table_name: str) -> str:
-    path = os.path.join(batch_table_dir(root_dir, dataset_name, table_name), "batches")
-    os.makedirs(path, exist_ok=True)
-    return path
+    return os.path.join(batch_table_dir(root_dir, dataset_name, table_name), "batches")
 
 
 def manifest_path(root_dir: str, dataset_name: str, table_name: str) -> str:
@@ -44,19 +43,35 @@ def load_manifest(root_dir: str, dataset_name: str, table_name: str) -> list[dic
 
     entries = []
     with open(path, "r", encoding="utf-8") as handle:
-        for line in handle:
+        for line_number, line in enumerate(handle, start=1):
             line = line.strip()
-            if line:
+            if not line:
+                continue
+            try:
                 entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                # A truncated/corrupt line (e.g. the process was killed mid-write
+                # by an old, non-atomic `write_manifest`) shouldn't crash every
+                # future resumed run -- skip it and let the batch it belonged to
+                # be re-planned instead.
+                logger.warning(
+                    "Skipping malformed manifest line %s in %s", line_number, path
+                )
     return entries
 
 
 def write_manifest(root_dir: str, dataset_name: str, table_name: str, entries: Iterable[dict]) -> str:
     path = manifest_path(root_dir, dataset_name, table_name)
-    with open(path, "w", encoding="utf-8") as handle:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    # Write to a temp file and atomically rename it into place, so a crash or
+    # SIGKILL mid-write can never leave a truncated/corrupt manifest behind --
+    # readers always see either the old complete manifest or the new one.
+    temp_path = f"{path}.tmp-{os.getpid()}"
+    with open(temp_path, "w", encoding="utf-8") as handle:
         for entry in entries:
             handle.write(json.dumps(entry, ensure_ascii=True, sort_keys=True))
             handle.write("\n")
+    os.replace(temp_path, path)
     return path
 
 
@@ -104,6 +119,11 @@ def update_manifest_entry(
         if entry["batch_id"] == batch_id:
             entry.update(updates)
             break
+    else:
+        raise ValueError(
+            f"No manifest entry with batch_id={batch_id!r} in {dataset_name}/{table_name} "
+            "(stale reference after a manifest re-plan?)."
+        )
     write_manifest(root_dir, dataset_name, table_name, entries)
 
 

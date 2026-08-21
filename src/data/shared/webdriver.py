@@ -87,7 +87,17 @@ def _build_chrome_options(
 
 
 class ManagedBrowser:
-    """Context manager that owns a Chrome WebDriver instance."""
+    """Context manager that owns a Chrome WebDriver instance.
+
+    `keep_open_on_error=True` is an interactive-debugging escape hatch: on an
+    unhandled exception, `quit()` is skipped so the window stays open for
+    inspection. That deliberately leaks the Chrome process and its
+    `tempfile.mkdtemp` profile/cache directories for the rest of that
+    process's lifetime -- there is no way to keep the window open for a
+    human to look at while also cleaning those up. Do not leave this on for
+    unattended/looped/scheduled runs, where each crash would leak another
+    process and profile directory with nobody watching to close it.
+    """
 
     def __init__(
         self,
@@ -122,8 +132,12 @@ class ManagedBrowser:
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         if exc_type is not None and self.keep_open_on_error:
             logger.warning(
-                "Preserving Chrome window for debugging because an exception occurred: %s",
+                "Preserving Chrome window for debugging because an exception occurred: %s. "
+                "The Chrome process and its profile/cache directory (%s) will NOT be cleaned "
+                "up by this run -- close the window manually, and do not leave "
+                "keep_open_on_error/keep_browser_on_error enabled for unattended runs.",
                 exc_type.__name__,
+                self._profile_dir,
             )
             return False
 
@@ -205,18 +219,29 @@ class ManagedBrowser:
                 )
                 service = Service(self._driver_binary_path)
                 driver = webdriver.Chrome(service=service, options=options)
-                self._raw_driver_get = driver.get
-                self._raw_driver_quit = driver.quit
-                driver.get = self.get
-                driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT_SECONDS)
-                if not self.headless:
-                    driver.set_window_size(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
-                logger.debug(
-                    "Chrome driver created successfully: browser=%s, page_load_timeout=%ss",
-                    driver.capabilities.get("browserVersion"),
-                    PAGE_LOAD_TIMEOUT_SECONDS,
-                )
-                return driver
+                try:
+                    self._raw_driver_get = driver.get
+                    self._raw_driver_quit = driver.quit
+                    driver.get = self.get
+                    driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT_SECONDS)
+                    if not self.headless:
+                        driver.set_window_size(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
+                    logger.debug(
+                        "Chrome driver created successfully: browser=%s, page_load_timeout=%ss",
+                        driver.capabilities.get("browserVersion"),
+                        PAGE_LOAD_TIMEOUT_SECONDS,
+                    )
+                    return driver
+                except Exception:
+                    # The Chrome process is already spawned at this point; if any
+                    # setup step below fails, quit it before retrying so it isn't
+                    # orphaned (a fresh Chrome process would otherwise be spawned
+                    # on the next attempt with nothing left tracking this one).
+                    try:
+                        (self._raw_driver_quit or driver.quit)()
+                    except Exception:
+                        logger.debug("Failed to quit orphaned Chrome driver.", exc_info=True)
+                    raise
             except Exception as exc:
                 last_error = exc
                 logger.warning(
@@ -301,9 +326,18 @@ def create_chrome_driver(
         download_dir=download_dir,
         page_load_strategy=page_load_strategy,
     )
+    # Not a `with` block on purpose: the driver is meant to outlive this call,
+    # with cleanup deferred to the caller via the patched `driver.quit()`
+    # below. If anything raises between `__enter__` (which already owns a
+    # live Chrome process at that point) and the patched `quit` being wired
+    # up, fall back to `manager.quit()` directly so that process isn't leaked.
     driver = manager.__enter__()
-    driver.quit = manager.quit
-    setattr(driver, "_shared_browser_manager", manager)
+    try:
+        driver.quit = manager.quit
+        setattr(driver, "_shared_browser_manager", manager)
+    except Exception:
+        manager.quit()
+        raise
     return driver
 
 

@@ -29,6 +29,7 @@ from ..constants import (
     DEFAULT_RIVER_NETWORK_PATH,
     ERA5_LAND_PREPROCESS_STAGES,
     ERA5_LAND_PREPROCESS_SUBTYPES,
+    ERA5_LAND_SUBTYPE_DATASETS,
     MONTH_COLUMN,
     TRENCH_ID_COLUMN,
     YEAR_COLUMN,
@@ -57,7 +58,7 @@ ERA5_OUTPUT_TIME_INDEX = pd.date_range(ERA5_OUTPUT_START, ERA5_OUTPUT_END, freq=
 ERA5_OUTPUT_DIMS = ("time", "latitude", "longitude")
 ERA5_OUTPUT_CHUNKS = (365, -1, -1)
 SUPPORTED_ERA5_PREPROCESS_SUBTYPES = ERA5_LAND_PREPROCESS_SUBTYPES
-GEObOX_FILENAME = "geobox.pickle"
+GEOBOX_FILENAME = "geobox.pickle"
 ERA5_FILENAME_PATTERN = re.compile(r"era5_land_(hourly|daily)_(?P<year>\d{4})_(?P<month>\d{2})\.grib$")
 EARTHKIT_TEMP_DIR_PREFIX = "tmp"
 EARTHKIT_TEMP_RETENTION_SECONDS = 6 * 3600
@@ -134,7 +135,7 @@ ERA5L_VAR_CONFIG = {
         "aggregation": {
             "kind": "mean",
             "resample_freq": "1D",
-            "skipna": True,
+            "skipna": False,
             "scale_factor": 1.0,
             "offset": -273.15,
             "extras": {
@@ -151,7 +152,7 @@ ERA5L_VAR_CONFIG = {
         "aggregation": {
             "kind": "mean",
             "resample_freq": "1D",
-            "skipna": True,
+            "skipna": False,
             "scale_factor": 1.0,
             "offset": -273.15,
         },
@@ -164,7 +165,7 @@ ERA5L_VAR_CONFIG = {
         "aggregation": {
             "kind": "mean",
             "resample_freq": "1D",
-            "skipna": True,
+            "skipna": False,
             "scale_factor": 1.0,
             "offset": 0.0,
         },
@@ -177,7 +178,7 @@ ERA5L_VAR_CONFIG = {
         "aggregation": {
             "kind": "mean",
             "resample_freq": "1D",
-            "skipna": True,
+            "skipna": False,
             "scale_factor": 1.0,
             "offset": 0.0,
         },
@@ -210,7 +211,7 @@ def _era5_trench_day_path(root_dir=".") -> Path:
 
 
 def _era5_geobox_path(root_dir=".") -> Path:
-    return _era5_raw_dir(root_dir, "era5_land_hourly") / GEObOX_FILENAME
+    return _era5_raw_dir(root_dir, "era5_land_hourly") / GEOBOX_FILENAME
 
 
 def _river_network_path(root_dir=".") -> Path:
@@ -218,11 +219,10 @@ def _river_network_path(root_dir=".") -> Path:
 
 
 def _dataset_name_for_subtype(subtype: str) -> str:
-    if subtype == "era5_land_hourly":
-        return "reanalysis-era5-land"
-    if subtype == "era5_land_daily":
-        return "derived-era5-land-daily-statistics"
-    raise ValueError(f"Unsupported ERA5 preprocess subtype: {subtype}")
+    try:
+        return ERA5_LAND_SUBTYPE_DATASETS[subtype]
+    except KeyError:
+        raise ValueError(f"Unsupported ERA5 preprocess subtype: {subtype}") from None
 
 
 def _expected_output_var_attrs() -> dict[str, dict]:
@@ -769,7 +769,18 @@ def _metadata_column(metadata: pd.DataFrame, *candidates: str) -> pd.Series | No
 
 
 def _metadata_time_offsets(metadata: pd.DataFrame) -> pd.Series:
-    data_time = _metadata_column(metadata, "dataTime", "validityTime")
+    """Reconstruct an hour-of-day offset from legacy flat eccodes `ls()` columns.
+
+    Only used as a fallback for an `ls()` schema older than earthkit-data's
+    current "collection.key" default keys (e.g. "time.valid_datetime"), which
+    already carry the fully step-adjusted valid time and are used directly by
+    `_field_valid_datetimes` when present -- see there. `dataTime` is the GRIB
+    *reference* time (not yet adjusted for the forecast step), so `stepRange`'s
+    end offset is added on top of it here. `validityTime`, in contrast, is
+    already step-adjusted and must never be used as the base in this
+    calculation, or the step would be double-counted.
+    """
+    data_time = _metadata_column(metadata, "dataTime")
     hour_offsets = pd.Series(0, index=metadata.index, dtype="int64")
 
     if data_time is not None:
@@ -786,7 +797,13 @@ def _metadata_time_offsets(metadata: pd.DataFrame) -> pd.Series:
 
 
 def _field_valid_datetimes(metadata: pd.DataFrame) -> pd.Series:
-    valid_datetime = _metadata_column(metadata, "valid_datetime")
+    # earthkit-data's current default `ls()` schema exposes `time.valid_datetime`,
+    # which is already the fully step-adjusted valid time computed by the
+    # library itself (reference time + forecast step) -- use it directly rather
+    # than reconstructing it by hand. Only fall back to the legacy flat eccodes
+    # columns (`dataDate`/`dataTime`/`stepRange`, via `_metadata_time_offsets`)
+    # for an older earthkit-data `ls()` schema that doesn't expose it.
+    valid_datetime = _metadata_column(metadata, "time.valid_datetime", "valid_datetime")
     if valid_datetime is not None:
         return pd.to_datetime(valid_datetime)
 
@@ -802,7 +819,7 @@ def _field_valid_datetimes(metadata: pd.DataFrame) -> pd.Series:
 
 
 def _field_band_names(metadata: pd.DataFrame) -> pd.Series:
-    band_names = _metadata_column(metadata, "shortName", "variable")
+    band_names = _metadata_column(metadata, "parameter.variable", "shortName", "variable")
     if band_names is None:
         raise KeyError(
             "Could not derive variable names from ERA5 metadata because no variable column was found."
@@ -882,7 +899,12 @@ def _open_era5_dataset(path: Path) -> xr.Dataset:
     import earthkit.data as ekd
 
     _cleanup_stale_earthkit_temp_dirs()
-    field_list = ekd.from_source("file", str(path))
+    # `from_source` returns a `GribData` wrapper in current earthkit-data
+    # versions, which no longer exposes `.ls()`/`.data()` directly (that
+    # broke this pipeline outright with an AttributeError); `.to_fieldlist()`
+    # normalizes it to a FieldList that does, and is a harmless no-op on
+    # earthkit-data versions where `from_source` already returns one.
+    field_list = ekd.from_source("file", str(path)).to_fieldlist()
     try:
         metadata = field_list.ls().copy()
         metadata["datetime"] = _field_valid_datetimes(metadata)
@@ -1271,7 +1293,8 @@ def process_era5_input_file(path: Path, *, root_dir=".", subtype="era5_land_hour
         try:
             try:
                 prepared = _prepare_dataset_for_store(dataset, subtype=subtype, geobox_state=geobox_state)
-                write_dataset_region(prepared, store_path)
+                with climate_file_lock(store_path, owner="climate_preprocess_worker"):
+                    write_dataset_region(prepared, store_path)
             finally:
                 _close_dataset(dataset)
         except Exception as exc:
@@ -1314,14 +1337,17 @@ def preprocess_era5_land(root_dir=".", stage="all", n_jobs: int | None = None) -
         )
 
     if stage in {"all", "zarr"}:
-        input_files = [
-            (path, subtype)
-            for subtype in sorted(SUPPORTED_ERA5_PREPROCESS_SUBTYPES)
-            for path in discover_era5_input_files(root_dir=root_dir, subtype=subtype)
-        ]
+        input_files = []
+        for subtype in sorted(SUPPORTED_ERA5_PREPROCESS_SUBTYPES):
+            for path in discover_era5_input_files(root_dir=root_dir, subtype=subtype):
+                _wait_for_lock_release(path)
+                manifest = load_download_manifest(path)
+                if _manifest_ready_for_preprocess(manifest):
+                    input_files.append((path, subtype))
         if not input_files:
             raise FileNotFoundError(
-                f"No ERA5 GRIB files found for subtypes {sorted(SUPPORTED_ERA5_PREPROCESS_SUBTYPES)}."
+                f"No ERA5 GRIB files ready to preprocess for subtypes "
+                f"{sorted(SUPPORTED_ERA5_PREPROCESS_SUBTYPES)}."
             )
 
         store_path = bootstrap_era5_store(root_dir=root_dir, sample_path=input_files[0][0])

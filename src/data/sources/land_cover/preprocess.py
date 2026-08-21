@@ -16,7 +16,11 @@ from .constants import (
 )
 from src.data.sources import river_network as rn_module
 from .schema import subclass_summary_id
-from src.data.shared.spatial_tabular import crop_unique_counts, deduplicate_drainage_polygons
+from src.data.shared.spatial_tabular import (
+    crop_unique_counts,
+    deduplicate_drainage_polygons,
+    is_extent_mismatch_error,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -89,6 +93,13 @@ def create_mappers(legend_path):
     return legend_class_dict_mapper, legend_subclass_dict_mapper
 
 
+# Plausible range for a MapBiomas collection year; used only to catch the
+# extraction regex latching onto the wrong 4-digit token in a filename (e.g.
+# a collection/version/tile id) rather than the actual year.
+_MIN_PLAUSIBLE_YEAR = 1985
+_MAX_PLAUSIBLE_YEAR = 2030
+
+
 def get_files(datadir):
     """Return raster files keyed by year for the configured land-cover directory."""
     datadir = Path(datadir)
@@ -106,6 +117,15 @@ def get_files(datadir):
         )
 
     years = extracted_years.astype(int)
+    implausible = file_series[(years < _MIN_PLAUSIBLE_YEAR) | (years > _MAX_PLAUSIBLE_YEAR)]
+    if not implausible.empty:
+        raise ValueError(
+            f"Extracted year outside the plausible range "
+            f"[{_MIN_PLAUSIBLE_YEAR}, {_MAX_PLAUSIBLE_YEAR}]; the filename likely contains "
+            f"another 4-digit token before the actual year. "
+            f"Invalid files: {[path.name for path in implausible.tolist()[:10]]}"
+        )
+
     return file_series.set_axis(years).sort_index()
 
 
@@ -130,16 +150,25 @@ def _accumulate_mapped_counts(
     legend_mappers,
     column_positions,
 ):
-    """Populate one output row from raw value counts."""
+    """Populate one output row from raw value counts.
+
+    ``TOTAL`` is derived from the class-level mapper's own valid mask (the
+    first entry in ``legend_mappers``) rather than from the raw pixel count,
+    so it stays consistent with the class columns even if the raster's
+    nodata pixels (e.g. MapBiomas class 0) aren't flagged as nodata in the
+    GeoTIFF metadata and therefore survive as finite values.
+    """
     if len(values) == 0:
         return
 
-    row_data[column_positions[LAND_COVER_TOTAL_COLUMN]] = int(np.sum(counts))
-
-    for mapper in legend_mappers:
+    total = 0
+    for position, mapper in enumerate(legend_mappers):
         classes, weights = _mapped_classes_and_weights(values, counts, mapper)
         if len(classes) == 0:
             continue
+
+        if position == 0:
+            total = int(np.sum(weights))
 
         uniq, inv = np.unique(classes, return_inverse=True)
         agg = np.bincount(inv, weights=weights).astype(np.int64, copy=False)
@@ -148,6 +177,8 @@ def _accumulate_mapped_counts(
             column_name = _class_column_name(class_id)
             if column_name in column_positions:
                 row_data[column_positions[column_name]] = count
+
+    row_data[column_positions[LAND_COVER_TOTAL_COLUMN]] = total
 
 
 def _build_row_data(lc, geometry, legend_mappers, column_positions, n_columns):
@@ -193,83 +224,84 @@ def process_year(
     output_data = _year_output_data(trench_ids, output_columns)
     column_positions = {column: idx for idx, column in enumerate(output_columns)}
 
-    try:
-        raster_path = Path(file)
-        with rxr.open_rasterio(raster_path, chunks=None) as raster:
-            lc = raster.squeeze(drop=True)
+    # Deliberately NOT caught here: a raster that fails to open (missing
+    # file, corrupt GeoTIFF, transient disk/network hiccup on a SLURM node)
+    # must abort this year rather than fall through to an all-zero
+    # `output_data`, which downstream is indistinguishable from a year where
+    # every drainage polygon genuinely has zero overlap. Let it propagate so
+    # `Parallel` surfaces it as a failed preprocessing run instead of baking
+    # a silently wrong "zero land cover" year into the output.
+    raster_path = Path(file)
+    with rxr.open_rasterio(raster_path, chunks=None, masked=True) as raster:
+        lc = raster.squeeze(drop=True)
 
-            n_polygons = len(polygon_items)
-            n_success = 0
-            n_no_overlap = 0
-            n_errors = 0
+        n_polygons = len(polygon_items)
+        n_success = 0
+        n_no_overlap = 0
+        n_errors = 0
 
-            for idx, (trench_id, geometry) in enumerate(polygon_items):
-                try:
-                    if geometry is None or geometry.is_empty:
-                        n_errors += 1
-                        continue
-
-                    try:
-                        output_data[idx] = _build_row_data(
-                            lc,
-                            geometry,
-                            legend_mappers,
-                            column_positions,
-                            len(output_columns),
-                        )
-                        n_success += 1
-                    except (ValueError, RuntimeError, Exception) as e:
-                        error_msg = str(e)
-                        if "overlap" in error_msg.lower() or "extent" in error_msg.lower():
-                            n_no_overlap += 1
-                            if n_no_overlap <= 10:
-                                logger.debug(
-                                    "Polygon %s does not overlap raster extent",
-                                    trench_id,
-                                )
-                        else:
-                            n_errors += 1
-                            logger.warning("Error cropping polygon %s: %s", trench_id, e)
-                        values, counts = np.array([]), np.array([])
-
-                    if (idx + 1) % 100000 == 0:
-                        logger.info(
-                            "Year %s: processed %s/%s polygons (success: %s, no_overlap: %s, errors: %s)",
-                            year,
-                            idx + 1,
-                            n_polygons,
-                            n_success,
-                            n_no_overlap,
-                            n_errors,
-                        )
-
-                except Exception as e:
-                    if "cannot convert float NaN to integer" in str(e):
-                        continue
+        for idx, (trench_id, geometry) in enumerate(polygon_items):
+            try:
+                if geometry is None or geometry.is_empty:
                     n_errors += 1
-                    logger.error(
-                        "Unexpected error processing polygon %s in year %s: %s",
-                        trench_id,
+                    continue
+
+                try:
+                    output_data[idx] = _build_row_data(
+                        lc,
+                        geometry,
+                        legend_mappers,
+                        column_positions,
+                        len(output_columns),
+                    )
+                    n_success += 1
+                except Exception as e:
+                    if is_extent_mismatch_error(e):
+                        n_no_overlap += 1
+                        if n_no_overlap <= 10:
+                            logger.debug(
+                                "Polygon %s does not overlap raster extent",
+                                trench_id,
+                            )
+                    else:
+                        n_errors += 1
+                        logger.warning("Error cropping polygon %s: %s", trench_id, e)
+                    values, counts = np.array([]), np.array([])
+
+                if (idx + 1) % 100000 == 0:
+                    logger.info(
+                        "Year %s: processed %s/%s polygons (success: %s, no_overlap: %s, errors: %s)",
                         year,
-                        e,
+                        idx + 1,
+                        n_polygons,
+                        n_success,
+                        n_no_overlap,
+                        n_errors,
                     )
 
-            logger.info(
-                "Completed year %s: %s successful, %s no overlap, %s errors",
-                year,
-                n_success,
-                n_no_overlap,
-                n_errors,
-            )
-    except Exception as e:
-        logger.error("Failed to load raster for year %s from %s: %s", year, file, e)
+            except Exception as e:
+                n_errors += 1
+                logger.error(
+                    "Unexpected error processing polygon %s in year %s: %s",
+                    trench_id,
+                    year,
+                    e,
+                )
+
+        logger.info(
+            "Completed year %s: %s successful, %s no overlap, %s errors",
+            year,
+            n_success,
+            n_no_overlap,
+            n_errors,
+        )
     year_df = pd.DataFrame(output_data, columns=output_columns)
     year_df.insert(0, TRENCH_ID_COLUMN, trench_ids)
     year_df.insert(1, YEAR_COLUMN, year)
     return year_df
 
 
-def _load_drainage_polygons(self, river_network_path):
+def _load_drainage_polygons(drainage_path, river_network_path):
     """Load and normalize preprocessing polygons from the selected source."""
     if river_network_path:
         logger.info("Loading river network from %s", river_network_path)
@@ -297,9 +329,9 @@ def _load_drainage_polygons(self, river_network_path):
         )
         return drainage_polygons
 
-    logger.info("Loading drainage polygons from %s", self.drainage_path)
+    logger.info("Loading drainage polygons from %s", drainage_path)
     drainage_polygons = deduplicate_drainage_polygons(
-        _read_drainage_polygons(self.drainage_path)
+        _read_drainage_polygons(drainage_path)
     )
     logger.info("Loaded %d drainage polygons", len(drainage_polygons))
     return drainage_polygons
@@ -314,7 +346,7 @@ def preprocess_land_cover(self, n_jobs=None, river_network_path=None, output_pat
 
     logger.info("Starting preprocessing with n_jobs=%s", n_jobs)
 
-    drainage_polygons = _load_drainage_polygons(self, river_network_path)
+    drainage_polygons = _load_drainage_polygons(self.drainage_path, river_network_path)
 
     files = get_files(self.datadir)
     logger.info(

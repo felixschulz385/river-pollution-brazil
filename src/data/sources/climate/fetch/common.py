@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from itertools import product
@@ -11,8 +12,15 @@ import random
 import re
 from time import monotonic, sleep
 
+from ..constants import ERA5_LAND_SUBTYPE_DATASETS
+
 ERA5_YEARS = [str(year) for year in range(1985, 2025)]
 ERA5_MONTHS = [f"{month:02d}" for month in range(1, 13)]
+# Kept only as the historical upper bound some callers may still reference;
+# request builders should use `days_in_month(year, month)` instead of this,
+# so a request's "day" list matches the calendar rather than relying on the
+# CDS API to silently ignore nonexistent day/month combinations (e.g. day 30
+# for February) that were never verified to actually be ignored.
 ERA5_DAYS = [f"{day:02d}" for day in range(1, 32)]
 ERA5_HOURS = [f"{hour:02d}:00" for hour in range(24)]
 ERA5_AREA = [5.27, -73.99, -33.75, -34.78]
@@ -25,8 +33,7 @@ REMOTE_RECHECK_ACCEPTED_SECONDS = 900
 REMOTE_RECHECK_RUNNING_SECONDS = 300
 MAX_VERIFICATION_ATTEMPTS = 3
 DATASET_RUNNING_REMOTE_REQUEST_LIMITS = {
-    "reanalysis-era5-land": 1,
-    "derived-era5-land-daily-statistics": 1,
+    dataset: 1 for dataset in ERA5_LAND_SUBTYPE_DATASETS.values()
 }
 
 logger = logging.getLogger(__name__)
@@ -38,6 +45,12 @@ class ClimateCredentialsError(RuntimeError):
 
 class ClimateFileLockTimeoutError(RuntimeError):
     """Raised when a climate file lock cannot be acquired within the timeout."""
+
+
+def days_in_month(year, month) -> list[str]:
+    """Return the zero-padded valid day-of-month strings for `year`-`month`."""
+    n_days = calendar.monthrange(int(year), int(month))[1]
+    return [f"{day:02d}" for day in range(1, n_days + 1)]
 
 
 def climate_raw_dir(root_dir="."):
@@ -199,11 +212,18 @@ def should_skip_download(target_path: Path):
 
 
 def load_cds_credentials(root_dir="."):
+    # Project-local path takes priority; fall back to the standard cdsapi
+    # config location (`~/.cdsapirc`, same "key: value" format) so credentials
+    # set up the conventional way don't need duplicating into the repo.
     credentials_path = Path(root_dir) / "setup" / "secrets" / ".cdsapi"
     if not credentials_path.exists():
-        raise ClimateCredentialsError(
-            f"Missing CDS credentials file at {credentials_path}."
-        )
+        home_credentials_path = Path.home() / ".cdsapirc"
+        if home_credentials_path.exists():
+            credentials_path = home_credentials_path
+        else:
+            raise ClimateCredentialsError(
+                f"Missing CDS credentials file at {credentials_path} or {home_credentials_path}."
+            )
 
     values = {}
     line_pattern = re.compile(r"^(?P<key>[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(?P<value>.+)$")
@@ -663,6 +683,180 @@ def retrieve_yearly_dataset(
     )
 
 
+def _count_manifest_activity(manifest_states):
+    """Recompute active/running remote-request counts from manifest_states."""
+    active_requests = sum(
+        int(state_bundle["state"]["is_active"]) for state_bundle in manifest_states.values()
+    )
+    running_requests = sum(
+        int(state_bundle["state"]["is_running"]) for state_bundle in manifest_states.values()
+    )
+    return active_requests, running_requests
+
+
+def _refresh_remote_statuses(
+    *,
+    client,
+    dataset,
+    batch_payloads,
+    verify_batch,
+    running_request_limit,
+):
+    """Check remote status for batches that need it this cycle.
+
+    Running batches that are due for a recheck are prioritized first (so a
+    batch close to completing isn't starved by the running-limit check
+    below); every other batch is then rechecked unless it's already
+    up-to-date, over the running-request budget, or not yet due. Returns
+    `(manifest_states, active_requests, running_requests)`.
+    """
+    manifest_states = {}
+    for _, output_path, _ in batch_payloads:
+        manifest, state = _manifest_activity_state_for_output(output_path)
+        manifest_states[output_path] = {
+            "manifest": manifest,
+            "state": state,
+        }
+
+    priority_running_checks = []
+    for idx, output_path, request in batch_payloads:
+        manifest_state = manifest_states[output_path]["state"]
+        if not manifest_state["is_running"]:
+            continue
+        if not _is_due_manifest_candidate(output_path, manifest_states):
+            continue
+        priority_running_checks.append((idx, output_path, request))
+
+    checked_output_paths = set()
+    for idx, output_path, request in priority_running_checks:
+        status = _check_existing_request(
+            client=client,
+            dataset=dataset,
+            request=request,
+            output_path=output_path,
+            verify_batch=verify_batch,
+        )
+        manifest_states[output_path] = {
+            "manifest": load_download_manifest(output_path),
+            "state": status,
+        }
+        checked_output_paths.add(output_path)
+
+    active_requests, running_requests = _count_manifest_activity(manifest_states)
+
+    for idx, output_path, request in batch_payloads:
+        manifest_state = manifest_states[output_path]["state"]
+
+        if should_skip_download(output_path):
+            continue
+        if output_path in checked_output_paths:
+            continue
+
+        if manifest_state["is_running"]:
+            continue
+
+        if running_requests >= running_request_limit and manifest_state["is_active"]:
+            logger.debug(
+                "Skipping non-running remote status checks after satisfying the running limit (%s/%s).",
+                running_requests,
+                running_request_limit,
+            )
+            continue
+
+        if not _is_due_manifest_candidate(output_path, manifest_states):
+            logger.debug(
+                "Skipping remote recheck for %s because the last check is still fresh.",
+                output_path.name,
+            )
+            continue
+
+        status = _check_existing_request(
+            client=client,
+            dataset=dataset,
+            request=request,
+            output_path=output_path,
+            verify_batch=verify_batch,
+        )
+        manifest_states[output_path] = {
+            "manifest": load_download_manifest(output_path),
+            "state": status,
+        }
+        active_requests, running_requests = _count_manifest_activity(manifest_states)
+
+    return manifest_states, active_requests, running_requests
+
+
+def _submit_pending_requests(*, client, dataset, batch_payloads, active_requests):
+    """Submit new remote requests for eligible batches within the active-request budget.
+
+    Returns `(active_requests, submitted_this_cycle)`.
+    """
+    submitted_this_cycle = 0
+    for _, output_path, request in batch_payloads:
+        if should_skip_download(output_path):
+            continue
+        if not _can_submit_from_manifest(output_path):
+            continue
+        if active_requests >= MAX_ACTIVE_REMOTE_REQUESTS:
+            continue
+        submitted = _submit_request(
+            client=client,
+            dataset=dataset,
+            request=request,
+            output_path=output_path,
+        )
+        active_requests += int(submitted)
+        submitted_this_cycle += int(submitted)
+    return active_requests, submitted_this_cycle
+
+
+def _run_retrieval_cycle(
+    *,
+    client,
+    dataset,
+    batch_payloads,
+    verify_batch,
+    running_request_limit,
+    cycle_number,
+    total_batches,
+):
+    """Run one status-check + submission cycle. Returns `(active_requests, counts)`."""
+    _manifest_states, active_requests, running_requests = _refresh_remote_statuses(
+        client=client,
+        dataset=dataset,
+        batch_payloads=batch_payloads,
+        verify_batch=verify_batch,
+        running_request_limit=running_request_limit,
+    )
+    logger.info(
+        "Climate queue occupancy after status checks: %s/%s outstanding remote requests, %s/%s running remote requests.",
+        active_requests,
+        MAX_ACTIVE_REMOTE_REQUESTS,
+        running_requests,
+        running_request_limit,
+    )
+
+    active_requests, submitted_this_cycle = _submit_pending_requests(
+        client=client,
+        dataset=dataset,
+        batch_payloads=batch_payloads,
+        active_requests=active_requests,
+    )
+
+    counts = _manifest_status_counts(batch_payloads)
+    _log_worker_summary_box(
+        dataset=dataset,
+        cycle_number=cycle_number,
+        total_batches=total_batches,
+        active_requests=active_requests,
+        running_requests=running_requests,
+        running_request_limit=running_request_limit,
+        submitted_this_cycle=submitted_this_cycle,
+        counts=counts,
+    )
+    return active_requests, counts
+
+
 def retrieve_batched_dataset(
     *,
     root_dir=".",
@@ -696,138 +890,14 @@ def retrieve_batched_dataset(
     cycle_number = 0
     while True:
         cycle_number += 1
-        active_requests = 0
-        running_requests = 0
-        submitted_this_cycle = 0
-
-        manifest_states = {}
-        for _, output_path, _ in batch_payloads:
-            manifest, state = _manifest_activity_state_for_output(output_path)
-            manifest_states[output_path] = {
-                "manifest": manifest,
-                "state": state,
-            }
-            active_requests += int(state["is_active"])
-            running_requests += int(state["is_running"])
-
-        priority_running_checks = []
-        for idx, output_path, request in batch_payloads:
-            manifest_state = manifest_states[output_path]["state"]
-            if not manifest_state["is_running"]:
-                continue
-            if not _is_due_manifest_candidate(output_path, manifest_states):
-                continue
-            priority_running_checks.append((idx, output_path, request))
-
-        checked_output_paths = set()
-        for idx, output_path, request in priority_running_checks:
-            manifest_state = manifest_states[output_path]["state"]
-            status = _check_existing_request(
-                client=client,
-                dataset=dataset,
-                request=request,
-                output_path=output_path,
-                verify_batch=verify_batch,
-            )
-            active_requests += int(status["is_active"]) - int(manifest_state["is_active"])
-            running_requests += int(status["is_running"]) - int(manifest_state["is_running"])
-            manifest_states[output_path] = {
-                "manifest": load_download_manifest(output_path),
-                "state": status,
-            }
-            checked_output_paths.add(output_path)
-
-        running_requests = sum(
-            int(state_bundle["state"]["is_running"])
-            for state_bundle in manifest_states.values()
-        )
-        active_requests = sum(
-            int(state_bundle["state"]["is_active"])
-            for state_bundle in manifest_states.values()
-        )
-
-        for idx, output_path, request in batch_payloads:
-            manifest_state = manifest_states[output_path]["state"]
-
-            if should_skip_download(output_path):
-                continue
-            if output_path in checked_output_paths:
-                continue
-
-            if manifest_state["is_running"]:
-                continue
-
-            if running_requests >= running_request_limit and manifest_state["is_active"]:
-                logger.debug(
-                    "Skipping non-running remote status checks after satisfying the running limit (%s/%s).",
-                    running_requests,
-                    running_request_limit,
-                )
-                continue
-
-            if not _is_due_manifest_candidate(output_path, manifest_states):
-                logger.debug(
-                    "Skipping remote recheck for %s because the last check is still fresh.",
-                    output_path.name,
-                )
-                continue
-
-            status = _check_existing_request(
-                client=client,
-                dataset=dataset,
-                request=request,
-                output_path=output_path,
-                verify_batch=verify_batch,
-            )
-            active_requests += int(status["is_active"]) - int(manifest_state["is_active"])
-            running_requests += int(status["is_running"]) - int(manifest_state["is_running"])
-            manifest_states[output_path] = {
-                "manifest": load_download_manifest(output_path),
-                "state": status,
-            }
-            running_requests = sum(
-                int(state_bundle["state"]["is_running"])
-                for state_bundle in manifest_states.values()
-            )
-            active_requests = sum(
-                int(state_bundle["state"]["is_active"])
-                for state_bundle in manifest_states.values()
-            )
-
-        logger.info(
-            "Climate queue occupancy after status checks: %s/%s outstanding remote requests, %s/%s running remote requests.",
-            active_requests,
-            MAX_ACTIVE_REMOTE_REQUESTS,
-            running_requests,
-            running_request_limit,
-        )
-
-        for _, output_path, request in batch_payloads:
-            if should_skip_download(output_path):
-                continue
-            if not _can_submit_from_manifest(output_path):
-                continue
-            if active_requests >= MAX_ACTIVE_REMOTE_REQUESTS:
-                continue
-            submitted = _submit_request(
-                client=client,
-                dataset=dataset,
-                request=request,
-                output_path=output_path,
-            )
-            active_requests += int(submitted)
-            submitted_this_cycle += int(submitted)
-
-        counts = _manifest_status_counts(batch_payloads)
-        _log_worker_summary_box(
+        active_requests, counts = _run_retrieval_cycle(
+            client=client,
             dataset=dataset,
+            batch_payloads=batch_payloads,
+            verify_batch=verify_batch,
+            running_request_limit=running_request_limit,
             cycle_number=cycle_number,
             total_batches=total_batches,
-            active_requests=active_requests,
-            running_requests=running_requests,
-            running_request_limit=running_request_limit,
-            submitted_this_cycle=submitted_this_cycle,
-            counts=counts,
         )
 
         if not ENABLE_PERIODIC_RECHECKS:

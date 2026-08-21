@@ -23,7 +23,23 @@ ADM2_ID_COLUMN = "adm2_id"
 REACHABLE_TRENCH_COUNT_COLUMN = "reachable_trench_count"
 TOTAL_WEIGHT_COLUMN = "total_weight"
 
-ERA5_LAND_PREPROCESS_SUBTYPES = {"era5_land_hourly", "era5_land_daily"}
+# Single source of truth for which CDS dataset id backs each GRIB-origin
+# ERA5-Land preprocess subtype; fetch/era5_land_hourly.py, fetch/era5_land_daily.py,
+# fetch/common.py, and preprocess/era5_land.py all key off this instead of
+# hardcoding the dataset ids independently.
+ERA5_LAND_SUBTYPE_DATASETS = {
+    "era5_land_hourly": "reanalysis-era5-land",
+    "era5_land_daily": "derived-era5-land-daily-statistics",
+}
+# Brazil has used a single standard time (UTC-3, "Brasília time") nationwide
+# since the 2019 DST repeal; ERA5-Land is archived in UTC. Water-quality and
+# sensor observations are dated in Brazil local time, so both daily-climate
+# paths below (the CDS-side daily-statistics request and our own hourly->daily
+# resample) bucket by this offset rather than by UTC calendar day, to keep
+# their "date" values aligned with the outcomes they're joined against.
+BRAZIL_UTC_OFFSET_HOURS = -3
+
+ERA5_LAND_PREPROCESS_SUBTYPES = set(ERA5_LAND_SUBTYPE_DATASETS)
 ERA5_LAND_PREPROCESS_STAGES = {"all", "zarr", "parquet"}
 SENSOR_UPSTREAM_DISTANCE_BUCKETS_VARIANT = "sensor_upstream_distance_buckets"
 ADM2_UPSTREAM_YEARLY_VARIANT = "adm2_upstream_yearly"

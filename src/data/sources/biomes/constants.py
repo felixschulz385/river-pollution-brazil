@@ -42,15 +42,11 @@ DEFAULT_SENSOR_OUTPUT_PATH = "data/biomes/processed/biome_sensor.parquet"
 
 
 def biomes_dir(root_dir: str | Path = ".") -> Path:
-    path = Path(root_dir) / "data" / "biomes"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return Path(root_dir) / "data" / "biomes"
 
 
 def raw_dir(root_dir: str | Path = ".") -> Path:
-    path = biomes_dir(root_dir) / "raw"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return biomes_dir(root_dir) / "raw"
 
 
 def archive_path(root_dir: str | Path = ".") -> Path:

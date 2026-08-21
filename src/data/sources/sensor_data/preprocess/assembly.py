@@ -95,16 +95,35 @@ def _prepare_streamflow_features(streamflow):
     )
     features = features.dropna(subset=[STATION_CODE_COLUMN, DATE_COLUMN])
     features = features.sort_values([STATION_CODE_COLUMN, DATE_COLUMN], kind="mergesort")
+    # A source station-date can appear more than once (e.g. multiple consistency
+    # levels/re-imports in the raw export); collapse to one row per station-date
+    # before rolling so a duplicate doesn't double-weight that date in the rolling
+    # window or in the cross-station weighted average computed downstream.
+    features = features.drop_duplicates(subset=[STATION_CODE_COLUMN, DATE_COLUMN], keep="first")
     features[STREAMFLOW_DAY_COLUMN] = features[DISCHARGE_COLUMN]
 
     for window in STREAMFLOW_ROLLING_WINDOWS:
         column = f"streamflow_discharge_mean_{window}d"
-        features[column] = (
-            features.groupby(STATION_CODE_COLUMN, observed=True)[DISCHARGE_COLUMN]
-            .rolling(window=window, min_periods=1)
+        # A row-count window (`.rolling(window=int)`) counts *rows*, not
+        # calendar days -- a station with date gaps (outages, partial
+        # monthly imports) would get a "7-day"/"31-day" mean that silently
+        # spans however many calendar days those rows actually cover. Use a
+        # date-offset window (`f"{window}D"` with `on=DATE_COLUMN`) instead,
+        # so the window is anchored to actual elapsed time.
+        #
+        # This changes the rolling result's index from `features`'s own row
+        # index to a (station, date) MultiIndex, so it can't be assigned
+        # back by index alignment; `.to_numpy()` + positional assignment is
+        # safe here because `features` is already sorted by
+        # `[STATION_CODE_COLUMN, DATE_COLUMN]` above, which is exactly the
+        # row order `groupby(..., observed=True)` (default `sort=True`,
+        # stable within-group order) produces.
+        rolled = (
+            features.groupby(STATION_CODE_COLUMN, observed=True)
+            .rolling(f"{window}D", on=DATE_COLUMN, min_periods=1)[DISCHARGE_COLUMN]
             .mean()
-            .reset_index(level=0, drop=True)
         )
+        features[column] = rolled.to_numpy()
 
     return features[
         [STATION_CODE_COLUMN, DATE_COLUMN, *STREAMFLOW_FEATURE_COLUMNS]
@@ -362,28 +381,15 @@ def _build_station_matches(
     )
 
 
-def _weighted_mean(group, value_column):
-    valid = group[value_column].notna()
-    if not valid.any():
-        return np.nan
-    weights = group.loc[valid, "streamflow_weight"]
-    total_weight = weights.sum()
-    if total_weight <= 0:
-        return np.nan
-    values = group.loc[valid, value_column]
-    return float((values * weights).sum() / total_weight)
-
-
 def _aggregate_streamflow_matches(water_quality_keys, station_matches, streamflow_features):
+    empty_columns = [
+        "wq_station_code",
+        DATE_COLUMN,
+        *STREAMFLOW_FEATURE_COLUMNS,
+        *STREAMFLOW_DIAGNOSTIC_COLUMNS,
+    ]
     if station_matches.empty:
-        return pd.DataFrame(
-            columns=[
-                "wq_station_code",
-                DATE_COLUMN,
-                *STREAMFLOW_FEATURE_COLUMNS,
-                *STREAMFLOW_DIAGNOSTIC_COLUMNS,
-            ]
-        )
+        return pd.DataFrame(columns=empty_columns)
 
     matched = station_matches.merge(
         streamflow_features,
@@ -399,46 +405,65 @@ def _aggregate_streamflow_matches(water_quality_keys, station_matches, streamflo
         validate="many_to_many",
     )
     if matched.empty:
-        return pd.DataFrame(
-            columns=[
-                "wq_station_code",
-                DATE_COLUMN,
-                *STREAMFLOW_FEATURE_COLUMNS,
-                *STREAMFLOW_DIAGNOSTIC_COLUMNS,
-            ]
-        )
+        return pd.DataFrame(columns=empty_columns)
 
     group_columns = ["wq_station_code", DATE_COLUMN]
-    aggregated = matched.groupby(group_columns, observed=True).apply(
-        lambda group: pd.Series(
-            {
-                STREAMFLOW_DAY_COLUMN: _weighted_mean(group, STREAMFLOW_DAY_COLUMN),
-                **{
-                    f"streamflow_discharge_mean_{window}d": _weighted_mean(
-                        group,
-                        f"streamflow_discharge_mean_{window}d",
-                    )
-                    for window in STREAMFLOW_ROLLING_WINDOWS
-                },
-                "streamflow_match_count": int(
-                    group["streamflow_station_code"].nunique()
-                ),
-                "streamflow_nonnull_day_count": int(
-                    group.loc[group[STREAMFLOW_DAY_COLUMN].notna(), "streamflow_station_code"]
-                    .nunique()
-                ),
-                "streamflow_total_weight": float(
-                    group[["streamflow_station_code", "streamflow_weight"]]
-                    .drop_duplicates()["streamflow_weight"]
-                    .sum()
-                ),
-                "streamflow_nearest_distance_m": float(
-                    group["streamflow_distance_m"].min()
-                ),
-            }
+
+    # Collapse to one row per (group, streamflow_station_code) *before* weighting.
+    # A duplicate row for the same matched station -- e.g. from a many-to-many
+    # join, or duplicate source data upstream -- must contribute once to the
+    # weighted average across *distinct* matched stations, not scale with its
+    # duplicate count: summing raw (possibly fanned-out) rows would inflate that
+    # station's weight relative to the other matched stations in the group.
+    unique_station_rows = matched.drop_duplicates(
+        subset=[*group_columns, "streamflow_station_code"]
+    ).copy()
+
+    # Weighted-mean numerator/denominator per feature column, summed per group
+    # over the deduplicated per-station rows.
+    sum_columns = []
+    for feature_column in STREAMFLOW_FEATURE_COLUMNS:
+        valid = unique_station_rows[feature_column].notna()
+        weight = unique_station_rows["streamflow_weight"].where(valid, 0.0)
+        unique_station_rows[f"_{feature_column}_num"] = (
+            unique_station_rows[feature_column].fillna(0.0) * weight
         )
-    ).reset_index()
-    return aggregated
+        unique_station_rows[f"_{feature_column}_den"] = weight
+        sum_columns.extend([f"_{feature_column}_num", f"_{feature_column}_den"])
+
+    sums = unique_station_rows.groupby(group_columns, observed=True)[sum_columns].sum()
+    feature_frame = pd.DataFrame(index=sums.index)
+    for feature_column in STREAMFLOW_FEATURE_COLUMNS:
+        denominator = sums[f"_{feature_column}_den"]
+        feature_frame[feature_column] = (sums[f"_{feature_column}_num"] / denominator).where(
+            denominator > 0
+        )
+
+    diagnostics = pd.DataFrame(
+        {
+            "streamflow_match_count": matched.groupby(group_columns, observed=True)[
+                "streamflow_station_code"
+            ].nunique(),
+            "streamflow_nonnull_day_count": (
+                matched.loc[matched[STREAMFLOW_DAY_COLUMN].notna()]
+                .groupby(group_columns, observed=True)["streamflow_station_code"]
+                .nunique()
+            ),
+            "streamflow_total_weight": unique_station_rows.groupby(
+                group_columns, observed=True
+            )["streamflow_weight"].sum(),
+            "streamflow_nearest_distance_m": matched.groupby(group_columns, observed=True)[
+                "streamflow_distance_m"
+            ].min(),
+        }
+    )
+    diagnostics["streamflow_match_count"] = diagnostics["streamflow_match_count"].astype(int)
+    diagnostics["streamflow_nonnull_day_count"] = (
+        diagnostics["streamflow_nonnull_day_count"].fillna(0).astype(int)
+    )
+
+    aggregated = pd.concat([feature_frame, diagnostics], axis=1).reset_index()
+    return aggregated[empty_columns]
 
 
 def assemble_sensor_data(

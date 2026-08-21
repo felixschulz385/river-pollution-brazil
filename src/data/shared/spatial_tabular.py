@@ -57,46 +57,6 @@ def mapping_to_long_frame(mapping, *, index_name, column_name, value_name):
     )
 
 
-def rasterize_feature_values(
-    frame,
-    geobox,
-    *,
-    value_column,
-    geometry_column="geometry",
-    crs=4326,
-    dtype=None,
-    fill_value=np.nan,
-):
-    """Rasterize one vector row at a time into a labeled xarray grid."""
-    grid = None
-    for row in frame.itertuples(index=False):
-        geometry = getattr(row, geometry_column, None)
-        if geometry is None or geometry.is_empty:
-            continue
-        mask = odc_xr.rasterize(
-            geometry_with_crs(geometry, crs=crs),
-            geobox,
-            all_touched=False,
-        )
-        value = getattr(row, value_column)
-        layer = mask.astype(dtype or type(value)) * value
-        if grid is None:
-            grid = layer
-        else:
-            grid = grid.where(~mask, layer)
-
-    if grid is None:
-        template_geometry = frame.iloc[0][geometry_column]
-        grid = odc_xr.rasterize(geometry_with_crs(template_geometry, crs=crs), geobox)
-        grid = grid.astype(dtype or float)
-        grid[:] = fill_value
-        return grid
-
-    if np.isnan(fill_value):
-        return grid.where(grid != 0)
-    return grid.where(grid != 0, fill_value)
-
-
 def order_features_by_area(
     frame,
     *,
@@ -174,7 +134,3 @@ def build_feature_label_grid(
         all_touched=True,
     )
 
-
-masked_unique_counts = crop_unique_counts
-is_no_overlap_error = is_extent_mismatch_error
-rasterize_value_grid = rasterize_feature_values
