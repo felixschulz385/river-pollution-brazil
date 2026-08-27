@@ -5,6 +5,10 @@ CLEAN_WATER_QUALITY_PARQUET = "sensor_data_water_quality.parquet"
 CLEAN_STREAMFLOW_PARQUET = "sensor_data_streamflow.parquet"
 STATIONS_RIVERS_PARQUET = "sensor_data_stations_rivers.parquet"
 ASSEMBLED_SENSOR_DATA_PARQUET = "sensor_data_water_quality_streamflow.parquet"
+# Water-quality-cleaning QA byproducts live in this extract-stage subfolder,
+# separate from the datasets (water_quality/streamflow/stations_rivers) other
+# sources import directly -- see get_water_quality_cleaning_dir() in constants.py.
+WATER_QUALITY_CLEANING_SUBDIR = "water_quality_cleaning"
 TRANSFORMATION_RECOMMENDATIONS_JSON = "sensor_data_water_quality_transformations.json"
 CLEANING_FLAGS_PARQUET = "sensor_data_water_quality_cleaning_flags.parquet"
 CLEANING_SUMMARY_PARQUET = "sensor_data_water_quality_cleaning_summary.parquet"

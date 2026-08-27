@@ -444,14 +444,34 @@ def test_sensor_data_check_fetched_db_file_present_without_stations_table_report
     assert station_artifact.checks == []
 
 
-def test_sensor_data_check_fetched_empty_raw_dir_reports_absent(tmp_path):
-    """raw_dir can exist on disk (created but holding zero .zip archives) --
-    exists must reflect that no archive was actually found."""
-    from src.data.sources.sensor_data.constants import get_raw_dir
+def test_sensor_data_check_fetched_malformed_stations_table_reports_failed_not_crashed(tmp_path):
+    """A `stations` table that exists but doesn't match what
+    read_geodataframe_table's stored metadata expects (e.g. left over from an
+    interrupted or pre-metadata-tracking write, missing the geometry column
+    entirely) must surface as a failed check, not propagate the KeyError and
+    crash verification -- see the module docstring's "must degrade
+    gracefully... never raised" contract."""
+    import pandas as pd
+    from src.data.sources.sensor_data.fetch.database import STATIONS_TABLE, write_dataframe_table
 
-    raw_dir = get_raw_dir(tmp_path)
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    (raw_dir / "not-an-archive.txt").write_text("stray file")
+    write_dataframe_table(str(tmp_path), STATIONS_TABLE, pd.DataFrame({"station_code": ["1"]}))
+
+    adapter = SOURCE_ADAPTERS["sensor_data"]
+    artifacts = adapter.check_fetched(tmp_path)
+
+    station_artifact = next(a for a in artifacts if a.label == "station_inventory")
+    assert station_artifact.exists
+    assert not station_artifact.ok
+
+
+def test_sensor_data_check_fetched_empty_raw_dir_reports_absent(tmp_path):
+    """archives_dir can exist on disk (created but holding zero .zip archives) --
+    exists must reflect that no archive was actually found."""
+    from src.data.sources.sensor_data.constants import get_archives_dir
+
+    archives_dir = get_archives_dir(tmp_path)
+    archives_dir.mkdir(parents=True, exist_ok=True)
+    (archives_dir / "not-an-archive.txt").write_text("stray file")
 
     adapter = SOURCE_ADAPTERS["sensor_data"]
     artifacts = adapter.check_fetched(tmp_path)
@@ -465,7 +485,7 @@ def test_sensor_data_check_fetched_valid_station_inventory_and_archive(tmp_path)
     import zipfile
 
     import geopandas as gpd
-    from src.data.sources.sensor_data.constants import get_raw_dir
+    from src.data.sources.sensor_data.constants import get_archives_dir
     from src.data.sources.sensor_data.fetch.database import STATIONS_TABLE, write_geodataframe_table
 
     stations = pd.DataFrame({"station_code": ["11111111"]})
@@ -474,9 +494,9 @@ def test_sensor_data_check_fetched_valid_station_inventory_and_archive(tmp_path)
     )
     write_geodataframe_table(tmp_path, STATIONS_TABLE, stations_geo)
 
-    raw_dir = get_raw_dir(tmp_path)
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(raw_dir / "11111111.zip", "w") as archive:
+    archives_dir = get_archives_dir(tmp_path)
+    archives_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archives_dir / "11111111.zip", "w") as archive:
         archive.writestr("data.txt", "hello")
 
     adapter = SOURCE_ADAPTERS["sensor_data"]
@@ -487,11 +507,11 @@ def test_sensor_data_check_fetched_valid_station_inventory_and_archive(tmp_path)
 
 
 def test_sensor_data_check_fetched_flags_corrupt_archive(tmp_path):
-    from src.data.sources.sensor_data.constants import get_raw_dir
+    from src.data.sources.sensor_data.constants import get_archives_dir
 
-    raw_dir = get_raw_dir(tmp_path)
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    (raw_dir / "corrupt.zip").write_bytes(b"not-a-zip")
+    archives_dir = get_archives_dir(tmp_path)
+    archives_dir.mkdir(parents=True, exist_ok=True)
+    (archives_dir / "corrupt.zip").write_bytes(b"not-a-zip")
 
     adapter = SOURCE_ADAPTERS["sensor_data"]
     artifacts = adapter.check_fetched(tmp_path)

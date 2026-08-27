@@ -499,7 +499,7 @@ def _sensor_data_check_outputs(root_dir) -> list[OutputArtifactCheck]:
 
 
 def _sensor_data_check_fetched(root_dir) -> list[OutputArtifactCheck]:
-    from src.data.sources.sensor_data.constants import get_raw_dir, get_sensor_database_path
+    from src.data.sources.sensor_data.constants import get_archives_dir, get_sensor_database_path
     from src.data.sources.sensor_data.fetch.data.download import (
         _cached_is_parseable_zip,
         _load_zip_verification_cache,
@@ -513,25 +513,54 @@ def _sensor_data_check_fetched(root_dir) -> list[OutputArtifactCheck]:
     if not table_exists(root_dir, STATIONS_TABLE):
         artifacts.append(_absent_artifact("station_inventory", db_path))
     else:
-        stations = read_geodataframe_table(root_dir, STATIONS_TABLE)
-        checks = [_non_empty_check(stations, name="non_empty")]
-        if "geometry" in stations.columns:
-            null_fraction = float(stations.geometry.isna().mean()) if not stations.empty else 1.0
-            checks.append(
-                CheckResult(
-                    name="null_fraction:geometry",
-                    ok=null_fraction == 0.0,
-                    message=f"{null_fraction:.2%} null geometries.",
+        try:
+            stations = read_geodataframe_table(root_dir, STATIONS_TABLE)
+        except Exception as exc:
+            # The table can exist (e.g. left over from an interrupted or
+            # pre-metadata-tracking write) without matching what
+            # read_geodataframe_table's stored metadata expects -- that's a
+            # data problem to report, not a reason to crash verification.
+            artifacts.append(
+                OutputArtifactCheck(
+                    label="station_inventory",
+                    path=db_path,
+                    exists=True,
+                    checks=[
+                        CheckResult(
+                            name="readable",
+                            ok=False,
+                            message=(
+                                f"Could not read '{STATIONS_TABLE}' table: "
+                                f"{exc.__class__.__name__}: {exc}. Try re-running "
+                                "`data fetch --source sensor_data` to rewrite it."
+                            ),
+                        )
+                    ],
                 )
             )
-        artifacts.append(OutputArtifactCheck(label="station_inventory", path=db_path, exists=True, checks=checks))
+            stations = None
 
-    raw_dir = get_raw_dir(root_dir)
-    zip_paths = sorted(raw_dir.glob("*.zip")) if raw_dir.exists() else []
+        if stations is not None:
+            checks = [_non_empty_check(stations, name="non_empty")]
+            if "geometry" in stations.columns:
+                null_fraction = float(stations.geometry.isna().mean()) if not stations.empty else 1.0
+                checks.append(
+                    CheckResult(
+                        name="null_fraction:geometry",
+                        ok=null_fraction == 0.0,
+                        message=f"{null_fraction:.2%} null geometries.",
+                    )
+                )
+            artifacts.append(
+                OutputArtifactCheck(label="station_inventory", path=db_path, exists=True, checks=checks)
+            )
+
+    archives_dir = get_archives_dir(root_dir)
+    zip_paths = sorted(archives_dir.glob("*.zip")) if archives_dir.exists() else []
     if not zip_paths:
-        artifacts.append(_absent_artifact("raw_archives", raw_dir))
+        artifacts.append(_absent_artifact("raw_archives", archives_dir))
     else:
-        cache = _load_zip_verification_cache(raw_dir)
+        cache = _load_zip_verification_cache(archives_dir)
         cache_dirty = False
         corrupt: list[str] = []
         for path in zip_paths:
@@ -540,7 +569,7 @@ def _sensor_data_check_fetched(root_dir) -> list[OutputArtifactCheck]:
             if not ok:
                 corrupt.append(path.name)
         if cache_dirty:
-            _save_zip_verification_cache(raw_dir, cache)
+            _save_zip_verification_cache(archives_dir, cache)
         ok = not corrupt
         message = f"{len(zip_paths) - len(corrupt)}/{len(zip_paths)} archives parseable."
         if corrupt:
@@ -548,7 +577,7 @@ def _sensor_data_check_fetched(root_dir) -> list[OutputArtifactCheck]:
         artifacts.append(
             OutputArtifactCheck(
                 label="raw_archives",
-                path=raw_dir,
+                path=archives_dir,
                 exists=True,
                 checks=[CheckResult(name="zip_integrity", ok=ok, message=message)],
             )

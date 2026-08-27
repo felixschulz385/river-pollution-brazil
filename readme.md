@@ -122,7 +122,7 @@ The main assembled output currently tracked in the repository is:
 
 Transformation metadata used by the analysis pipeline is stored in:
 
-- `data/sensor_data/processed/extract/sensor_data_water_quality_transformations.json`
+- `data/sensor_data/processed/extract/water_quality_cleaning/sensor_data_water_quality_transformations.json`
 
 ### Land Cover
 
@@ -229,7 +229,7 @@ By default, analysis settings point to:
 
 - `data/sensor_data/processed/aggregate/sensor_data_water_quality_streamflow.parquet`
 - `data/land_cover/processed/aggregate/land_cover_sensor_upstream.parquet`
-- `data/sensor_data/processed/extract/sensor_data_water_quality_transformations.json`
+- `data/sensor_data/processed/extract/water_quality_cleaning/sensor_data_water_quality_transformations.json`
 - `data/river_network/processed/river_network_trenches.parquet`
 - `output/analysis/sensor_data/`
 

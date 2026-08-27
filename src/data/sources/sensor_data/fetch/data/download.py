@@ -32,7 +32,7 @@ from ..database import (
     table_exists,
     write_dataframe_table,
 )
-from ...constants import ensure_water_quality_dirs, get_download_log_database_path
+from ...constants import ensure_water_quality_dirs, get_archives_dir, get_download_log_database_path
 from ..webdriver import ManagedBrowser
 from .station_selection import load_queryable_stations
 
@@ -218,12 +218,12 @@ def _is_parseable_zip(path: Path) -> bool:
         return False
 
 
-def _zip_verification_cache_path(raw_dir: Path) -> Path:
-    return raw_dir / ".zip_verification_cache.json"
+def _zip_verification_cache_path(archives_dir: Path) -> Path:
+    return archives_dir / ".zip_verification_cache.json"
 
 
-def _load_zip_verification_cache(raw_dir: Path) -> dict:
-    path = _zip_verification_cache_path(raw_dir)
+def _load_zip_verification_cache(archives_dir: Path) -> dict:
+    path = _zip_verification_cache_path(archives_dir)
     if not path.exists():
         return {}
     try:
@@ -232,8 +232,8 @@ def _load_zip_verification_cache(raw_dir: Path) -> dict:
         return {}
 
 
-def _save_zip_verification_cache(raw_dir: Path, cache: dict) -> None:
-    path = _zip_verification_cache_path(raw_dir)
+def _save_zip_verification_cache(archives_dir: Path, cache: dict) -> None:
+    path = _zip_verification_cache_path(archives_dir)
     temp_path = path.with_name(f"{path.name}.tmp-{os.getpid()}")
     temp_path.write_text(json.dumps(cache))
     os.replace(temp_path, path)
@@ -261,11 +261,11 @@ def _cached_is_parseable_zip(path: Path, stat_result, cache: dict) -> tuple[bool
     return ok, True
 
 
-def _current_raw_archives_frame(raw_dir: Path) -> pd.DataFrame:
-    cache = _load_zip_verification_cache(raw_dir)
+def _current_raw_archives_frame(archives_dir: Path) -> pd.DataFrame:
+    cache = _load_zip_verification_cache(archives_dir)
     cache_dirty = False
     records = []
-    for path in raw_dir.iterdir():
+    for path in archives_dir.iterdir():
         try:
             if not path.is_file() or path.name.startswith(".zip_verification_cache.json"):
                 continue
@@ -279,7 +279,7 @@ def _current_raw_archives_frame(raw_dir: Path) -> pd.DataFrame:
         except FileNotFoundError:
             continue
     if cache_dirty:
-        _save_zip_verification_cache(raw_dir, cache)
+        _save_zip_verification_cache(archives_dir, cache)
     return pd.DataFrame(records, columns=["filename", "file_size_bytes"])
 
 
@@ -481,12 +481,12 @@ def _should_attempt_category(
     raise ValueError(f"Unsupported fetch mode: {fetch_mode}")
 
 
-def _station_has_any_archives(raw_dir: Path, station_code: str) -> bool:
+def _station_has_any_archives(archives_dir: Path, station_code: str) -> bool:
     pattern = f"{station_code}_*.zip"
-    return any(path.is_file() for path in raw_dir.glob(pattern))
+    return any(path.is_file() for path in archives_dir.glob(pattern))
 
 
-def _existing_category_keys(raw_dir: Path, station_code: str) -> set[tuple[str, str, str]]:
+def _existing_category_keys(archives_dir: Path, station_code: str) -> set[tuple[str, str, str]]:
     """Infer already-downloaded categories from category-aware archive names."""
     existing_keys: set[tuple[str, str, str]] = set()
     # `__` is the boundary between the tab and category slugs (see `source_label` below);
@@ -496,7 +496,7 @@ def _existing_category_keys(raw_dir: Path, station_code: str) -> set[tuple[str, 
         rf"^{re.escape(str(station_code))}_(?P<tab>[a-z0-9_]+)__(?P<category>[a-z0-9_]+)_mdb_",
         re.IGNORECASE,
     )
-    for path in raw_dir.iterdir():
+    for path in archives_dir.iterdir():
         if not path.is_file() or path.suffix.lower() != ".zip":
             continue
         match = pattern.match(path.name)
@@ -662,10 +662,10 @@ def _search_station(
     _decency_wait(1.0, 2.0)
 
 
-def _store_downloaded_file(downloaded_path: Path, raw_dir: Path, station_code: str, source_label: str) -> Path:
-    """Move a browser download into the raw archive directory using a unique name."""
+def _store_downloaded_file(downloaded_path: Path, archives_dir: Path, station_code: str, source_label: str) -> Path:
+    """Move a browser download into the archives directory using a unique name."""
     suffix = downloaded_path.suffix or ".zip"
-    archive_path = raw_dir / _archive_storage_name(f"{station_code}_{source_label}")
+    archive_path = archives_dir / _archive_storage_name(f"{station_code}_{source_label}")
     archive_path = archive_path.with_suffix(suffix)
     shutil.move(str(downloaded_path), str(archive_path))
     return archive_path
@@ -736,7 +736,7 @@ def _download_matching_rows_in_active_tab(
     station_code: str,
     driver,
     download_dir: Path,
-    raw_dir: Path,
+    archives_dir: Path,
     result_tab: str,
     fetch_mode: str,
     station_history: dict[tuple[str, str, str], pd.DataFrame],
@@ -744,7 +744,7 @@ def _download_matching_rows_in_active_tab(
     """Download every MDB exposed for matching rows in the currently active tab."""
     records: list[dict[str, object]] = []
     normalized_station_code = _normalise_station_code_text(station_code)
-    existing_keys = _existing_category_keys(raw_dir, station_code)
+    existing_keys = _existing_category_keys(archives_dir, station_code)
     saw_matching_row = False
 
     while True:
@@ -825,7 +825,7 @@ def _download_matching_rows_in_active_tab(
                 source_label = f"{_slugify_label(result_tab)}__{station_type_slug}"
                 archive_path = _store_downloaded_file(
                     downloaded_path,
-                    raw_dir,
+                    archives_dir,
                     str(station_code),
                     source_label,
                 )
@@ -918,7 +918,7 @@ def _download_conventional_archives(
     station_name: str,
     driver,
     download_dir: Path,
-    raw_dir: Path,
+    archives_dir: Path,
     root_dir=".",
     fetch_mode: str = "default",
     station_history: dict[tuple[str, str, str], pd.DataFrame] | None = None,
@@ -944,7 +944,7 @@ def _download_conventional_archives(
         station_code=str(station_code),
         driver=driver,
         download_dir=Path(download_dir),
-        raw_dir=Path(raw_dir),
+        archives_dir=Path(archives_dir),
         result_tab="conventional",
         fetch_mode=fetch_mode,
         station_history=station_history or {},
@@ -981,7 +981,7 @@ def download_by_id(
     station_name: str,
     driver,
     download_dir,
-    raw_dir,
+    archives_dir,
     root_dir=".",
     fetch_mode: str = "default",
     run_id: str | None = None,
@@ -1011,7 +1011,7 @@ def download_by_id(
                 station_name,
                 driver,
                 Path(download_dir),
-                Path(raw_dir),
+                Path(archives_dir),
                 root_dir=root_dir,
                 fetch_mode=fetch_mode,
                 station_history=station_history,
@@ -1090,8 +1090,10 @@ def fetch_station_data(
     if fetch_mode not in FETCH_MODES:
         raise ValueError(f"Unknown fetch mode: {fetch_mode}. Expected one of: {sorted(FETCH_MODES)}")
 
-    _, raw_dir = ensure_water_quality_dirs(root_dir)
-    browser_download_dir = raw_dir if download_dir is None else download_dir
+    ensure_water_quality_dirs(root_dir)
+    archives_dir = get_archives_dir(root_dir)
+    archives_dir.mkdir(parents=True, exist_ok=True)
+    browser_download_dir = archives_dir if download_dir is None else download_dir
     stations_to_query = load_queryable_stations(root_dir)
     if single_station is not None:
         single_station = str(single_station).strip()
@@ -1101,7 +1103,7 @@ def fetch_station_data(
         if len(stations_to_query.index) == 0:
             raise KeyError(f"Unknown station code in stations_rivers: {single_station}")
     logger.info("Prepared %s station(s) for archive download.", len(stations_to_query))
-    current_raw_archives = _current_raw_archives_frame(raw_dir)
+    current_raw_archives = _current_raw_archives_frame(archives_dir)
     write_dataframe_table(
         root_dir,
         RAW_ARCHIVES_TABLE,
@@ -1150,7 +1152,7 @@ def fetch_station_data(
                 station_name,
                 driver,
                 browser_download_dir,
-                raw_dir,
+                archives_dir,
                 root_dir=root_dir,
                 fetch_mode=fetch_mode,
                 run_id=run_id,
@@ -1196,6 +1198,6 @@ def fetch_station_data(
     write_dataframe_table(
         root_dir,
         RAW_ARCHIVES_TABLE,
-        _current_raw_archives_frame(raw_dir),
+        _current_raw_archives_frame(archives_dir),
     )
     return pd.DataFrame(download_records, columns=DOWNLOAD_LOG_COLUMNS)

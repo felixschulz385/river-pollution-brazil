@@ -2,7 +2,7 @@ import json
 import logging
 from pathlib import Path
 
-from ..constants import get_processed_dir, get_sensor_database_path
+from ..constants import get_processed_dir, get_sensor_database_path, get_water_quality_cleaning_dir
 from .clean import clean_measurement_values, resolve_measurement_columns
 from .rename import rename_portuguese_fields
 from ..schema import (
@@ -460,9 +460,11 @@ def preprocess_sensor_data(root_dir=".") -> dict[str, str]:
     clean_frame = _drop_auxiliary_columns(_merge_date_time_columns(clean_frame))
     output_dir = _preprocess_output_dir(root_dir)
     clean_path = output_dir / CLEAN_WATER_QUALITY_PARQUET
-    recommendations_path = output_dir / TRANSFORMATION_RECOMMENDATIONS_JSON
-    flags_path = output_dir / CLEANING_FLAGS_PARQUET
-    summary_path = output_dir / CLEANING_SUMMARY_PARQUET
+    cleaning_dir = get_water_quality_cleaning_dir(root_dir)
+    cleaning_dir.mkdir(parents=True, exist_ok=True)
+    recommendations_path = cleaning_dir / TRANSFORMATION_RECOMMENDATIONS_JSON
+    flags_path = cleaning_dir / CLEANING_FLAGS_PARQUET
+    summary_path = cleaning_dir / CLEANING_SUMMARY_PARQUET
 
     clean_frame.to_parquet(clean_path, index=False)
     flags.to_parquet(flags_path, index=False)

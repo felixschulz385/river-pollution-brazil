@@ -35,8 +35,8 @@ from ..database import (
 )
 from ...constants import (
     ensure_water_quality_dirs,
+    get_archives_dir,
     get_download_log_database_path,
-    get_raw_dir,
     get_sensor_database_path,
 )
 from .access_reader import read_archive_payload
@@ -67,12 +67,12 @@ def _load_name_mapping() -> tuple[dict[str, str], dict[str, dict[str, str]]]:
 
 def list_valid_raw_archives(root_dir="."):
     """Identify downloaded MDB archives that should be preprocessed."""
-    raw_dir = get_raw_dir(root_dir)
-    files = pd.DataFrame({"filename": [path.name for path in raw_dir.iterdir() if path.is_file()]})
+    archives_dir = get_archives_dir(root_dir)
+    files = pd.DataFrame({"filename": [path.name for path in archives_dir.iterdir() if path.is_file()]})
     if files.empty:
         return files
 
-    files["file_size_bytes"] = files["filename"].apply(lambda name: (raw_dir / name).stat().st_size)
+    files["file_size_bytes"] = files["filename"].apply(lambda name: (archives_dir / name).stat().st_size)
     files["station_code"] = files["filename"].str.extract(r"(^\d+)").iloc[:, 0]
     files = files.loc[
         (files["file_size_bytes"] > 22)
@@ -131,7 +131,7 @@ def _format_markdown_table(headers: list[str], rows: list[list[object]]) -> str:
 def _write_preprocess_metadata(
     root_dir: str,
     *,
-    raw_dir: Path,
+    archives_dir: Path,
     started_at_iso: str,
     elapsed_minutes: float,
     total_input_archives: int,
@@ -180,7 +180,7 @@ def _write_preprocess_metadata(
 | Completed at | {completed_at_iso} |
 | Elapsed minutes | {elapsed_minutes:.2f} |
 | Root directory | {Path(root_dir).resolve()} |
-| Raw archive directory | {raw_dir.resolve()} |
+| Raw archive directory | {archives_dir.resolve()} |
 | Main database | {sensor_database_path.resolve()} |
 | Download log database | {download_log_database_path.resolve()} |
 
@@ -229,13 +229,14 @@ def preprocess_station_data(
     """Parse downloaded MDB archives and persist raw Access tables into DuckDB."""
     started_at = monotonic()
     started_at_iso = datetime.now().astimezone().isoformat(timespec="seconds")
-    water_quality_dir, raw_dir = ensure_water_quality_dirs(root_dir)
+    water_quality_dir, _ = ensure_water_quality_dirs(root_dir)
+    archives_dir = get_archives_dir(root_dir)
     files = list_valid_raw_archives(root_dir)
     if single_station is not None:
         files = files.loc[files["station_code"].astype(str) == str(single_station)].copy()
         logger.info("Filtering preprocess input to station %s.", single_station)
     if files.empty:
-        raise ValueError(f"No valid raw station MDB archives found in {raw_dir}.")
+        raise ValueError(f"No valid raw station MDB archives found in {archives_dir}.")
 
     table_map, column_map = _load_name_mapping()
     requested_source_tables = _parse_source_tables(source_tables)
@@ -248,7 +249,7 @@ def preprocess_station_data(
     logger.info(
         "Preprocessing %s raw MDB archive(s) from %s into %s.",
         len(files),
-        raw_dir,
+        archives_dir,
         water_quality_dir,
     )
     logger.info(
@@ -291,7 +292,7 @@ def preprocess_station_data(
     def _write_run_metadata() -> Path:
         return _write_preprocess_metadata(
             root_dir,
-            raw_dir=raw_dir,
+            archives_dir=archives_dir,
             started_at_iso=started_at_iso,
             elapsed_minutes=(monotonic() - started_at) / 60,
             total_input_archives=len(files),
@@ -439,7 +440,7 @@ def preprocess_station_data(
                         loop.run_in_executor(
                             executor,
                             read_archive_payload,
-                            str(raw_dir / record["filename"]),
+                            str(archives_dir / record["filename"]),
                             record["filename"],
                             str(record["station_code"]),
                             table_map,

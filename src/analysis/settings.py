@@ -109,7 +109,8 @@ class SensorAnalysisSettings:
     )
     climate_data_path: Path | None = PROJECT_ROOT / "data/climate/processed/aggregate/climate_sensor_upstream.parquet"
     transformations_path: Path = (
-        PROJECT_ROOT / "data/sensor_data/processed/extract/sensor_data_water_quality_transformations.json"
+        PROJECT_ROOT
+        / "data/sensor_data/processed/extract/water_quality_cleaning/sensor_data_water_quality_transformations.json"
     )
     trenches_path: Path = PROJECT_ROOT / "data/river_network/processed/river_network_trenches.parquet"
     output_dir: Path = PROJECT_ROOT / "output/analysis/sensor_data"
