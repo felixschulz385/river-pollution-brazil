@@ -10,7 +10,7 @@ class Biomes:
 
         return fetch_biomes(root_dir=self.root_dir)
 
-    def preprocess(
+    def aggregate(
         self,
         gadm_path=None,
         layer=None,

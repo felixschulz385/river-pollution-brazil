@@ -265,3 +265,39 @@ def test_preprocess_complete_roundtrips_through_sidecar_cache(tmp_path, monkeypa
     cached_reports = Verification(root_dir=tmp_path).verify(source="biomes")
     assert cached_reports["biomes"].from_cache is True
     assert cached_reports["biomes"].preprocess_complete is True
+
+
+def test_stale_sidecar_missing_new_fields_is_not_trusted_as_cache_hit(tmp_path, monkeypatch):
+    """A sidecar written before fetch_status/preprocess_complete existed has
+    neither key at all. Serving it as a cache hit would silently default
+    fetch_status to "not_applicable" and preprocess_complete to False
+    forever (via the .get() fallbacks) for any source whose fingerprint
+    hasn't changed since -- it must instead be recomputed fresh once."""
+    from src.data.verification import core as core_module
+    from src.data.verification.fingerprint import compute_fingerprint
+
+    # A real check_fetched (fetched_ok=True -> fetch_status="verified") so a
+    # cache hit that wrongly defaulted to "not_applicable" is unambiguously
+    # distinguishable from a genuine recompute.
+    monkeypatch.setitem(core_module.SOURCE_ADAPTERS, "biomes", _adapter_with_fetched_checks(fetched_ok=True))
+
+    sidecar_dir = tmp_path / "data" / "biomes"
+    sidecar_dir.mkdir(parents=True)
+    stale_payload = {
+        "source": "biomes",
+        "fingerprint": compute_fingerprint([]),
+        "verified_at": "2020-01-01T00:00:00+00:00",
+        "status": "verified",
+        "checks": [],
+        "fetch_completeness": {"present": 0, "expected": 1, "detail": "ok"},
+        "outputs_present": True,
+        # deliberately no "fetch_status" / "preprocess_complete" keys, as a
+        # sidecar written before this feature existed would have.
+    }
+    (sidecar_dir / ".verification.json").write_text(json.dumps(stale_payload))
+
+    reports = Verification(root_dir=tmp_path).verify(source="biomes")
+
+    assert reports["biomes"].from_cache is False
+    assert reports["biomes"].preprocess_complete is True
+    assert reports["biomes"].fetch_status == "verified"

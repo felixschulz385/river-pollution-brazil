@@ -80,14 +80,17 @@ def test_preprocess_chain_stops_at_unresolvable_manual_source(tmp_path):
 
 
 def test_preprocess_passes_through_silently_once_prerequisites_are_satisfied(tmp_path):
-    """biomes.preprocess only requires sensor_data to be fetched (its raw
-    'stations' table) plus biomes' own raw archive -- once both exist, the
-    gate must let the run proceed to biomes' own preprocessing code instead
-    of blocking."""
+    """biomes.preprocess requires sensor_data to be fetched (its raw
+    'stations' table), gadm to be preprocessed (its simplified boundary
+    output), and biomes' own raw archive -- once all three exist, the gate
+    must let the run proceed to biomes' own preprocessing code instead of
+    blocking."""
     import geopandas as gpd
     import pandas as pd
+    from shapely.geometry import Point
 
     from src.data.sources.biomes.constants import archive_path
+    from src.data.sources.gadm.constants import DEFAULT_ADM0_LAYER, DEFAULT_ADM2_LAYER, DEFAULT_SIMPLIFIED_GADM_PATH
     from src.data.sources.sensor_data.fetch.database import STATIONS_TABLE, write_geodataframe_table
 
     stations = pd.DataFrame({"station_code": ["11111111"]})
@@ -100,6 +103,12 @@ def test_preprocess_passes_through_silently_once_prerequisites_are_satisfied(tmp
     biomes_archive.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(biomes_archive, "w") as archive:
         archive.writestr("biomes.shp", "fake-shapefile-bytes" * 100)
+
+    gadm_path = tmp_path / DEFAULT_SIMPLIFIED_GADM_PATH
+    gadm_path.parent.mkdir(parents=True, exist_ok=True)
+    frame = gpd.GeoDataFrame({"geometry": [Point(0, 0)]}, crs=4326)
+    frame.to_file(gadm_path, layer=DEFAULT_ADM0_LAYER, driver="GPKG")
+    frame.to_file(gadm_path, layer=DEFAULT_ADM2_LAYER, driver="GPKG")
 
     result = _run_cli(["data", "preprocess", "--source", "biomes", "--root-dir", str(tmp_path)])
 

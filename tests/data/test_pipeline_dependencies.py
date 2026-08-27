@@ -65,8 +65,17 @@ def test_unmet_prerequisites_land_cover_preprocess_empty_when_satisfied(monkeypa
     assert unmet_prerequisites("land_cover", "preprocess") == []
 
 
+_GADM_SATISFIED = {"gadm": {"fetch_status": "verified", "preprocess_complete": True}}
+
+
 def test_unmet_prerequisites_sensor_data_fetch_requires_river_network_preprocessed(monkeypatch):
-    _stub_verification(monkeypatch, {"river_network": {"fetch_status": "verified", "preprocess_complete": False}})
+    _stub_verification(
+        monkeypatch,
+        {
+            "river_network": {"fetch_status": "verified", "preprocess_complete": False},
+            **_GADM_SATISFIED,
+        },
+    )
 
     problems = unmet_prerequisites("sensor_data", "fetch")
 
@@ -74,10 +83,25 @@ def test_unmet_prerequisites_sensor_data_fetch_requires_river_network_preprocess
     assert "'river_network' has not finished preprocessing yet" in problems[0]
 
 
+def test_unmet_prerequisites_sensor_data_fetch_requires_gadm_preprocessed(monkeypatch):
+    _stub_verification(monkeypatch, {"river_network": {"fetch_status": "verified", "preprocess_complete": True}})
+
+    problems = unmet_prerequisites("sensor_data", "fetch")
+
+    assert len(problems) == 1
+    assert "'gadm' has not finished preprocessing yet" in problems[0]
+
+
 def test_unmet_prerequisites_sensor_data_fetch_has_no_self_check(monkeypatch):
     """Unlike "preprocess", the "fetch" verb has no universal self-check --
     a source obviously doesn't need to already be fetched to fetch it."""
-    _stub_verification(monkeypatch, {"river_network": {"fetch_status": "verified", "preprocess_complete": True}})
+    _stub_verification(
+        monkeypatch,
+        {
+            "river_network": {"fetch_status": "verified", "preprocess_complete": True},
+            **_GADM_SATISFIED,
+        },
+    )
 
     assert unmet_prerequisites("sensor_data", "fetch") == []
 
@@ -88,6 +112,7 @@ def test_unmet_prerequisites_biomes_requires_sensor_data_fetched(monkeypatch):
         {
             "biomes": {"fetch_status": "verified", "preprocess_complete": False},
             "sensor_data": {"fetch_status": "not_present_locally", "preprocess_complete": False},
+            **_GADM_SATISFIED,
         },
     )
 
@@ -97,16 +122,40 @@ def test_unmet_prerequisites_biomes_requires_sensor_data_fetched(monkeypatch):
     assert "'sensor_data' has not been fetched yet" in problems[0]
 
 
+def test_unmet_prerequisites_biomes_requires_gadm_preprocessed(monkeypatch):
+    _stub_verification(
+        monkeypatch,
+        {
+            "biomes": {"fetch_status": "verified", "preprocess_complete": False},
+            "sensor_data": {"fetch_status": "verified", "preprocess_complete": False},
+        },
+    )
+
+    problems = unmet_prerequisites("biomes", "preprocess")
+
+    assert len(problems) == 1
+    assert "'gadm' has not finished preprocessing yet" in problems[0]
+
+
 def test_unmet_prerequisites_river_network_manual_placement_message(monkeypatch):
     """river_network has fetch=False in SOURCE_REGISTRY -- the self-check
     message for it must point at manual placement, not a `data fetch` command."""
-    _stub_verification(monkeypatch, {})
+    _stub_verification(monkeypatch, _GADM_SATISFIED)
 
     problems = unmet_prerequisites("river_network", "preprocess")
 
     assert len(problems) == 1
     assert "must be placed manually" in problems[0]
     assert "data fetch" not in problems[0]
+
+
+def test_unmet_prerequisites_river_network_requires_gadm_preprocessed(monkeypatch):
+    _stub_verification(monkeypatch, {"river_network": {"fetch_status": "verified", "preprocess_complete": False}})
+
+    problems = unmet_prerequisites("river_network", "preprocess")
+
+    assert len(problems) == 1
+    assert "'gadm' has not finished preprocessing yet" in problems[0]
 
 
 # --------------------------------------------------------------------------
@@ -173,7 +222,13 @@ def test_build_chain_raises_on_unresolvable_manual_source(monkeypatch):
 
 
 def test_build_chain_orders_multihop_dependencies(monkeypatch):
-    _stub_verification(monkeypatch, {"river_network": {"fetch_status": "verified", "preprocess_complete": True}})
+    _stub_verification(
+        monkeypatch,
+        {
+            "river_network": {"fetch_status": "verified", "preprocess_complete": True},
+            **_GADM_SATISFIED,
+        },
+    )
 
     chain = build_chain("land_cover", "preprocess")
 
@@ -204,7 +259,13 @@ def test_build_chain_assembly_pulls_in_preprocess_steps_for_every_prerequisite(t
     monkeypatch.setattr(
         "src.data.assembly.constants.DEFAULT_CONFIG_PATH", str(config_path.relative_to(tmp_path))
     )
-    _stub_verification(monkeypatch, {"river_network": {"fetch_status": "verified", "preprocess_complete": True}})
+    _stub_verification(
+        monkeypatch,
+        {
+            "river_network": {"fetch_status": "verified", "preprocess_complete": True},
+            **_GADM_SATISFIED,
+        },
+    )
 
     chain = build_chain(ASSEMBLY_NODE, "assemble", root_dir=tmp_path)
 

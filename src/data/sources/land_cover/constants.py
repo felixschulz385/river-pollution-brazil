@@ -53,7 +53,7 @@ ASSEMBLY_VARIANTS = (
     SENSOR_ASSEMBLY_VARIANT,
     ADM2_ASSEMBLY_VARIANT,
 )
-DEFAULT_ASSEMBLY_LAND_COVER_PATH = "data/land_cover/processed/extract/land_cover.feather"
+DEFAULT_ASSEMBLY_LAND_COVER_PATH = "data/land_cover/processed/extract/land_cover.parquet"
 DEFAULT_RIVER_NETWORK_PATH = _RIVER_NETWORK_PROCESSED_DIR
 DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH = (
     "data/land_cover/processed/aggregate/land_cover_sensor_upstream.parquet"

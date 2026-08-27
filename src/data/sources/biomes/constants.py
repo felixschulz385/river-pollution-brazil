@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.data.shared.paths import GADM_PATH as DEFAULT_GADM_PATH
+from src.data.sources.gadm.constants import DEFAULT_SIMPLIFIED_GADM_PATH as DEFAULT_GADM_PATH
 
 
 BIOMES_ARCHIVE_URL = (

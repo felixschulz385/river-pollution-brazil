@@ -47,7 +47,7 @@ class LandCover:
         self,
         n_jobs=None,
         river_network_path=None,
-        output_path="data/land_cover/processed/extract/land_cover.feather",
+        output_path="data/land_cover/processed/extract/land_cover.parquet",
         log_level=None,
     ):
         """Extract per-trench land-cover class shares from raw rasters."""

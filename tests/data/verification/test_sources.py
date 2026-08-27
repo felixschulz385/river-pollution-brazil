@@ -78,7 +78,7 @@ def test_river_network_check_outputs_passes_valid_data(tmp_path):
     assert all(artifact.ok for artifact in artifacts)
 
 
-def test_river_network_check_fetched_missing_gadm(tmp_path):
+def test_river_network_check_fetched_missing_raw_hydrography(tmp_path):
     adapter = SOURCE_ADAPTERS["river_network"]
 
     artifacts = adapter.check_fetched(tmp_path)
@@ -91,18 +91,86 @@ def test_river_network_check_fetched_valid_gpkg(tmp_path):
     import geopandas as gpd
     from shapely.geometry import Point
 
-    from src.data.sources.river_network.constants import DEFAULT_ADM2_LAYER, DEFAULT_GADM_PATH
+    from src.data.sources.river_network.constants import DEFAULT_RAW_GPKG_PATH, DEFAULT_RAW_GPKG_TRENCHES_LAYER
 
-    gadm_path = tmp_path / DEFAULT_GADM_PATH
-    gadm_path.parent.mkdir(parents=True, exist_ok=True)
+    gpkg_path = tmp_path / DEFAULT_RAW_GPKG_PATH
+    gpkg_path.parent.mkdir(parents=True, exist_ok=True)
     frame = gpd.GeoDataFrame({"geometry": [Point(0, 0)]}, crs=4326)
-    frame.to_file(gadm_path, layer=DEFAULT_ADM2_LAYER, driver="GPKG")
+    frame.to_file(gpkg_path, layer=DEFAULT_RAW_GPKG_TRENCHES_LAYER, driver="GPKG")
 
     adapter = SOURCE_ADAPTERS["river_network"]
     artifacts = adapter.check_fetched(tmp_path)
 
     assert artifacts[0].exists
     assert artifacts[0].ok
+
+
+# --------------------------------------------------------------------------
+# gadm
+# --------------------------------------------------------------------------
+
+def test_gadm_list_fetched_absent(tmp_path):
+    adapter = SOURCE_ADAPTERS["gadm"]
+
+    listing = adapter.list_fetched(tmp_path)
+
+    assert listing.present == 0
+    assert listing.expected == 1
+
+
+def test_gadm_check_outputs_missing(tmp_path):
+    adapter = SOURCE_ADAPTERS["gadm"]
+
+    artifacts = adapter.check_outputs(tmp_path)
+
+    assert len(artifacts) == 1
+    assert not artifacts[0].exists
+
+
+def test_gadm_check_fetched_valid_raw_file_is_ok_but_output_still_missing(tmp_path):
+    """check_fetched checks the raw file; check_outputs checks the simplified
+    preprocessing output -- gadm's own preprocess step (src/data/sources/gadm)
+    is what produces the latter, so a valid raw file alone doesn't satisfy
+    check_outputs."""
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    from src.data.sources.gadm.constants import DEFAULT_ADM2_LAYER, RAW_GADM_PATH
+
+    gadm_path = tmp_path / RAW_GADM_PATH
+    gadm_path.parent.mkdir(parents=True, exist_ok=True)
+    frame = gpd.GeoDataFrame({"geometry": [Point(0, 0)]}, crs=4326)
+    frame.to_file(gadm_path, layer=DEFAULT_ADM2_LAYER, driver="GPKG")
+
+    adapter = SOURCE_ADAPTERS["gadm"]
+
+    fetched = adapter.check_fetched(tmp_path)
+    outputs = adapter.check_outputs(tmp_path)
+
+    assert fetched[0].ok
+    assert not outputs[0].exists
+
+
+def test_gadm_check_outputs_valid_simplified_file_is_ok(tmp_path):
+    """check_outputs requires both layers -- ADM_ADM_0 and ADM_ADM_2 -- to be
+    present and readable in the simplified output, since gadm preprocess()
+    writes both."""
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    from src.data.sources.gadm.constants import DEFAULT_ADM0_LAYER, DEFAULT_ADM2_LAYER, DEFAULT_SIMPLIFIED_GADM_PATH
+
+    gadm_path = tmp_path / DEFAULT_SIMPLIFIED_GADM_PATH
+    gadm_path.parent.mkdir(parents=True, exist_ok=True)
+    frame = gpd.GeoDataFrame({"geometry": [Point(0, 0)]}, crs=4326)
+    frame.to_file(gadm_path, layer=DEFAULT_ADM0_LAYER, driver="GPKG")
+    frame.to_file(gadm_path, layer=DEFAULT_ADM2_LAYER, driver="GPKG")
+
+    adapter = SOURCE_ADAPTERS["gadm"]
+
+    outputs = adapter.check_outputs(tmp_path)
+
+    assert outputs[0].ok
 
 
 # --------------------------------------------------------------------------
@@ -166,6 +234,20 @@ def test_land_cover_check_outputs_flags_out_of_range_share(tmp_path):
 def test_land_cover_check_fetched_missing(tmp_path):
     adapter = SOURCE_ADAPTERS["land_cover"]
 
+    artifacts = adapter.check_fetched(tmp_path)
+
+    assert len(artifacts) == 1
+    assert not artifacts[0].exists
+
+
+def test_land_cover_check_fetched_existing_empty_raw_dir_reports_absent(tmp_path):
+    """The raw datadir can exist on disk with zero matching tiles inside --
+    exists must reflect that no tile was actually found, not merely that the
+    directory happens to be present."""
+    datadir = tmp_path / "data" / "land_cover" / "raw" / "lc_mapbiomas10_30"
+    datadir.mkdir(parents=True)
+
+    adapter = SOURCE_ADAPTERS["land_cover"]
     artifacts = adapter.check_fetched(tmp_path)
 
     assert len(artifacts) == 1
@@ -315,6 +397,40 @@ def test_sensor_data_check_fetched_missing(tmp_path):
 
     assert len(artifacts) == 2
     assert all(not artifact.exists for artifact in artifacts)
+
+
+def test_sensor_data_check_fetched_db_file_present_without_stations_table_reports_absent(tmp_path):
+    """The duckdb FILE can exist (holding some other table) without the
+    "stations" table ever having been populated -- exists must reflect
+    whether the table is actually there, not merely whether the file is."""
+    import pandas as pd
+    from src.data.sources.sensor_data.fetch.database import write_dataframe_table
+
+    write_dataframe_table(str(tmp_path), "some_other_table", pd.DataFrame({"x": [1]}))
+
+    adapter = SOURCE_ADAPTERS["sensor_data"]
+    artifacts = adapter.check_fetched(tmp_path)
+
+    station_artifact = next(a for a in artifacts if a.label == "station_inventory")
+    assert not station_artifact.exists
+    assert station_artifact.checks == []
+
+
+def test_sensor_data_check_fetched_empty_raw_dir_reports_absent(tmp_path):
+    """raw_dir can exist on disk (created but holding zero .zip archives) --
+    exists must reflect that no archive was actually found."""
+    from src.data.sources.sensor_data.constants import get_raw_dir
+
+    raw_dir = get_raw_dir(tmp_path)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    (raw_dir / "not-an-archive.txt").write_text("stray file")
+
+    adapter = SOURCE_ADAPTERS["sensor_data"]
+    artifacts = adapter.check_fetched(tmp_path)
+
+    archive_artifact = next(a for a in artifacts if a.label == "raw_archives")
+    assert not archive_artifact.exists
+    assert archive_artifact.checks == []
 
 
 def test_sensor_data_check_fetched_valid_station_inventory_and_archive(tmp_path):
@@ -700,6 +816,29 @@ def test_health_check_fetched_no_completed_batches(tmp_path):
 
     assert len(artifacts) == 3
     assert all(not artifact.exists for artifact in artifacts)
+
+
+def test_health_check_fetched_existing_raw_dir_with_no_completed_batch_reports_absent(tmp_path):
+    """The raw batch DIRECTORY can exist (e.g. holding only pending/failed
+    attempts) even when there's no genuinely completed, on-disk batch --
+    `exists` must reflect that there's no usable data, not merely that the
+    directory happens to be present on disk (which would otherwise report
+    exists=True with zero checks, unfalsifiable and indistinguishable from a
+    real "verified" result)."""
+    table_name = "SIH_RESIDENCE_TOTAL_MUNICIPALITY_YEAR"
+    manifest_dir = tmp_path / "data" / "health" / "raw" / table_name
+    manifest_dir.mkdir(parents=True)
+    entries = [{"batch_id": "2020", "status": "pending", "raw_path": str(manifest_dir / "batch_2020.csv")}]
+    with open(manifest_dir / "manifest.jsonl", "w") as handle:
+        for entry in entries:
+            handle.write(json.dumps(entry) + "\n")
+
+    adapter = SOURCE_ADAPTERS["health"]
+    artifacts = adapter.check_fetched(tmp_path)
+
+    artifact = next(a for a in artifacts if a.label == f"health_batches:{table_name}")
+    assert not artifact.exists
+    assert artifact.checks == []
 
 
 def _write_health_batch(tmp_path, table_name, *, valid: bool):

@@ -30,6 +30,7 @@ def test_cli_summary_on_empty_root_reports_not_present_locally(tmp_path):
     assert "Traceback" not in result.stderr
     assert "Data Verification Summary" in result.stdout
     for source in (
+        "gadm",
         "river_network",
         "land_cover",
         "sensor_data",
@@ -43,6 +44,7 @@ def test_cli_summary_on_empty_root_reports_not_present_locally(tmp_path):
 
     # Every sidecar written against an empty root should be not_present_locally.
     for source in (
+        "gadm",
         "river_network",
         "land_cover",
         "sensor_data",
@@ -62,6 +64,7 @@ def test_cli_summary_on_empty_root_reports_not_present_locally(tmp_path):
     # reports not_applicable rather than crashing or being mistaken for an
     # "outstanding" source.
     for source in (
+        "gadm",
         "river_network",
         "land_cover",
         "sensor_data",

@@ -67,8 +67,13 @@ def render_sbatch_script(spec: dict, command_argv: Sequence[str], log_dir: str) 
     lines = [
         "#!/bin/bash",
         f"#SBATCH --job-name={job_name}",
+        # A single combined log, not a separate --error file: this repo's
+        # CLI reports routine progress via `logging.info(...)` (see
+        # `configure_logging()`), and Python's logging module defaults to
+        # stderr for that -- so a split --output/--error would put nearly
+        # everything worth reading in the "-error" file regardless of
+        # whether it's actually an error, while --output stayed empty.
         f"#SBATCH --output={log_dir}/slurm-%j.log",
-        f"#SBATCH --error={log_dir}/slurm-%j-error.log",
         f"#SBATCH --partition={spec['partition']}",
         f"#SBATCH --time={spec['time']}",
     ]

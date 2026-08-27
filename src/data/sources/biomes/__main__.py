@@ -21,7 +21,7 @@ def configure_logging(level: str = "INFO") -> None:
 def configure_parser(parser, include_action=True):
     """Add biomes CLI arguments to ``parser``."""
     if include_action:
-        parser.add_argument("action", choices=["fetch", "preprocess"])
+        parser.add_argument("action", choices=["fetch", "aggregate"])
     parser.add_argument("--root-dir", default=".")
     parser.add_argument("--gadm-path", default=None)
     parser.add_argument("--gadm-layer", default=None)
@@ -37,7 +37,7 @@ def run(args):
     if args.action == "fetch":
         agent.fetch()
     else:
-        agent.preprocess(
+        agent.aggregate(
             gadm_path=args.gadm_path,
             layer=args.gadm_layer,
             adm2_id_column=args.adm2_id_column,

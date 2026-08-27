@@ -35,19 +35,32 @@ class StagePrerequisites:
 # applied by `unmet_prerequisites`/`build_chain` themselves, not repeated here.
 #
 # - sensor_data.fetch() reads river_network's processed trenches while
-#   matching stations to the river network (fetch/stations/inventory.py).
+#   matching stations to the river network (fetch/stations/inventory.py), and
+#   separately reads gadm's simplified boundary directly to filter stations
+#   to within Brazil.
 # - land_cover.preprocess() and climate.preprocess() both read
 #   river_network's processed drainage areas; their aggregate/assemble
 #   sub-phase additionally reads sensor_data's fully-assembled output. Since
 #   dependencies are declared per verb (not per --phase), the whole
 #   "preprocess" verb is conservatively gated on both.
 # - biomes.preprocess() reads the "stations" table populated by
-#   sensor_data.fetch() (not sensor_data.preprocess()).
+#   sensor_data.fetch() (not sensor_data.preprocess()), and separately reads
+#   gadm's simplified boundary directly for ADM2 mapping.
+# - river_network.preprocess() (RiverNetwork.generate()) now always
+#   annotates drainage areas and builds the trench-ADM2 table from gadm's
+#   simplified output -- there is no longer a partial/un-annotated output.
+# `gadm` itself is the shared, manually-placed ADM2 boundary geopackage --
+# its own pseudo-source (see `src/data/verification/sources.py`) with a real
+# preprocessing step (simplification, `src/data/sources/gadm`), not owned by
+# any of the three sources that read its simplified output.
 PIPELINE_DEPENDENCIES: dict[tuple[str, str], StagePrerequisites] = {
-    ("sensor_data", "fetch"): StagePrerequisites(requires_preprocessed=("river_network",)),
+    ("river_network", "preprocess"): StagePrerequisites(requires_preprocessed=("gadm",)),
+    ("sensor_data", "fetch"): StagePrerequisites(requires_preprocessed=("river_network", "gadm")),
     ("land_cover", "preprocess"): StagePrerequisites(requires_preprocessed=("river_network", "sensor_data")),
     ("climate", "preprocess"): StagePrerequisites(requires_preprocessed=("river_network", "sensor_data")),
-    ("biomes", "preprocess"): StagePrerequisites(requires_fetched=("sensor_data",)),
+    ("biomes", "preprocess"): StagePrerequisites(
+        requires_fetched=("sensor_data",), requires_preprocessed=("gadm",)
+    ),
 }
 
 # Pseudo-source name for the global `data assemble` step, reused as a graph
@@ -94,16 +107,24 @@ def _prerequisites_for(source: str, verb: str, root_dir: str) -> StagePrerequisi
     return PIPELINE_DEPENDENCIES.get((source, verb), StagePrerequisites())
 
 
+def _has_automated_fetch(name: str) -> bool:
+    """Whether `name` is a `data fetch`-dispatchable source. Nodes outside
+    `SOURCE_REGISTRY` entirely (e.g. `gadm`, a shared file with no owning
+    source module) are treated the same as a registered `fetch=False`
+    source: manual placement only."""
+    from src.cli import SOURCE_REGISTRY
+
+    return SOURCE_REGISTRY.get(name, {}).get("fetch", False)
+
+
 def _self_fetch_problem(source: str, root_dir: str, verification) -> str | None:
     """The universal rule: preprocessing a source requires that source's own
     raw data to already be present. Returns a human-readable problem
     description, or None if satisfied."""
-    from src.cli import SOURCE_REGISTRY
-
     report = verification.verify(source=source)[source]
     if report.fetch_status != "not_present_locally":
         return None
-    if SOURCE_REGISTRY[source]["fetch"]:
+    if _has_automated_fetch(source):
         return f"'{source}' has no raw data fetched yet (run: python -m src.cli data fetch --source {source})"
     return f"'{source}' has no raw data present locally -- it must be placed manually (see readme.md)."
 
@@ -125,8 +146,12 @@ def unmet_prerequisites(source: str, verb: str, root_dir: str = ".") -> list[str
     reports = {name: verification.verify(source=name)[name] for name in prereq_names}
 
     for name in prereqs.requires_fetched:
-        if reports[name].fetch_status == "not_present_locally":
+        if reports[name].fetch_status != "not_present_locally":
+            continue
+        if _has_automated_fetch(name):
             problems.append(f"'{name}' has not been fetched yet (run: python -m src.cli data fetch --source {name})")
+        else:
+            problems.append(f"'{name}' has no raw data present locally -- it must be placed manually (see readme.md).")
     for name in prereqs.requires_preprocessed:
         if not reports[name].preprocess_complete:
             problems.append(
@@ -140,10 +165,9 @@ def build_chain(source: str, verb: str, root_dir: str = ".") -> list[tuple[str, 
     `(source, verb)` itself, covering every transitively unmet prerequisite.
 
     Raises `ValueError` if a prerequisite has no automated fetch and its raw
-    data isn't present locally (river_network) -- that can't be auto-resolved,
-    only manually placed.
+    data isn't present locally (river_network, gadm) -- that can't be
+    auto-resolved, only manually placed.
     """
-    from src.cli import SOURCE_REGISTRY
     from src.data.verification.core import Verification
 
     verification = Verification(root_dir)
@@ -162,7 +186,7 @@ def build_chain(source: str, verb: str, root_dir: str = ".") -> list[tuple[str, 
         if node_verb == "preprocess" and node_source != ASSEMBLY_NODE:
             self_problem = _self_fetch_problem(node_source, root_dir, verification)
             if self_problem is not None:
-                if not SOURCE_REGISTRY[node_source]["fetch"]:
+                if not _has_automated_fetch(node_source):
                     raise ValueError(self_problem)
                 resolve(node_source, "fetch", next_path)
 
@@ -171,7 +195,7 @@ def build_chain(source: str, verb: str, root_dir: str = ".") -> list[tuple[str, 
             report = verification.verify(source=name)[name]
             if report.fetch_status != "not_present_locally":
                 continue
-            if not SOURCE_REGISTRY[name]["fetch"]:
+            if not _has_automated_fetch(name):
                 raise ValueError(
                     f"'{name}' has no automated fetch step and its raw data is not present "
                     "locally -- it must be placed manually (see readme.md)."

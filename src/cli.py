@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 # split into raw extraction and a roll-up into sensor/ADM2 upstream panels
 # (mapped onto that source's own `fetch`/`preprocess`/`assemble` actions).
 SOURCE_REGISTRY = {
+    "gadm": dict(package="src.data.sources.gadm", fetch=False, phases=None),
     "health": dict(package="src.data.sources.health", fetch=True, phases=None),
     "climate": dict(package="src.data.sources.climate", fetch=True, phases=("extract", "aggregate")),
     "sensor_data": dict(package="src.data.sources.sensor_data", fetch=True, phases=("extract", "aggregate")),

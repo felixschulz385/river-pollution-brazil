@@ -341,7 +341,12 @@ def _assemble_sensor_land_cover(
     )
 
     logger.info("Loading land-cover data from %s", land_cover_path)
-    land_cover_df = pd.read_feather(land_cover_path)
+    land_cover_path = Path(land_cover_path)
+    land_cover_df = (
+        pd.read_feather(land_cover_path)
+        if land_cover_path.suffix == ".feather"
+        else pd.read_parquet(land_cover_path)
+    )
     lc_columns = land_cover_assembly_columns(land_cover_df)
     land_cover_by_year = {
         int(year): year_frame.drop(columns=[YEAR_COLUMN]).reset_index(drop=True)

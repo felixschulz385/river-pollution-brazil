@@ -1,8 +1,10 @@
 import argparse
 import logging
 
+from src.data.sources.gadm.constants import DEFAULT_SIMPLIFIED_GADM_PATH
+
 from .core import RiverNetwork
-from .constants import PROCESSED_DIR
+from .constants import DEFAULT_RAW_GPKG_PATH, PROCESSED_DIR
 
 
 logger = logging.getLogger(__name__)
@@ -23,13 +25,13 @@ def configure_parser(parser, include_action=True):
     """Add river-network CLI arguments to ``parser``."""
     if include_action:
         parser.add_argument("action", choices=["preprocess"])
-    parser.add_argument("--gpkg-path", required=True)
+    parser.add_argument("--gpkg-path", default=DEFAULT_RAW_GPKG_PATH)
     parser.add_argument("--output-dir", default=PROCESSED_DIR)
     parser.add_argument("--min-lon", type=float)
     parser.add_argument("--min-lat", type=float)
     parser.add_argument("--max-lon", type=float)
     parser.add_argument("--max-lat", type=float)
-    parser.add_argument("--gadm-path")
+    parser.add_argument("--gadm-path", default=DEFAULT_SIMPLIFIED_GADM_PATH)
     parser.add_argument("--gadm-layer", default="ADM_ADM_0")
     parser.add_argument("--gadm-adm2-layer", default="ADM_ADM_2")
     return parser

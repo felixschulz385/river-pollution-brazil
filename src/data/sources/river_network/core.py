@@ -52,12 +52,13 @@ import numpy as np
 import pandas as pd
 from scipy.sparse import csr_matrix
 
+from src.data.sources.gadm.constants import DEFAULT_SIMPLIFIED_GADM_PATH
+
 from .constants import (
     ADM2_COLUMN,
     ADM2_DOMINANT_SYSTEM_TABLE_FILENAME,
     BRAZIL_PROJECTED_CRS,
     DEFAULT_ADM2_LAYER,
-    DEFAULT_GADM_PATH,
     DISTANCE_COLUMN,
     DOWNSTREAM_NODE_COLUMN,
     DOWNSTREAM_NODE_INDEX_COLUMN,
@@ -608,7 +609,7 @@ class RiverNetwork:
 
     def build_trench_adm2_table(
         self,
-        gadm_path: str = DEFAULT_GADM_PATH,
+        gadm_path: str = DEFAULT_SIMPLIFIED_GADM_PATH,
         layer: str = DEFAULT_ADM2_LAYER,
         adm2_column: Optional[str] = "CC_2",
         projected_crs: int = BRAZIL_PROJECTED_CRS,
@@ -652,7 +653,9 @@ class RiverNetwork:
         else:
             boundaries[ADM2_COLUMN] = boundaries[adm2_column]
 
-        boundaries["geometry"] = boundaries.simplify(.01)
+        # `gadm_path` defaults to the already-simplified output of
+        # `gadm preprocess` (src/data/sources/gadm) -- no need to
+        # re-simplify here on every call.
 
         trenches_projected = self.trenches[[TRENCH_ID_COLUMN, "geometry"]].to_crs(projected_crs)
         boundaries_projected = boundaries[[ADM2_COLUMN, "geometry"]].to_crs(projected_crs)
@@ -757,7 +760,7 @@ class RiverNetwork:
 
     def annotate_drainage_areas_with_country_membership(
         self,
-        gadm_path: str,
+        gadm_path: str = DEFAULT_SIMPLIFIED_GADM_PATH,
         layer: str = "ADM_ADM_0",
     ) -> None:
         """
@@ -775,19 +778,21 @@ class RiverNetwork:
 
         logger.info("Loading country boundary from %s layer %s", gadm_path, layer)
         brazil_gdf = gpd.read_file(gadm_path, layer=layer)
-        brazil = brazil_gdf.union_all().simplify(0.01)
+        # `gadm_path` defaults to the already-simplified output of
+        # `gadm preprocess` (src/data/sources/gadm) -- no need to
+        # re-simplify here on every call.
+        brazil = brazil_gdf.union_all()
 
         logger.info("Annotating %d drainage areas with country membership", len(self.drainage_areas))
         # `brazil` is a bare shapely geometry (no CRS) once pulled out of the
         # GeoDataFrame, so `GeoSeries.intersects(brazil)` would silently
         # compare raw coordinates if `self.drainage_areas` isn't already in
-        # the same CRS as the GADM layer. Reproject `drainage_areas` (rather
-        # than `brazil`) to match, since the 0.01 `simplify` tolerance above
-        # is calibrated for `brazil_gdf`'s (degree) units. A `None` CRS on
-        # `drainage_areas` can't be reprojected (`.to_crs()` raises on naive
-        # geometries), so treat it as already matching rather than crashing --
-        # if it's genuinely unset, the raw-coordinate comparison this whole
-        # fix targets was already happening before this fix existed.
+        # the same (degree) CRS as the GADM layer. Reproject `drainage_areas`
+        # (rather than `brazil`) to match. A `None` CRS on `drainage_areas`
+        # can't be reprojected (`.to_crs()` raises on naive geometries), so
+        # treat it as already matching rather than crashing -- if it's
+        # genuinely unset, the raw-coordinate comparison this whole fix
+        # targets was already happening before this fix existed.
         drainage_areas_matched_crs = (
             self.drainage_areas
             if self.drainage_areas.crs is None or self.drainage_areas.crs == brazil_gdf.crs
@@ -807,15 +812,16 @@ class RiverNetwork:
         gpkg_path: str,
         output_dir: str,
         bbox: Optional[gpd.GeoSeries] = None,
-        gadm_path: Optional[str] = None,
+        gadm_path: str = DEFAULT_SIMPLIFIED_GADM_PATH,
         gadm_layer: str = "ADM_ADM_0",
         gadm_adm2_layer: str = DEFAULT_ADM2_LAYER,
     ) -> None:
         """Run the full trench/drainage/matrix pipeline and save the result.
 
         Loads trenches and drainage areas from `gpkg_path`, computes subsystems
-        and distance matrices, optionally annotates drainage areas and builds
-        the trench-to-ADM2 table (when `gadm_path` is given), then saves
+        and distance matrices, annotates drainage areas with country
+        membership, and builds the trench-to-ADM2 table from `gadm_path`
+        (required -- there is no partial/un-annotated output), then saves
         everything to `output_dir`.
         """
         self.load_trenches(gpkg_path, bbox=bbox)
@@ -824,9 +830,8 @@ class RiverNetwork:
         self.compute_distance_matrices()
         self.sort_trenches_by_system()
 
-        if gadm_path:
-            self.annotate_drainage_areas_with_country_membership(gadm_path, layer=gadm_layer)
-            self.build_trench_adm2_table(gadm_path=gadm_path, layer=gadm_adm2_layer)
+        self.annotate_drainage_areas_with_country_membership(gadm_path, layer=gadm_layer)
+        self.build_trench_adm2_table(gadm_path=gadm_path, layer=gadm_adm2_layer)
 
         self.save(output_dir)
 

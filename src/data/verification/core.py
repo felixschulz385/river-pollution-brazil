@@ -101,6 +101,15 @@ class Verification:
             existing is not None
             and existing.get("fingerprint") == fingerprint
             and existing.get("status") != "outstanding"
+            # A sidecar written before fetch_status/preprocess_complete
+            # existed has neither key at all -- treating that as a genuine
+            # cache hit would silently serve "not_applicable"/False forever
+            # (the .get() defaults below) instead of the real computed
+            # value, for any source whose fingerprint hasn't changed since.
+            # Require both newer keys before trusting the cache; a stale
+            # sidecar self-heals on this next, freshly-computed run.
+            and "fetch_status" in existing
+            and "preprocess_complete" in existing
         ):
             logger.debug("Source '%s' unchanged (fingerprint=%s); using cached sidecar.", source, fingerprint)
             return SourceReport(

@@ -49,8 +49,8 @@ def test_assemble_land_cover_adm2_uses_bucketed_upstream_output(
             "land_cover_class_41": [6.0, 2.0],
         }
     )
-    land_cover_path = tmp_path / "land_cover.feather"
-    land_cover.to_feather(land_cover_path)
+    land_cover_path = tmp_path / "land_cover.parquet"
+    land_cover.to_parquet(land_cover_path, index=False)
     output_path = tmp_path / "adm2.parquet"
 
     monkeypatch.setattr(assembly.rn_module, "RiverNetwork", _FakeRiverNetwork)

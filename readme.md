@@ -167,9 +167,12 @@ are placed manually) and is exposed through a single preprocess step:
 
 ```bash
 python3 -m src.cli data preprocess --source river_network \
-  --gpkg-path path/to/source.gpkg \
   --output-dir data/river_network/processed
 ```
+
+`--gpkg-path` defaults to `data/river_network/raw/bho_2017_v_01_05_5k.gpkg`
+(ANA's "Base Hidrográfica Ourinhos" 2017 v.01.05, 1:5k scale); pass it
+explicitly to use a different hydrography geopackage.
 
 Optional arguments allow spatial subsetting and administrative annotation, including:
 

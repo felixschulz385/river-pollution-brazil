@@ -1,7 +1,13 @@
-from src.data.shared.paths import GADM_PATH as DEFAULT_GADM_PATH
-
-
 PROCESSED_DIR = "data/river_network/processed"
+
+# ANA's "Base Hidrográfica Ourinhos" 2017 v.01.05, 1:5k-scale hydrography
+# geopackage -- the raw input `river_network preprocess` expects by default,
+# manually placed (river_network has no automated fetch step).
+DEFAULT_RAW_GPKG_PATH = "data/river_network/raw/bho_2017_v_01_05_5k.gpkg"
+# Matches load_trenches()'s own default `layer` -- duplicated here (rather
+# than imported from core.py) so verification's raw-artifact check doesn't
+# have to import the whole RiverNetwork class just for this string.
+DEFAULT_RAW_GPKG_TRENCHES_LAYER = "pgh_output.geoft_bho_trecho_drenagem"
 
 TRENCHES_FILENAME = "river_trenches.parquet"
 DRAINAGE_AREAS_FILENAME = "drainage_areas.parquet"

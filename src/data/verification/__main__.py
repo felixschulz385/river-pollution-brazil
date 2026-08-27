@@ -59,12 +59,19 @@ def _fetched_display(report) -> str:
     return f"{present}/?"
 
 
+# Sources whose single preprocessing step is better described as something
+# other than the generic "preprocess" (e.g. biomes joins/aggregates biome
+# polygons with ADM2 boundaries and sensor stations rather than doing raw
+# extraction) -- everything else falls back to "preprocess".
+_SINGLE_STAGE_LABELS = {"biomes": "aggregate"}
+
+
 def _latest_stage(name, report) -> str:
     """Which processing phase this source has most recently reached.
 
     Sources with `phases` in `src.cli.SOURCE_REGISTRY` (climate, land_cover,
     sensor_data) split preprocessing into extract -> aggregate; everything
-    else is a single preprocess step.
+    else is a single step, labeled via `_SINGLE_STAGE_LABELS`.
     """
     from src.cli import SOURCE_REGISTRY
 
@@ -73,7 +80,8 @@ def _latest_stage(name, report) -> str:
     fetch_present = (report.fetch_completeness or {}).get("present") or 0
 
     if phases is None:
-        return "preprocess" if (report.outputs_present or fetch_present) else "-"
+        label = _SINGLE_STAGE_LABELS.get(name, "preprocess")
+        return label if (report.outputs_present or fetch_present) else "-"
     extract_stage, aggregate_stage = phases
     if report.outputs_present:
         return aggregate_stage
@@ -82,7 +90,7 @@ def _latest_stage(name, report) -> str:
     return "-"
 
 
-def _build_table(title, reports, *, source_column, fetched_column, show_stage, caption=None):
+def _build_table(title, reports, *, source_column, fetched_column, show_stage, show_fetch_columns=True, caption=None):
     from rich.table import Table
 
     from .sources import SOURCE_ADAPTERS
@@ -94,8 +102,9 @@ def _build_table(title, reports, *, source_column, fetched_column, show_stage, c
     table.add_column(source_column, no_wrap=True)
     table.add_column("Fetch method", no_wrap=True)
     table.add_column(fetched_column)
-    table.add_column("Fetch Status", no_wrap=True)
-    table.add_column("Fetched checks passed")
+    if show_fetch_columns:
+        table.add_column("Fetch Status", no_wrap=True)
+        table.add_column("Fetched checks passed")
     if show_stage:
         table.add_column("Latest Preprocess Stage", no_wrap=True)
     table.add_column("Preprocess Status", no_wrap=True)
@@ -109,14 +118,17 @@ def _build_table(title, reports, *, source_column, fetched_column, show_stage, c
         checks_display = f"{passed}/{len(checks)}" if checks else "-"
         status_display = f"[{style}]{report.status}[/{style}]" if style else report.status
 
-        fetch_style = STATUS_STYLES.get(report.fetch_status, "")
-        fetched_checks = report.fetched_checks or []
-        fetched_passed = sum(1 for check in fetched_checks if check.get("ok"))
-        fetched_checks_display = f"{fetched_passed}/{len(fetched_checks)}" if fetched_checks else "-"
-        fetch_status_display = f"[{fetch_style}]{report.fetch_status}[/{fetch_style}]" if fetch_style else report.fetch_status
-
         fetch_method = SOURCE_ADAPTERS[name].fetch_method
-        row = [name, fetch_method, _fetched_display(report), fetch_status_display, fetched_checks_display]
+        row = [name, fetch_method, _fetched_display(report)]
+        if show_fetch_columns:
+            fetch_style = STATUS_STYLES.get(report.fetch_status, "")
+            fetched_checks = report.fetched_checks or []
+            fetched_passed = sum(1 for check in fetched_checks if check.get("ok"))
+            fetched_checks_display = f"{fetched_passed}/{len(fetched_checks)}" if fetched_checks else "-"
+            fetch_status_display = (
+                f"[{fetch_style}]{report.fetch_status}[/{fetch_style}]" if fetch_style else report.fetch_status
+            )
+            row += [fetch_status_display, fetched_checks_display]
         if show_stage:
             row.append(_latest_stage(name, report))
         row += [status_display, checks_display, _truncate_timestamp(report.verified_at)]
@@ -171,6 +183,7 @@ def _render_table(reports):
                 source_column="Dataset group",
                 fetched_column="Upstream sources present/expected",
                 show_stage=False,
+                show_fetch_columns=False,
                 caption="Rolls up completeness of setup/assembly_datasets.yaml's declared upstream source paths, not raw fetched files.",
             )
         )

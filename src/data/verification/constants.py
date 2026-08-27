@@ -3,9 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 
-# All eight pipeline data sources this module can verify. Order matters for
-# the summary table's default row order.
+# All pipeline data sources this module can verify. Order matters for the
+# summary table's default row order. `gadm` is a shared, manually-placed
+# input (not owned by any one source) read directly by river_network,
+# sensor_data, and biomes -- listed first since those sources depend on it.
 SOURCES = (
+    "gadm",
     "river_network",
     "land_cover",
     "sensor_data",

@@ -124,6 +124,20 @@ def _missing_artifact(label: str, path: Path) -> OutputArtifactCheck:
     return OutputArtifactCheck(label=label, path=path, exists=path.exists(), checks=[])
 
 
+def _absent_artifact(label: str, path: Path) -> OutputArtifactCheck:
+    """Like `_missing_artifact`, but for a caller that already determined the
+    artifact is absent via domain logic (an empty listing, a missing table)
+    rather than raw path existence. `path` here is often a *container*
+    (a directory, or a database file holding other tables) that can exist on
+    disk while still holding none of the actual content being checked for --
+    e.g. an empty raw directory, or a duckdb file present but missing the
+    expected table. Using `_missing_artifact`'s own `path.exists()` in that
+    situation would silently report `exists=True` with zero checks, which
+    can never fail a check and ends up masquerading as fully verified.
+    """
+    return OutputArtifactCheck(label=label, path=path, exists=False, checks=[])
+
+
 def _artifact_check(
     label: str,
     path: Path,
@@ -146,18 +160,82 @@ def _artifact_check(
 
 
 # --------------------------------------------------------------------------
-# river_network
+# gadm
 # --------------------------------------------------------------------------
+#
+# The shared Brazil ADM boundary geopackage: not owned by any single source,
+# but read (via its simplified output) by river_network (country/ADM2
+# annotation), sensor_data (filtering stations to within Brazil), and biomes
+# (ADM2 mapping). Modeled as its own pseudo-source (like `assembly`) rather
+# than folded into river_network's checks, which is what this repo did
+# before -- and which meant river_network's own "fetched" status was
+# actually reporting on GADM, never on its own raw hydrography input (see
+# river_network below).
+#
+# Unlike before, gadm now has a real preprocessing step
+# (`src/data/sources/gadm`, geometry simplification) with a genuine output
+# distinct from the raw input, so `check_fetched` and `check_outputs` check
+# two different files.
 
-def _river_network_list_fetched(root_dir, force: bool = False) -> FetchListing:
-    from src.data.sources.river_network.constants import DEFAULT_GADM_PATH
 
-    gadm_path = Path(root_dir) / DEFAULT_GADM_PATH
+def _gadm_check_fetched(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.gadm.constants import DEFAULT_ADM2_LAYER, RAW_GADM_PATH
+
+    gadm_path = Path(root_dir) / RAW_GADM_PATH
+    if not gadm_path.exists():
+        return [_missing_artifact("gadm_boundaries_raw", gadm_path)]
+    checks = [
+        check_file_nonempty(gadm_path, min_size_bytes=1024),
+        check_gpkg_layer_readable(gadm_path, DEFAULT_ADM2_LAYER),
+    ]
+    return [OutputArtifactCheck(label="gadm_boundaries_raw", path=gadm_path, exists=True, checks=checks)]
+
+
+def _gadm_check_outputs(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.gadm.constants import DEFAULT_ADM0_LAYER, DEFAULT_ADM2_LAYER, DEFAULT_SIMPLIFIED_GADM_PATH
+
+    gadm_path = Path(root_dir) / DEFAULT_SIMPLIFIED_GADM_PATH
+    if not gadm_path.exists():
+        return [_missing_artifact("gadm_boundaries_simplified", gadm_path)]
+    checks = [
+        check_file_nonempty(gadm_path, min_size_bytes=1024),
+        check_gpkg_layer_readable(gadm_path, DEFAULT_ADM0_LAYER),
+        check_gpkg_layer_readable(gadm_path, DEFAULT_ADM2_LAYER),
+    ]
+    return [OutputArtifactCheck(label="gadm_boundaries_simplified", path=gadm_path, exists=True, checks=checks)]
+
+
+def _gadm_list_fetched(root_dir, force: bool = False) -> FetchListing:
+    from src.data.sources.gadm.constants import RAW_GADM_PATH
+
+    gadm_path = Path(root_dir) / RAW_GADM_PATH
     present = 1 if gadm_path.exists() else 0
     return FetchListing(
         present=present,
         expected=1,
-        detail=f"GADM input {'present' if present else 'missing'} at {gadm_path}.",
+        detail=f"GADM boundary file {'present' if present else 'missing'} at {gadm_path}.",
+    )
+
+
+def _gadm_fingerprint_paths(root_dir) -> list[Path]:
+    from src.data.sources.gadm.constants import DEFAULT_SIMPLIFIED_GADM_PATH, RAW_GADM_PATH
+
+    return [Path(root_dir) / RAW_GADM_PATH, Path(root_dir) / DEFAULT_SIMPLIFIED_GADM_PATH]
+
+
+# --------------------------------------------------------------------------
+# river_network
+# --------------------------------------------------------------------------
+
+def _river_network_list_fetched(root_dir, force: bool = False) -> FetchListing:
+    from src.data.sources.river_network.constants import DEFAULT_RAW_GPKG_PATH
+
+    gpkg_path = Path(root_dir) / DEFAULT_RAW_GPKG_PATH
+    present = 1 if gpkg_path.exists() else 0
+    return FetchListing(
+        present=present,
+        expected=1,
+        detail=f"Raw hydrography geopackage {'present' if present else 'missing'} at {gpkg_path}.",
     )
 
 
@@ -195,21 +273,21 @@ def _river_network_check_outputs(root_dir) -> list[OutputArtifactCheck]:
 
 
 def _river_network_check_fetched(root_dir) -> list[OutputArtifactCheck]:
-    from src.data.sources.river_network.constants import DEFAULT_ADM2_LAYER, DEFAULT_GADM_PATH
+    from src.data.sources.river_network.constants import DEFAULT_RAW_GPKG_PATH, DEFAULT_RAW_GPKG_TRENCHES_LAYER
 
-    gadm_path = Path(root_dir) / DEFAULT_GADM_PATH
-    if not gadm_path.exists():
-        return [_missing_artifact("gadm_boundaries", gadm_path)]
+    gpkg_path = Path(root_dir) / DEFAULT_RAW_GPKG_PATH
+    if not gpkg_path.exists():
+        return [_missing_artifact("raw_hydrography", gpkg_path)]
     checks = [
-        check_file_nonempty(gadm_path, min_size_bytes=1024),
-        check_gpkg_layer_readable(gadm_path, DEFAULT_ADM2_LAYER),
+        check_file_nonempty(gpkg_path, min_size_bytes=1024),
+        check_gpkg_layer_readable(gpkg_path, DEFAULT_RAW_GPKG_TRENCHES_LAYER),
     ]
-    return [OutputArtifactCheck(label="gadm_boundaries", path=gadm_path, exists=True, checks=checks)]
+    return [OutputArtifactCheck(label="raw_hydrography", path=gpkg_path, exists=True, checks=checks)]
 
 
 def _river_network_fingerprint_paths(root_dir) -> list[Path]:
     from src.data.sources.river_network.constants import (
-        DEFAULT_GADM_PATH,
+        DEFAULT_RAW_GPKG_PATH,
         DRAINAGE_AREAS_FILENAME,
         PROCESSED_DIR,
         TRENCHES_FILENAME,
@@ -217,7 +295,7 @@ def _river_network_fingerprint_paths(root_dir) -> list[Path]:
 
     river_dir = Path(root_dir) / PROCESSED_DIR
     return [
-        Path(root_dir) / DEFAULT_GADM_PATH,
+        Path(root_dir) / DEFAULT_RAW_GPKG_PATH,
         river_dir / TRENCHES_FILENAME,
         river_dir / DRAINAGE_AREAS_FILENAME,
     ]
@@ -304,7 +382,7 @@ def _land_cover_check_fetched(root_dir) -> list[OutputArtifactCheck]:
             )
         ]
     if files.empty:
-        return [_missing_artifact("mapbiomas_tiles", paths.datadir)]
+        return [_absent_artifact("mapbiomas_tiles", paths.datadir)]
 
     check = check_sampled_files(
         files.tolist(),
@@ -388,7 +466,7 @@ def _sensor_data_check_fetched(root_dir) -> list[OutputArtifactCheck]:
 
     db_path = get_sensor_database_path(root_dir)
     if not table_exists(root_dir, STATIONS_TABLE):
-        artifacts.append(_missing_artifact("station_inventory", db_path))
+        artifacts.append(_absent_artifact("station_inventory", db_path))
     else:
         stations = read_geodataframe_table(root_dir, STATIONS_TABLE)
         checks = [_non_empty_check(stations, name="non_empty")]
@@ -406,7 +484,7 @@ def _sensor_data_check_fetched(root_dir) -> list[OutputArtifactCheck]:
     raw_dir = get_raw_dir(root_dir)
     zip_paths = sorted(raw_dir.glob("*.zip")) if raw_dir.exists() else []
     if not zip_paths:
-        artifacts.append(_missing_artifact("raw_archives", raw_dir))
+        artifacts.append(_absent_artifact("raw_archives", raw_dir))
     else:
         cache = _load_zip_verification_cache(raw_dir)
         cache_dirty = False
@@ -853,7 +931,7 @@ def _health_check_fetched(root_dir) -> list[OutputArtifactCheck]:
             if entry.get("status") == "completed" and entry.get("raw_path") and Path(entry["raw_path"]).exists()
         ]
         if not entries:
-            artifacts.append(_missing_artifact(f"health_batches:{table_name}", table_dir))
+            artifacts.append(_absent_artifact(f"health_batches:{table_name}", table_dir))
             continue
 
         sample_paths = sorted(
@@ -980,12 +1058,20 @@ def _assembly_fingerprint_paths(root_dir) -> list[Path]:
 
 
 SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
+    "gadm": SourceAdapter(
+        name="gadm",
+        list_fetched=_gadm_list_fetched,
+        check_outputs=_gadm_check_outputs,
+        fingerprint_paths=_gadm_fingerprint_paths,
+        fetch_method="Manual placement (GADM ADM2 boundary .gpkg)",
+        check_fetched=_gadm_check_fetched,
+    ),
     "river_network": SourceAdapter(
         name="river_network",
         list_fetched=_river_network_list_fetched,
         check_outputs=_river_network_check_outputs,
         fingerprint_paths=_river_network_fingerprint_paths,
-        fetch_method="Manual placement (GADM/hydrography .gpkg)",
+        fetch_method="Manual placement (hydrography .gpkg)",
         check_fetched=_river_network_check_fetched,
     ),
     "land_cover": SourceAdapter(

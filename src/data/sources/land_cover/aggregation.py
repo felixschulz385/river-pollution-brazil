@@ -105,7 +105,12 @@ def aggregate_along_rivers(
         n_jobs = cpu_count()
 
     logger.info("Loading land cover data from %s", land_cover_path)
-    land_cover_df = pd.read_feather(land_cover_path)
+    land_cover_path = Path(land_cover_path)
+    land_cover_df = (
+        pd.read_feather(land_cover_path)
+        if land_cover_path.suffix == ".feather"
+        else pd.read_parquet(land_cover_path)
+    )
     validate_land_cover_output_columns(land_cover_df)
 
     logger.info("Loading river network from %s", river_network_path)

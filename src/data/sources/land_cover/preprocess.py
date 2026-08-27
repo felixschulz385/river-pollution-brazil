@@ -337,7 +337,7 @@ def _load_drainage_polygons(drainage_path, river_network_path):
     return drainage_polygons
 
 
-def preprocess_land_cover(self, n_jobs=None, river_network_path=None, output_path="data/land_cover/processed/extract/land_cover.feather", log_level=None):
+def preprocess_land_cover(self, n_jobs=None, river_network_path=None, output_path="data/land_cover/processed/extract/land_cover.parquet", log_level=None):
     """Preprocess land cover data by extracting values for drainage polygons."""
     if n_jobs is None:
         n_jobs = cpu_count()
@@ -382,7 +382,10 @@ def preprocess_land_cover(self, n_jobs=None, river_network_path=None, output_pat
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    final_df.to_feather(output_path)
+    if output_path.suffix == ".feather":
+        final_df.to_feather(output_path)
+    else:
+        final_df.to_parquet(output_path, index=False)
     logger.info("Results saved to %s", output_path)
 
     return final_df
