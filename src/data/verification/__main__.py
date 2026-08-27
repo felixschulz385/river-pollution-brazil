@@ -12,6 +12,7 @@ STATUS_STYLES = {
     "outstanding": "yellow",
     "failed": "red",
     "not_present_locally": "dim",
+    "not_applicable": "dim",
 }
 
 
@@ -93,6 +94,8 @@ def _build_table(title, reports, *, source_column, fetched_column, show_stage, c
     table.add_column(source_column, no_wrap=True)
     table.add_column("Fetch method", no_wrap=True)
     table.add_column(fetched_column)
+    table.add_column("Fetch Status", no_wrap=True)
+    table.add_column("Fetched checks passed")
     if show_stage:
         table.add_column("Latest Preprocess Stage", no_wrap=True)
     table.add_column("Preprocess Status", no_wrap=True)
@@ -105,8 +108,15 @@ def _build_table(title, reports, *, source_column, fetched_column, show_stage, c
         passed = sum(1 for check in checks if check.get("ok"))
         checks_display = f"{passed}/{len(checks)}" if checks else "-"
         status_display = f"[{style}]{report.status}[/{style}]" if style else report.status
+
+        fetch_style = STATUS_STYLES.get(report.fetch_status, "")
+        fetched_checks = report.fetched_checks or []
+        fetched_passed = sum(1 for check in fetched_checks if check.get("ok"))
+        fetched_checks_display = f"{fetched_passed}/{len(fetched_checks)}" if fetched_checks else "-"
+        fetch_status_display = f"[{fetch_style}]{report.fetch_status}[/{fetch_style}]" if fetch_style else report.fetch_status
+
         fetch_method = SOURCE_ADAPTERS[name].fetch_method
-        row = [name, fetch_method, _fetched_display(report)]
+        row = [name, fetch_method, _fetched_display(report), fetch_status_display, fetched_checks_display]
         if show_stage:
             row.append(_latest_stage(name, report))
         row += [status_display, checks_display, _truncate_timestamp(report.verified_at)]

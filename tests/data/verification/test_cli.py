@@ -56,6 +56,25 @@ def test_cli_summary_on_empty_root_reports_not_present_locally(tmp_path):
         assert sidecar.exists()
         assert '"status": "not_present_locally"' in sidecar.read_text()
 
+    # check_fetched() must degrade gracefully on an empty root, exactly like
+    # check_outputs() does today: real fetch adapters report
+    # not_present_locally, and assembly (no separate raw-artifact concept)
+    # reports not_applicable rather than crashing or being mistaken for an
+    # "outstanding" source.
+    for source in (
+        "river_network",
+        "land_cover",
+        "sensor_data",
+        "climate",
+        "biomes",
+        "population",
+        "health",
+    ):
+        sidecar = tmp_path / "data" / source / ".verification.json"
+        assert '"fetch_status": "not_present_locally"' in sidecar.read_text()
+    assembly_sidecar = tmp_path / "data" / "assembly" / ".verification.json"
+    assert '"fetch_status": "not_applicable"' in assembly_sidecar.read_text()
+
 
 def test_cli_verify_single_source_on_empty_root(tmp_path):
     result = subprocess.run(

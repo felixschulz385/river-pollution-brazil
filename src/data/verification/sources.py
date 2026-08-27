@@ -24,7 +24,17 @@ from typing import Callable
 
 import pandas as pd
 
-from .checks import CheckResult, check_null_fraction, check_required_columns, check_value_range
+from .checks import (
+    CheckResult,
+    check_file_nonempty,
+    check_gpkg_layer_readable,
+    check_null_fraction,
+    check_raster_header_readable,
+    check_required_columns,
+    check_sampled_files,
+    check_value_range,
+    check_zip_integrity,
+)
 
 
 @dataclass
@@ -46,6 +56,17 @@ class OutputArtifactCheck:
         return self.exists and all(check.ok for check in self.checks)
 
 
+def _default_check_fetched(root_dir) -> list[OutputArtifactCheck]:
+    """Default `check_fetched`: no raw-artifact content checks for this source.
+
+    Used by sources with no separate raw-fetched-artifact concept (assembly,
+    which joins the other 7 sources rather than fetching anything itself).
+    `core.py` treats this default specially (identity check) to report
+    `fetch_status="not_applicable"` rather than "outstanding".
+    """
+    return []
+
+
 @dataclass
 class SourceAdapter:
     name: str
@@ -56,6 +77,10 @@ class SourceAdapter:
     # actually obtained -- shown as-is in the summary table, not derived from
     # anything computed at runtime.
     fetch_method: str = ""
+    # Content-level checks against raw fetched artifacts (as opposed to
+    # `check_outputs`, which checks preprocessed/assembled outputs). Optional:
+    # defaults to a no-op for sources with nothing raw to check.
+    check_fetched: Callable[..., list[OutputArtifactCheck]] = _default_check_fetched
 
 
 def _safe_read_parquet(path: Path):
@@ -169,6 +194,19 @@ def _river_network_check_outputs(root_dir) -> list[OutputArtifactCheck]:
     ]
 
 
+def _river_network_check_fetched(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.river_network.constants import DEFAULT_ADM2_LAYER, DEFAULT_GADM_PATH
+
+    gadm_path = Path(root_dir) / DEFAULT_GADM_PATH
+    if not gadm_path.exists():
+        return [_missing_artifact("gadm_boundaries", gadm_path)]
+    checks = [
+        check_file_nonempty(gadm_path, min_size_bytes=1024),
+        check_gpkg_layer_readable(gadm_path, DEFAULT_ADM2_LAYER),
+    ]
+    return [OutputArtifactCheck(label="gadm_boundaries", path=gadm_path, exists=True, checks=checks)]
+
+
 def _river_network_fingerprint_paths(root_dir) -> list[Path]:
     from src.data.sources.river_network.constants import (
         DEFAULT_GADM_PATH,
@@ -249,6 +287,35 @@ def _land_cover_check_outputs(root_dir) -> list[OutputArtifactCheck]:
     return [_artifact_check("land_cover_sensor_upstream", path, build_checks)]
 
 
+def _land_cover_check_fetched(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.land_cover.constants import build_paths
+    from src.data.sources.land_cover.preprocess import get_files
+
+    paths = build_paths(root_dir)
+    try:
+        files = get_files(paths.datadir)
+    except (FileNotFoundError, OSError) as exc:
+        return [
+            OutputArtifactCheck(
+                label="mapbiomas_tiles",
+                path=paths.datadir,
+                exists=False,
+                checks=[CheckResult(name="raster_header_sample", ok=False, message=str(exc))],
+            )
+        ]
+    if files.empty:
+        return [_missing_artifact("mapbiomas_tiles", paths.datadir)]
+
+    check = check_sampled_files(
+        files.tolist(),
+        check_fn=check_raster_header_readable,
+        cache_path=paths.datadir / ".raster_verification_cache.json",
+        sample_limit=5,
+        name="raster_header_sample",
+    )
+    return [OutputArtifactCheck(label="mapbiomas_tiles", path=paths.datadir, exists=True, checks=[check])]
+
+
 def _land_cover_fingerprint_paths(root_dir) -> list[Path]:
     from src.data.sources.land_cover.constants import DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH, build_paths
 
@@ -308,14 +375,74 @@ def _sensor_data_check_outputs(root_dir) -> list[OutputArtifactCheck]:
     return [_artifact_check("water_quality_streamflow", path, build_checks)]
 
 
+def _sensor_data_check_fetched(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.sensor_data.constants import get_raw_dir, get_sensor_database_path
+    from src.data.sources.sensor_data.fetch.data.download import (
+        _cached_is_parseable_zip,
+        _load_zip_verification_cache,
+        _save_zip_verification_cache,
+    )
+    from src.data.sources.sensor_data.fetch.database import STATIONS_TABLE, read_geodataframe_table, table_exists
+
+    artifacts: list[OutputArtifactCheck] = []
+
+    db_path = get_sensor_database_path(root_dir)
+    if not table_exists(root_dir, STATIONS_TABLE):
+        artifacts.append(_missing_artifact("station_inventory", db_path))
+    else:
+        stations = read_geodataframe_table(root_dir, STATIONS_TABLE)
+        checks = [_non_empty_check(stations, name="non_empty")]
+        if "geometry" in stations.columns:
+            null_fraction = float(stations.geometry.isna().mean()) if not stations.empty else 1.0
+            checks.append(
+                CheckResult(
+                    name="null_fraction:geometry",
+                    ok=null_fraction == 0.0,
+                    message=f"{null_fraction:.2%} null geometries.",
+                )
+            )
+        artifacts.append(OutputArtifactCheck(label="station_inventory", path=db_path, exists=True, checks=checks))
+
+    raw_dir = get_raw_dir(root_dir)
+    zip_paths = sorted(raw_dir.glob("*.zip")) if raw_dir.exists() else []
+    if not zip_paths:
+        artifacts.append(_missing_artifact("raw_archives", raw_dir))
+    else:
+        cache = _load_zip_verification_cache(raw_dir)
+        cache_dirty = False
+        corrupt: list[str] = []
+        for path in zip_paths:
+            ok, updated = _cached_is_parseable_zip(path, path.stat(), cache)
+            cache_dirty = cache_dirty or updated
+            if not ok:
+                corrupt.append(path.name)
+        if cache_dirty:
+            _save_zip_verification_cache(raw_dir, cache)
+        ok = not corrupt
+        message = f"{len(zip_paths) - len(corrupt)}/{len(zip_paths)} archives parseable."
+        if corrupt:
+            message += f" Corrupt: {corrupt[:10]}."
+        artifacts.append(
+            OutputArtifactCheck(
+                label="raw_archives",
+                path=raw_dir,
+                exists=True,
+                checks=[CheckResult(name="zip_integrity", ok=ok, message=message)],
+            )
+        )
+    return artifacts
+
+
 def _sensor_data_fingerprint_paths(root_dir) -> list[Path]:
     from src.data.sources.sensor_data.constants import (
         get_download_log_database_path,
         get_processed_dir,
+        get_sensor_database_path,
     )
     from src.data.sources.sensor_data.schema import ASSEMBLED_SENSOR_DATA_PARQUET
 
     return [
+        get_sensor_database_path(root_dir),
         get_download_log_database_path(root_dir),
         get_processed_dir(root_dir, stage="aggregate") / ASSEMBLED_SENSOR_DATA_PARQUET,
     ]
@@ -407,6 +534,72 @@ def _climate_check_outputs(root_dir) -> list[OutputArtifactCheck]:
     ]
 
 
+# How many of the most recent time steps to inspect in the shared zarr store:
+# `xr.open_zarr` is lazy, so an unbounded null-fraction/min/max reduction would
+# scan the entire multi-year, multi-decade history on every summary run.
+_CLIMATE_RAW_SAMPLE_TIME_STEPS = 30
+
+
+def _climate_check_fetched(root_dir) -> list[OutputArtifactCheck]:
+    import xarray as xr
+
+    from src.data.sources.climate.constants import DEFAULT_ERA5_LAND_STORE_PATH
+    from src.data.sources.climate.fetch.verify import ERA5L_VALUE_RANGES, MAX_NULL_FRACTION
+
+    store_path = Path(root_dir) / DEFAULT_ERA5_LAND_STORE_PATH
+    if not store_path.exists():
+        return [_missing_artifact("era5_land_store", store_path)]
+
+    try:
+        dataset = xr.open_zarr(store_path, consolidated=False)
+    except Exception as exc:
+        return [
+            OutputArtifactCheck(
+                label="era5_land_store",
+                path=store_path,
+                exists=True,
+                checks=[CheckResult(name="open_store", ok=False, message=str(exc))],
+            )
+        ]
+
+    checks: list[CheckResult] = []
+    try:
+        sample = (
+            dataset.isel(time=slice(-_CLIMATE_RAW_SAMPLE_TIME_STEPS, None)) if "time" in dataset.dims else dataset
+        )
+        for variable, (lo, hi) in ERA5L_VALUE_RANGES.items():
+            if variable not in sample.data_vars:
+                checks.append(
+                    CheckResult(name=f"value_range:{variable}", ok=False, message=f"'{variable}' not present in store.")
+                )
+                continue
+            data_array = sample[variable]
+            null_fraction = float(data_array.isnull().mean())
+            if null_fraction > MAX_NULL_FRACTION:
+                checks.append(
+                    CheckResult(
+                        name=f"null_fraction:{variable}",
+                        ok=False,
+                        message=f"{null_fraction:.2%} null (max {MAX_NULL_FRACTION:.2%}).",
+                    )
+                )
+                continue
+            observed_min = float(data_array.min())
+            observed_max = float(data_array.max())
+            ok = observed_min >= lo and observed_max <= hi
+            checks.append(
+                CheckResult(
+                    name=f"value_range:{variable}",
+                    ok=ok,
+                    message=f"Observed [{observed_min}, {observed_max}], expected [{lo}, {hi}].",
+                )
+            )
+    finally:
+        dataset.close()
+
+    return [OutputArtifactCheck(label="era5_land_store", path=store_path, exists=True, checks=checks)]
+
+
 def _climate_fingerprint_paths(root_dir) -> list[Path]:
     from src.data.sources.climate.constants import (
         DEFAULT_ADM2_UPSTREAM_YEARLY_OUTPUT_PATH,
@@ -467,6 +660,16 @@ def _biomes_check_outputs(root_dir) -> list[OutputArtifactCheck]:
     ]
 
 
+def _biomes_check_fetched(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.biomes.constants import archive_path
+
+    path = archive_path(root_dir)
+    if not path.exists():
+        return [_missing_artifact("biomes_archive", path)]
+    checks = [check_file_nonempty(path, min_size_bytes=1024), check_zip_integrity(path)]
+    return [OutputArtifactCheck(label="biomes_archive", path=path, exists=True, checks=checks)]
+
+
 def _biomes_fingerprint_paths(root_dir) -> list[Path]:
     from src.data.sources.biomes.constants import (
         DEFAULT_ADM2_OUTPUT_PATH,
@@ -518,6 +721,20 @@ def _population_check_outputs(root_dir) -> list[OutputArtifactCheck]:
 
     path = _population_processed_dir(root_dir) / DEFAULT_POPULATION_OUTPUT_FILENAME
     return [_artifact_check("population", path, build_checks)]
+
+
+def _population_check_fetched(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.population.constants import raw_dir as _population_raw_dir
+
+    def build_checks(frame):
+        return [
+            check_required_columns(frame, ["ano", "id_municipio", "sexo", "grupo_idade", "populacao"]),
+            _non_empty_check(frame),
+            check_value_range(frame, "populacao", lo=0.0, hi=float("inf"), name="value_range:populacao"),
+        ]
+
+    path = _population_raw_dir(root_dir) / "population_raw.parquet"
+    return [_artifact_check("population_raw", path, build_checks)]
 
 
 def _population_fingerprint_paths(root_dir) -> list[Path]:
@@ -611,9 +828,57 @@ def _health_check_outputs(root_dir) -> list[OutputArtifactCheck]:
     ]
 
 
+def _check_datasus_csv_parseable(path: Path) -> CheckResult:
+    from src.data.sources.health.preprocess.preprocess import _read_datasus_csv
+
+    try:
+        frame = _read_datasus_csv(str(path))
+    except Exception as exc:
+        return CheckResult(name="datasus_csv_parseable", ok=False, message=f"{exc.__class__.__name__}: {exc}")
+    ok = not frame.empty
+    message = f"{len(frame)} rows, {len(frame.columns)} columns." if ok else "Parsed frame is empty."
+    return CheckResult(name="datasus_csv_parseable", ok=ok, message=message)
+
+
+def _health_check_fetched(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.health.constants import HEALTH_DATASET_NAME
+    from src.data.shared.batches import batch_table_dir, load_manifest
+
+    artifacts: list[OutputArtifactCheck] = []
+    for table_name in _HEALTH_KNOWN_BATCH_TABLES:
+        table_dir = Path(batch_table_dir(root_dir, HEALTH_DATASET_NAME, table_name))
+        entries = [
+            entry
+            for entry in load_manifest(root_dir, HEALTH_DATASET_NAME, table_name)
+            if entry.get("status") == "completed" and entry.get("raw_path") and Path(entry["raw_path"]).exists()
+        ]
+        if not entries:
+            artifacts.append(_missing_artifact(f"health_batches:{table_name}", table_dir))
+            continue
+
+        sample_paths = sorted(
+            (Path(entry["raw_path"]) for entry in entries), key=lambda p: p.stat().st_mtime, reverse=True
+        )
+        check = check_sampled_files(
+            sample_paths,
+            check_fn=_check_datasus_csv_parseable,
+            cache_path=table_dir / ".raw_csv_verification_cache.json",
+            sample_limit=1,
+            name="datasus_csv_sample",
+        )
+        artifacts.append(
+            OutputArtifactCheck(label=f"health_batches:{table_name}", path=table_dir, exists=True, checks=[check])
+        )
+    return artifacts
+
+
 def _health_fingerprint_paths(root_dir) -> list[Path]:
+    from src.data.sources.health.constants import HEALTH_DATASET_NAME
+    from src.data.shared.batches import manifest_path
+
     health_dir = Path(root_dir) / "data" / "health" / "processed"
-    return [health_dir / filename for filename in _HEALTH_OUTPUT_FILES]
+    manifest_paths = [Path(manifest_path(root_dir, HEALTH_DATASET_NAME, table_name)) for table_name in _HEALTH_KNOWN_BATCH_TABLES]
+    return [health_dir / filename for filename in _HEALTH_OUTPUT_FILES] + manifest_paths
 
 
 # --------------------------------------------------------------------------
@@ -721,6 +986,7 @@ SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
         check_outputs=_river_network_check_outputs,
         fingerprint_paths=_river_network_fingerprint_paths,
         fetch_method="Manual placement (GADM/hydrography .gpkg)",
+        check_fetched=_river_network_check_fetched,
     ),
     "land_cover": SourceAdapter(
         name="land_cover",
@@ -728,6 +994,7 @@ SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
         check_outputs=_land_cover_check_outputs,
         fingerprint_paths=_land_cover_fingerprint_paths,
         fetch_method="Manual placement (MapBiomas GeoTIFF tiles)",
+        check_fetched=_land_cover_check_fetched,
     ),
     "sensor_data": SourceAdapter(
         name="sensor_data",
@@ -735,6 +1002,7 @@ SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
         check_outputs=_sensor_data_check_outputs,
         fingerprint_paths=_sensor_data_fingerprint_paths,
         fetch_method="Scraped (ANA HidroWeb, Selenium)",
+        check_fetched=_sensor_data_check_fetched,
     ),
     "climate": SourceAdapter(
         name="climate",
@@ -742,6 +1010,7 @@ SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
         check_outputs=_climate_check_outputs,
         fingerprint_paths=_climate_fingerprint_paths,
         fetch_method="API (CDS/ARCO, ERA5-Land)",
+        check_fetched=_climate_check_fetched,
     ),
     "biomes": SourceAdapter(
         name="biomes",
@@ -749,6 +1018,7 @@ SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
         check_outputs=_biomes_check_outputs,
         fingerprint_paths=_biomes_fingerprint_paths,
         fetch_method="Download (IBGE shapefile, HTTP)",
+        check_fetched=_biomes_check_fetched,
     ),
     "population": SourceAdapter(
         name="population",
@@ -756,6 +1026,7 @@ SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
         check_outputs=_population_check_outputs,
         fingerprint_paths=_population_fingerprint_paths,
         fetch_method="Query (BigQuery, basedosdados)",
+        check_fetched=_population_check_fetched,
     ),
     "health": SourceAdapter(
         name="health",
@@ -763,6 +1034,7 @@ SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
         check_outputs=_health_check_outputs,
         fingerprint_paths=_health_fingerprint_paths,
         fetch_method="Scraped (DATASUS, Selenium)",
+        check_fetched=_health_check_fetched,
     ),
     "assembly": SourceAdapter(
         name="assembly",
@@ -770,8 +1042,11 @@ SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
         check_outputs=_assembly_check_outputs,
         fingerprint_paths=_assembly_fingerprint_paths,
         fetch_method="N/A (joins the other 7 sources)",
+        # No separate raw-fetched-artifact concept: assembly isn't a fetch
+        # source, and _assembly_list_fetched/_assembly_check_outputs already
+        # cover its two real concerns. Uses SourceAdapter's default no-op.
     ),
 }
 
 
-__all__ = ["FetchListing", "OutputArtifactCheck", "SourceAdapter", "SOURCE_ADAPTERS"]
+__all__ = ["FetchListing", "OutputArtifactCheck", "SourceAdapter", "SOURCE_ADAPTERS", "_default_check_fetched"]

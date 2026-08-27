@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+
+from src.data.verification.checks import CheckResult
 from src.data.verification.core import Verification
-from src.data.verification.sources import FetchListing, SourceAdapter
+from src.data.verification.sources import FetchListing, OutputArtifactCheck, SourceAdapter
 
 
 def _crashing_adapter(*, crash_in: str) -> SourceAdapter:
@@ -15,6 +18,11 @@ def _crashing_adapter(*, crash_in: str) -> SourceAdapter:
             raise RuntimeError("boom in check_outputs")
         return []
 
+    def check_fetched(root_dir):
+        if crash_in == "check_fetched":
+            raise RuntimeError("boom in check_fetched")
+        return []
+
     def fingerprint_paths(root_dir):
         if crash_in == "fingerprint_paths":
             raise RuntimeError("boom in fingerprint_paths")
@@ -25,6 +33,7 @@ def _crashing_adapter(*, crash_in: str) -> SourceAdapter:
         list_fetched=list_fetched,
         check_outputs=check_outputs,
         fingerprint_paths=fingerprint_paths,
+        check_fetched=check_fetched,
     )
 
 
@@ -66,3 +75,116 @@ def test_fingerprint_paths_crash_falls_back_to_fresh_check(tmp_path, monkeypatch
     reports = Verification(root_dir=tmp_path).verify(source="biomes")
 
     assert reports["biomes"].status == "not_present_locally"
+
+
+def test_check_fetched_crash_is_isolated_and_reported(tmp_path, monkeypatch):
+    """Mirrors test_check_outputs_crash_is_isolated_and_reported: a crashing
+    check_fetched() must not take down the whole run, and must be reported
+    via fetch_status rather than the output-side status."""
+    from src.data.verification import core as core_module
+
+    monkeypatch.setitem(core_module.SOURCE_ADAPTERS, "biomes", _crashing_adapter(crash_in="check_fetched"))
+
+    reports = Verification(root_dir=tmp_path).verify()
+
+    assert reports["biomes"].fetch_status == "failed"
+    messages = [check["message"] for check in reports["biomes"].fetched_checks]
+    assert any("check_fetched" in message and "boom in check_fetched" in message for message in messages)
+    for name, report in reports.items():
+        if name != "biomes":
+            assert report.status in {"not_present_locally", "outstanding", "verified", "failed"}
+
+
+def _adapter_with_fetched_checks(*, fetched_ok: bool) -> SourceAdapter:
+    def list_fetched(root_dir, force=False):
+        return FetchListing(present=1, expected=1, detail="ok")
+
+    def check_outputs(root_dir):
+        return [
+            OutputArtifactCheck(
+                label="output", path=root_dir, exists=True, checks=[CheckResult(name="ok", ok=True)]
+            )
+        ]
+
+    def check_fetched(root_dir):
+        return [
+            OutputArtifactCheck(
+                label="raw",
+                path=root_dir,
+                exists=True,
+                checks=[CheckResult(name="raw_check", ok=fetched_ok, message="raw check result")],
+            )
+        ]
+
+    def fingerprint_paths(root_dir):
+        return []
+
+    return SourceAdapter(
+        name="fake",
+        list_fetched=list_fetched,
+        check_outputs=check_outputs,
+        fingerprint_paths=fingerprint_paths,
+        check_fetched=check_fetched,
+    )
+
+
+def test_fetched_check_failure_marks_fetch_status_failed_without_affecting_status(tmp_path, monkeypatch):
+    """A failing raw-fetched-artifact check must not overshadow a passing
+    output check: `status` stays driven purely by check_outputs(), while the
+    new `fetch_status` field independently reflects the raw-check failure."""
+    from src.data.verification import core as core_module
+
+    monkeypatch.setitem(
+        core_module.SOURCE_ADAPTERS, "biomes", _adapter_with_fetched_checks(fetched_ok=False)
+    )
+
+    reports = Verification(root_dir=tmp_path).verify(source="biomes")
+
+    assert reports["biomes"].status == "verified"
+    assert reports["biomes"].fetch_status == "failed"
+    assert reports["biomes"].fetched_checks[0]["ok"] is False
+
+
+def test_fetched_check_success_marks_fetch_status_verified(tmp_path, monkeypatch):
+    from src.data.verification import core as core_module
+
+    monkeypatch.setitem(
+        core_module.SOURCE_ADAPTERS, "biomes", _adapter_with_fetched_checks(fetched_ok=True)
+    )
+
+    reports = Verification(root_dir=tmp_path).verify(source="biomes")
+
+    assert reports["biomes"].status == "verified"
+    assert reports["biomes"].fetch_status == "verified"
+
+
+def test_default_check_fetched_reports_not_applicable(tmp_path):
+    """assembly (and any source with no separate raw-artifact concept) uses
+    SourceAdapter's default no-op check_fetched, and must be reported as
+    'not_applicable' rather than 'outstanding' -- there's nothing to fetch,
+    not something outstanding that hasn't been fetched yet."""
+    reports = Verification(root_dir=tmp_path).verify(source="assembly")
+
+    assert reports["assembly"].fetch_status == "not_applicable"
+    assert reports["assembly"].fetched_checks == []
+
+
+def test_sidecar_roundtrip_includes_fetched_checks(tmp_path, monkeypatch):
+    from src.data.verification import core as core_module
+
+    monkeypatch.setitem(
+        core_module.SOURCE_ADAPTERS, "biomes", _adapter_with_fetched_checks(fetched_ok=False)
+    )
+
+    Verification(root_dir=tmp_path).verify(source="biomes")
+
+    sidecar_path = tmp_path / "data" / "biomes" / ".verification.json"
+    payload = json.loads(sidecar_path.read_text())
+    assert payload["fetch_status"] == "failed"
+    assert payload["fetched_checks"][0]["name"] == "raw_check"
+
+    # Unchanged fingerprint -> served from cache, still carrying both fields.
+    cached_reports = Verification(root_dir=tmp_path).verify(source="biomes")
+    assert cached_reports["biomes"].from_cache is True
+    assert cached_reports["biomes"].fetch_status == "failed"
+    assert cached_reports["biomes"].fetched_checks[0]["name"] == "raw_check"

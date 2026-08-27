@@ -12,7 +12,7 @@ from ..shared.batches import atomic_write_text
 from .checks import CheckResult
 from .constants import SOURCES, sidecar_path
 from .fingerprint import compute_fingerprint
-from .sources import SOURCE_ADAPTERS, FetchListing, OutputArtifactCheck
+from .sources import SOURCE_ADAPTERS, FetchListing, OutputArtifactCheck, _default_check_fetched
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,13 @@ class SourceReport:
     fetch_completeness: dict | None = None
     outputs_present: bool = False
     from_cache: bool = False
+    # Independent status track for raw-fetched-artifact content checks (as
+    # opposed to `status`, which reflects `check_outputs()` against
+    # preprocessed/assembled outputs): "verified" | "failed" | "outstanding" |
+    # "not_present_locally" | "not_applicable" (sources with no separate raw
+    # artifact concept, e.g. assembly).
+    fetch_status: str = "not_applicable"
+    fetched_checks: list[dict] = field(default_factory=list)
 
 
 def _timestamp() -> str:
@@ -98,6 +105,8 @@ class Verification:
                 fetch_completeness=existing.get("fetch_completeness"),
                 outputs_present=existing.get("outputs_present", False),
                 from_cache=True,
+                fetch_status=existing.get("fetch_status", "not_applicable"),
+                fetched_checks=existing.get("fetched_checks", []),
             )
 
         try:
@@ -129,6 +138,25 @@ class Verification:
                 )
             ]
 
+        try:
+            fetched_artifacts = adapter.check_fetched(self.root_dir)
+        except Exception as exc:
+            logger.exception("Source '%s': check_fetched() raised unexpectedly.", source)
+            fetched_artifacts = [
+                OutputArtifactCheck(
+                    label="check_fetched_crashed",
+                    path=Path(self.root_dir),
+                    exists=True,
+                    checks=[
+                        CheckResult(
+                            name="check_fetched_crashed",
+                            ok=False,
+                            message=f"check_fetched() raised {exc.__class__.__name__}: {exc}",
+                        )
+                    ],
+                )
+            ]
+
         outputs_present = any(artifact.exists for artifact in output_artifacts)
         any_present = fetch_listing.present > 0 or outputs_present
         all_checks: list[CheckResult] = [check for artifact in output_artifacts for check in artifact.checks]
@@ -152,7 +180,25 @@ class Verification:
         else:
             status = "verified"
 
+        # `fetch_status` is deliberately tracked independently of `status`: a
+        # newly-downloaded raw file being corrupt shouldn't overshadow
+        # already-built, still-valid processed outputs (or vice versa).
+        fetched_checks: list[CheckResult] = [check for artifact in fetched_artifacts for check in artifact.checks]
+        if adapter.check_fetched is _default_check_fetched:
+            fetch_status = "not_applicable"
+        else:
+            fetch_any_present = fetch_listing.present > 0 or any(artifact.exists for artifact in fetched_artifacts)
+            if not fetch_any_present:
+                fetch_status = "not_present_locally"
+            elif fetched_checks and not all(check.ok for check in fetched_checks):
+                fetch_status = "failed"
+            elif not fetched_artifacts or not all(artifact.exists for artifact in fetched_artifacts):
+                fetch_status = "outstanding"
+            else:
+                fetch_status = "verified"
+
         checks_payload = [asdict(check) for check in all_checks]
+        fetched_checks_payload = [asdict(check) for check in fetched_checks]
         fetch_completeness = {
             "present": fetch_listing.present,
             "expected": fetch_listing.expected,
@@ -166,9 +212,11 @@ class Verification:
             "checks": checks_payload,
             "fetch_completeness": fetch_completeness,
             "outputs_present": outputs_present,
+            "fetch_status": fetch_status,
+            "fetched_checks": fetched_checks_payload,
         }
         _write_sidecar(sidecar, payload)
-        logger.info("Verified source '%s': status=%s", source, status)
+        logger.info("Verified source '%s': status=%s, fetch_status=%s", source, status, fetch_status)
         return SourceReport(
             source=source,
             status=status,
@@ -178,6 +226,8 @@ class Verification:
             fetch_completeness=fetch_completeness,
             outputs_present=outputs_present,
             from_cache=False,
+            fetch_status=fetch_status,
+            fetched_checks=fetched_checks_payload,
         )
 
     def verify(self, source: str | None = None, force: bool = False) -> dict[str, SourceReport]:
@@ -216,6 +266,7 @@ class Verification:
                     ],
                     fetch_completeness=None,
                     from_cache=False,
+                    fetch_status="failed",
                 )
         return reports
 

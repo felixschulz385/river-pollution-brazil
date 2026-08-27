@@ -78,6 +78,33 @@ def test_river_network_check_outputs_passes_valid_data(tmp_path):
     assert all(artifact.ok for artifact in artifacts)
 
 
+def test_river_network_check_fetched_missing_gadm(tmp_path):
+    adapter = SOURCE_ADAPTERS["river_network"]
+
+    artifacts = adapter.check_fetched(tmp_path)
+
+    assert len(artifacts) == 1
+    assert not artifacts[0].exists
+
+
+def test_river_network_check_fetched_valid_gpkg(tmp_path):
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    from src.data.sources.river_network.constants import DEFAULT_ADM2_LAYER, DEFAULT_GADM_PATH
+
+    gadm_path = tmp_path / DEFAULT_GADM_PATH
+    gadm_path.parent.mkdir(parents=True, exist_ok=True)
+    frame = gpd.GeoDataFrame({"geometry": [Point(0, 0)]}, crs=4326)
+    frame.to_file(gadm_path, layer=DEFAULT_ADM2_LAYER, driver="GPKG")
+
+    adapter = SOURCE_ADAPTERS["river_network"]
+    artifacts = adapter.check_fetched(tmp_path)
+
+    assert artifacts[0].exists
+    assert artifacts[0].ok
+
+
 # --------------------------------------------------------------------------
 # land_cover
 # --------------------------------------------------------------------------
@@ -136,6 +163,93 @@ def test_land_cover_check_outputs_flags_out_of_range_share(tmp_path):
     assert not artifacts[0].ok
 
 
+def test_land_cover_check_fetched_missing(tmp_path):
+    adapter = SOURCE_ADAPTERS["land_cover"]
+
+    artifacts = adapter.check_fetched(tmp_path)
+
+    assert len(artifacts) == 1
+    assert not artifacts[0].exists
+
+
+def _write_fake_tile(path, *, valid: bool):
+    if not valid:
+        path.write_bytes(b"not-a-real-tif")
+        return
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    transform = from_origin(-45.0, -10.0, 0.001, 0.001)
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=1,
+        width=1,
+        count=1,
+        dtype="uint8",
+        crs="EPSG:4326",
+        transform=transform,
+    ) as dataset:
+        dataset.write(np.array([[1]], dtype="uint8"), 1)
+
+
+def test_land_cover_check_fetched_valid_tile(tmp_path):
+    datadir = tmp_path / "data" / "land_cover" / "raw" / "lc_mapbiomas10_30"
+    datadir.mkdir(parents=True)
+    _write_fake_tile(datadir / "brazil_coverage_2020.tif", valid=True)
+
+    adapter = SOURCE_ADAPTERS["land_cover"]
+    artifacts = adapter.check_fetched(tmp_path)
+
+    assert artifacts[0].exists
+    assert artifacts[0].ok
+
+
+def test_land_cover_check_fetched_flags_corrupt_tile(tmp_path):
+    datadir = tmp_path / "data" / "land_cover" / "raw" / "lc_mapbiomas10_30"
+    datadir.mkdir(parents=True)
+    _write_fake_tile(datadir / "brazil_coverage_2020.tif", valid=False)
+
+    adapter = SOURCE_ADAPTERS["land_cover"]
+    artifacts = adapter.check_fetched(tmp_path)
+
+    assert artifacts[0].exists
+    assert not artifacts[0].ok
+
+
+def test_land_cover_check_fetched_caches_unchanged_tiles(tmp_path):
+    """The (size, mtime_ns)-keyed cache must skip re-checking a tile whose
+    file hasn't changed since the last run."""
+    from src.data.verification import checks as checks_module
+
+    datadir = tmp_path / "data" / "land_cover" / "raw" / "lc_mapbiomas10_30"
+    datadir.mkdir(parents=True)
+    _write_fake_tile(datadir / "brazil_coverage_2020.tif", valid=True)
+
+    adapter = SOURCE_ADAPTERS["land_cover"]
+    adapter.check_fetched(tmp_path)  # first run populates the cache
+
+    call_count = 0
+    original = checks_module.check_raster_header_readable
+
+    def counting_check(path, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return original(path, **kwargs)
+
+    import src.data.verification.sources as sources_module
+
+    sources_module.check_raster_header_readable = counting_check
+    try:
+        adapter.check_fetched(tmp_path)  # unchanged file -> cache hit, no re-check
+    finally:
+        sources_module.check_raster_header_readable = original
+
+    assert call_count == 0
+
+
 # --------------------------------------------------------------------------
 # sensor_data
 # --------------------------------------------------------------------------
@@ -192,6 +306,55 @@ def test_sensor_data_check_outputs_flags_discharge_out_of_range(tmp_path):
 
     assert artifacts[0].exists
     assert not artifacts[0].ok
+
+
+def test_sensor_data_check_fetched_missing(tmp_path):
+    adapter = SOURCE_ADAPTERS["sensor_data"]
+
+    artifacts = adapter.check_fetched(tmp_path)
+
+    assert len(artifacts) == 2
+    assert all(not artifact.exists for artifact in artifacts)
+
+
+def test_sensor_data_check_fetched_valid_station_inventory_and_archive(tmp_path):
+    import zipfile
+
+    import geopandas as gpd
+    from src.data.sources.sensor_data.constants import get_raw_dir
+    from src.data.sources.sensor_data.fetch.database import STATIONS_TABLE, write_geodataframe_table
+
+    stations = pd.DataFrame({"station_code": ["11111111"]})
+    stations_geo = gpd.GeoDataFrame(
+        stations, geometry=gpd.points_from_xy([-45.0], [-10.0]), crs=4326
+    )
+    write_geodataframe_table(tmp_path, STATIONS_TABLE, stations_geo)
+
+    raw_dir = get_raw_dir(tmp_path)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(raw_dir / "11111111.zip", "w") as archive:
+        archive.writestr("data.txt", "hello")
+
+    adapter = SOURCE_ADAPTERS["sensor_data"]
+    artifacts = adapter.check_fetched(tmp_path)
+
+    assert all(artifact.exists for artifact in artifacts)
+    assert all(artifact.ok for artifact in artifacts)
+
+
+def test_sensor_data_check_fetched_flags_corrupt_archive(tmp_path):
+    from src.data.sources.sensor_data.constants import get_raw_dir
+
+    raw_dir = get_raw_dir(tmp_path)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    (raw_dir / "corrupt.zip").write_bytes(b"not-a-zip")
+
+    adapter = SOURCE_ADAPTERS["sensor_data"]
+    artifacts = adapter.check_fetched(tmp_path)
+
+    archive_artifact = next(a for a in artifacts if a.label == "raw_archives")
+    assert archive_artifact.exists
+    assert not archive_artifact.ok
 
 
 # --------------------------------------------------------------------------
@@ -264,6 +427,36 @@ def test_climate_check_outputs_flags_out_of_range_value(tmp_path):
     assert not sensor_artifact.ok
 
 
+def test_climate_check_fetched_missing_store(tmp_path):
+    adapter = SOURCE_ADAPTERS["climate"]
+
+    artifacts = adapter.check_fetched(tmp_path)
+
+    assert len(artifacts) == 1
+    assert not artifacts[0].exists
+
+
+def test_climate_check_fetched_flags_out_of_range_value(tmp_path):
+    import numpy as np
+    import xarray as xr
+
+    from src.data.sources.climate.constants import DEFAULT_ERA5_LAND_STORE_PATH
+
+    store_path = tmp_path / DEFAULT_ERA5_LAND_STORE_PATH
+    time = pd.date_range("2020-01-01", periods=3, freq="D")
+    dataset = xr.Dataset(
+        {"2t": (("time", "latitude", "longitude"), np.full((3, 1, 1), 50.0))},  # far outside [180, 340] K
+        coords={"time": time, "latitude": [-10.0], "longitude": [-45.0]},
+    )
+    dataset.to_zarr(store_path, mode="w", consolidated=False)
+
+    adapter = SOURCE_ADAPTERS["climate"]
+    artifacts = adapter.check_fetched(tmp_path)
+
+    assert artifacts[0].exists
+    assert not artifacts[0].ok
+
+
 # --------------------------------------------------------------------------
 # biomes
 # --------------------------------------------------------------------------
@@ -289,6 +482,46 @@ def test_biomes_check_outputs_missing_required_column(tmp_path):
     adm2_artifact = next(a for a in artifacts if a.label == "biome_adm2")
     assert adm2_artifact.exists
     assert not adm2_artifact.ok
+
+
+def test_biomes_check_fetched_missing(tmp_path):
+    adapter = SOURCE_ADAPTERS["biomes"]
+
+    artifacts = adapter.check_fetched(tmp_path)
+
+    assert len(artifacts) == 1
+    assert not artifacts[0].exists
+
+
+def test_biomes_check_fetched_valid_archive(tmp_path):
+    import zipfile
+
+    from src.data.sources.biomes.constants import archive_path
+
+    path = archive_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("biomes.shp", "fake-shapefile-bytes" * 100)
+
+    adapter = SOURCE_ADAPTERS["biomes"]
+    artifacts = adapter.check_fetched(tmp_path)
+
+    assert artifacts[0].exists
+    assert artifacts[0].ok
+
+
+def test_biomes_check_fetched_flags_corrupt_archive(tmp_path):
+    from src.data.sources.biomes.constants import archive_path
+
+    path = archive_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"not-a-zip" * 200)
+
+    adapter = SOURCE_ADAPTERS["biomes"]
+    artifacts = adapter.check_fetched(tmp_path)
+
+    assert artifacts[0].exists
+    assert not artifacts[0].ok
 
 
 # --------------------------------------------------------------------------
@@ -323,6 +556,66 @@ def test_population_check_outputs_valid(tmp_path):
 
     assert artifacts[0].exists
     assert artifacts[0].ok
+
+
+def test_population_check_fetched_missing(tmp_path):
+    adapter = SOURCE_ADAPTERS["population"]
+
+    artifacts = adapter.check_fetched(tmp_path)
+
+    assert len(artifacts) == 1
+    assert not artifacts[0].exists
+
+
+def test_population_check_fetched_valid_raw_columns(tmp_path):
+    """The raw parquet keeps the BigQuery query's original (Portuguese)
+    column names -- these are renamed only during preprocessing, so
+    check_fetched must check the raw names, not the final output's."""
+    from src.data.sources.population.constants import raw_dir as _population_raw_dir
+
+    raw_dir = _population_raw_dir(tmp_path)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    frame = pd.DataFrame(
+        {
+            "ano": [2020],
+            "id_municipio": ["350001"],
+            "id_municipio_nome": ["Sao Paulo"],
+            "sexo": ["M"],
+            "grupo_idade": ["0-4"],
+            "populacao": [100],
+        }
+    )
+    frame.to_parquet(raw_dir / "population_raw.parquet", index=False)
+
+    adapter = SOURCE_ADAPTERS["population"]
+    artifacts = adapter.check_fetched(tmp_path)
+
+    assert artifacts[0].exists
+    assert artifacts[0].ok
+
+
+def test_population_check_fetched_flags_negative_populacao(tmp_path):
+    from src.data.sources.population.constants import raw_dir as _population_raw_dir
+
+    raw_dir = _population_raw_dir(tmp_path)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    frame = pd.DataFrame(
+        {
+            "ano": [2020],
+            "id_municipio": ["350001"],
+            "id_municipio_nome": ["Sao Paulo"],
+            "sexo": ["M"],
+            "grupo_idade": ["0-4"],
+            "populacao": [-1],
+        }
+    )
+    frame.to_parquet(raw_dir / "population_raw.parquet", index=False)
+
+    adapter = SOURCE_ADAPTERS["population"]
+    artifacts = adapter.check_fetched(tmp_path)
+
+    assert artifacts[0].exists
+    assert not artifacts[0].ok
 
 
 # --------------------------------------------------------------------------
@@ -400,6 +693,56 @@ def test_health_check_outputs_flags_negative_birth_outcome_total(tmp_path):
     assert not artifact.ok
 
 
+def test_health_check_fetched_no_completed_batches(tmp_path):
+    adapter = SOURCE_ADAPTERS["health"]
+
+    artifacts = adapter.check_fetched(tmp_path)
+
+    assert len(artifacts) == 3
+    assert all(not artifact.exists for artifact in artifacts)
+
+
+def _write_health_batch(tmp_path, table_name, *, valid: bool):
+    manifest_dir = tmp_path / "data" / "health" / "raw" / table_name
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = manifest_dir / "batch_2020.csv"
+    if valid:
+        csv_path.write_text(
+            '"Município";"Valor"\n"110001 Alta Floresta D\'Oeste";"10"\n',
+            encoding="latin1",
+        )
+    else:
+        csv_path.write_text("not,a,datasus,csv\n", encoding="latin1")
+    entries = [{"batch_id": "2020", "status": "completed", "raw_path": str(csv_path)}]
+    with open(manifest_dir / "manifest.jsonl", "w") as handle:
+        for entry in entries:
+            handle.write(json.dumps(entry) + "\n")
+
+
+def test_health_check_fetched_valid_csv_sample(tmp_path):
+    table_name = "SIH_RESIDENCE_TOTAL_MUNICIPALITY_YEAR"
+    _write_health_batch(tmp_path, table_name, valid=True)
+
+    adapter = SOURCE_ADAPTERS["health"]
+    artifacts = adapter.check_fetched(tmp_path)
+
+    artifact = next(a for a in artifacts if a.label == f"health_batches:{table_name}")
+    assert artifact.exists
+    assert artifact.ok
+
+
+def test_health_check_fetched_flags_unparseable_csv(tmp_path):
+    table_name = "SIH_RESIDENCE_TOTAL_MUNICIPALITY_YEAR"
+    _write_health_batch(tmp_path, table_name, valid=False)
+
+    adapter = SOURCE_ADAPTERS["health"]
+    artifacts = adapter.check_fetched(tmp_path)
+
+    artifact = next(a for a in artifacts if a.label == f"health_batches:{table_name}")
+    assert artifact.exists
+    assert not artifact.ok
+
+
 # --------------------------------------------------------------------------
 # assembly
 # --------------------------------------------------------------------------
@@ -471,3 +814,12 @@ def test_assembly_check_outputs_passes_when_columns_present(tmp_path, monkeypatc
     artifacts = adapter.check_outputs(tmp_path)
 
     assert artifacts[0].ok
+
+
+def test_assembly_check_fetched_is_a_noop(tmp_path):
+    """assembly isn't a fetch source -- it joins the other 7 -- so it uses
+    SourceAdapter's default no-op check_fetched rather than a real
+    implementation."""
+    adapter = SOURCE_ADAPTERS["assembly"]
+
+    assert adapter.check_fetched(tmp_path) == []
