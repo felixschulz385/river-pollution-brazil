@@ -203,11 +203,17 @@ def should_skip_download(target_path: Path):
         return False
     if _manifest_preprocess_status(manifest) == "processed":
         return True
-    if lock_path_for(target_path).exists():
-        return False
     download_status = _manifest_download_status(manifest)
     if download_status == "verification_failed":
         return True
+    # No lock-based check here: the lock file is shared with
+    # `climate_preprocess_worker`, which holds it for the whole
+    # read/resample/write of an already-downloaded file. Gating skip on
+    # `download_status == "downloaded"` alone is enough to tell a genuinely
+    # in-flight download (status not yet "downloaded") from a file a
+    # concurrent preprocess worker is merely consuming -- checking the lock
+    # too would misread the latter as still downloading and cause this fetch
+    # loop to re-request/re-download the file once the lock is released.
     return download_status == "downloaded" and target_path.exists()
 
 

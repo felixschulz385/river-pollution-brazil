@@ -30,6 +30,7 @@ dependencies = [
     "selenium>=4.43",
     "webdriver-manager>=4.1",
     "requests",
+    "aiohttp",
     "cdsapi",
     "ecmwf-datastores-client",
     "earthkit-data",

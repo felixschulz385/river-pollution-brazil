@@ -960,6 +960,11 @@ def _open_era5_dataset(path: Path) -> xr.Dataset:
             },
             attrs={"source_path": str(path)},
         ).to_dataset(dim="band")
+        # ERA5-Land is always EPSG:4326; `.odc.geobox` (used to derive the
+        # store's geobox in `_build_geobox_state`) keys its coords by "y"/"x"
+        # instead of "latitude"/"longitude" when the dataset has no CRS, so
+        # this must be set before the dataset is returned.
+        dataset = dataset.rio.write_crs("EPSG:4326")
     finally:
         close = getattr(field_list, "close", None)
         if callable(close):
@@ -1283,6 +1288,13 @@ def write_dataset_region(dataset: xr.Dataset, store_path: Path) -> Path:
     if not dataset.data_vars:
         return store_path
 
+    # `spatial_ref` (written once, up front, by `bootstrap_era5_store`) has no
+    # dimensions in common with a `time`/`latitude`/`longitude` region write,
+    # which `to_zarr(region=...)` rejects outright if the coordinate is still
+    # attached here.
+    if "spatial_ref" in dataset.coords:
+        dataset = dataset.drop_vars("spatial_ref")
+
     dataset.to_zarr(
         store_path,
         mode="r+",
@@ -1420,7 +1432,24 @@ def process_era5_input_file(path: Path, *, root_dir=".", subtype="era5_land_hour
             # Consumed for good once its main file is processed -- the
             # *next* month's file has its own, separately-fetched boundary
             # companion, so this one has no further purpose.
+            boundary_base_manifest = _load_manifest_or_placeholder(boundary_path, subtype)
             _delete_raw_input_file(boundary_path)
+            # Without this, the boundary file's own manifest never gets a
+            # `preprocess_status` set, so `should_skip_download` (which
+            # requires either "processed" or the file still existing on
+            # disk) can't tell it was already consumed -- the fetch worker's
+            # next poll cycle would see the file missing and redownload a
+            # copy that will never be used again (this main file is already
+            # `processed` and won't be reselected for preprocessing).
+            _write_preprocess_manifest(
+                boundary_path,
+                subtype=subtype,
+                base_manifest=boundary_base_manifest,
+                preprocess_status="processed",
+                store_path=store_path,
+                raw_deleted=True,
+                error=None,
+            )
         _write_preprocess_manifest(
             path,
             subtype=subtype,
