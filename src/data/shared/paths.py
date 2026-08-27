@@ -34,8 +34,3 @@ def processed_dir(root_dir: str | Path, source: str, stage: str | None = None) -
 def auxiliary_dir(root_dir: str | Path, source: str) -> Path:
     """Static/reference-data directory for a source (e.g. lookup tables)."""
     return source_root(root_dir, source) / "auxiliary"
-
-
-# Canonical location of the shared Brazil ADM2 boundary file, used by
-# biomes, river_network, and sensor_data.
-GADM_PATH = "data/gadm/gadm41_BRA.gpkg"

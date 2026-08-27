@@ -26,7 +26,7 @@ def test_river_network_check_outputs_missing_files(tmp_path):
 
     artifacts = adapter.check_outputs(tmp_path)
 
-    assert len(artifacts) == 2
+    assert len(artifacts) == 4
     assert all(not artifact.exists for artifact in artifacts)
     assert all(not artifact.ok for artifact in artifacts)
 
@@ -43,7 +43,7 @@ def test_river_network_check_outputs_flags_duplicate_trench_id(tmp_path):
             "system_id": [0, 0],
         }
     )
-    trenches.to_parquet(river_dir / "river_trenches.parquet", index=False)
+    trenches.to_parquet(river_dir / "river_network_trenches.parquet", index=False)
 
     adapter = SOURCE_ADAPTERS["river_network"]
     artifacts = adapter.check_outputs(tmp_path)
@@ -66,11 +66,15 @@ def test_river_network_check_outputs_passes_valid_data(tmp_path):
             "system_id": [0, 0],
         }
     )
-    trenches.to_parquet(river_dir / "river_trenches.parquet", index=False)
+    trenches.to_parquet(river_dir / "river_network_trenches.parquet", index=False)
     drainage = pd.DataFrame(
         {"trench_id": [1, 2], "drainage_area": [10.0, 20.0], "within_brazil": [True, True]}
     )
-    drainage.to_parquet(river_dir / "drainage_areas.parquet", index=False)
+    drainage.to_parquet(river_dir / "river_network_drainage_areas.parquet", index=False)
+    trench_adm2 = pd.DataFrame({"trench_id": [1, 2], "adm2": ["X", "X"]})
+    trench_adm2.to_parquet(river_dir / "river_network_trench_adm2_matches.parquet", index=False)
+    dominant_systems = pd.DataFrame({"adm2": ["X"], "system_id": [0]})
+    dominant_systems.to_parquet(river_dir / "river_network_adm2_dominant_systems.parquet", index=False)
 
     adapter = SOURCE_ADAPTERS["river_network"]
     artifacts = adapter.check_outputs(tmp_path)
@@ -205,8 +209,8 @@ def test_land_cover_check_outputs_missing(tmp_path):
 
     artifacts = adapter.check_outputs(tmp_path)
 
-    assert len(artifacts) == 1
-    assert not artifacts[0].exists
+    assert len(artifacts) == 2
+    assert all(not artifact.exists for artifact in artifacts)
 
 
 def test_land_cover_check_outputs_flags_out_of_range_share(tmp_path):
@@ -229,6 +233,30 @@ def test_land_cover_check_outputs_flags_out_of_range_share(tmp_path):
 
     assert artifacts[0].exists
     assert not artifacts[0].ok
+
+
+def test_land_cover_check_outputs_tracks_river_aggregated(tmp_path):
+    """land_cover_river_aggregated.parquet is a real, always-produced output
+    of aggregate_along_rivers() -- it must be tracked like the other
+    aggregate-stage outputs, not silently ignored."""
+    output_dir = tmp_path / "data" / "land_cover" / "processed" / "aggregate"
+    output_dir.mkdir(parents=True)
+    frame = pd.DataFrame(
+        {
+            "mun_id": ["350001"],
+            "year": [2020],
+            "land_cover_class": ["forest"],
+            "share": [0.5],
+        }
+    )
+    frame.to_parquet(output_dir / "land_cover_river_aggregated.parquet", index=False)
+
+    adapter = SOURCE_ADAPTERS["land_cover"]
+    artifacts = adapter.check_outputs(tmp_path)
+
+    river_aggregated = next(a for a in artifacts if a.label == "land_cover_river_aggregated")
+    assert river_aggregated.exists
+    assert river_aggregated.ok
 
 
 def test_land_cover_check_fetched_missing(tmp_path):
@@ -359,7 +387,7 @@ def test_sensor_data_check_outputs_recognizes_columns_kept_as_named_index(tmp_pa
             "discharge": [10.0],
         }
     ).set_index(["station_code", "datetime"])
-    frame.to_parquet(output_dir / "water_quality_streamflow.parquet", index=True)
+    frame.to_parquet(output_dir / "sensor_data_water_quality_streamflow.parquet", index=True)
 
     adapter = SOURCE_ADAPTERS["sensor_data"]
     artifacts = adapter.check_outputs(tmp_path)
@@ -381,7 +409,7 @@ def test_sensor_data_check_outputs_flags_discharge_out_of_range(tmp_path):
             "streamflow_discharge_day": [2_000_000.0],
         }
     )
-    frame.to_parquet(output_dir / "water_quality_streamflow.parquet", index=False)
+    frame.to_parquet(output_dir / "sensor_data_water_quality_streamflow.parquet", index=False)
 
     adapter = SOURCE_ADAPTERS["sensor_data"]
     artifacts = adapter.check_outputs(tmp_path)
@@ -590,7 +618,7 @@ def test_biomes_check_outputs_missing_required_column(tmp_path):
     output_dir = tmp_path / "data" / "biomes" / "processed"
     output_dir.mkdir(parents=True)
     frame = pd.DataFrame({"mun_id": ["350001"]})  # missing "biome"
-    frame.to_parquet(output_dir / "biome_adm2.parquet", index=False)
+    frame.to_parquet(output_dir / "biomes_adm2.parquet", index=False)
 
     adapter = SOURCE_ADAPTERS["biomes"]
     artifacts = adapter.check_outputs(tmp_path)
@@ -785,12 +813,12 @@ def test_health_check_outputs_flags_negative_metric_value(tmp_path):
             "metric_value": [-5.0],
         }
     )
-    frame.to_parquet(output_dir / "hospitalizations.parquet", index=False)
+    frame.to_parquet(output_dir / "health_hospitalizations.parquet", index=False)
 
     adapter = SOURCE_ADAPTERS["health"]
     artifacts = adapter.check_outputs(tmp_path)
 
-    artifact = next(a for a in artifacts if a.label == "hospitalizations.parquet")
+    artifact = next(a for a in artifacts if a.label == "health_hospitalizations.parquet")
     assert artifact.exists
     assert not artifact.ok
 
@@ -799,12 +827,12 @@ def test_health_check_outputs_flags_negative_birth_outcome_total(tmp_path):
     output_dir = tmp_path / "data" / "health" / "processed"
     output_dir.mkdir(parents=True)
     frame = pd.DataFrame({"mun_id": ["350001"], "year": [2020], "Total": [-1.0]})
-    frame.to_parquet(output_dir / "birth_weight.parquet", index=False)
+    frame.to_parquet(output_dir / "health_birth_weight.parquet", index=False)
 
     adapter = SOURCE_ADAPTERS["health"]
     artifacts = adapter.check_outputs(tmp_path)
 
-    artifact = next(a for a in artifacts if a.label == "birth_weight.parquet")
+    artifact = next(a for a in artifacts if a.label == "health_birth_weight.parquet")
     assert artifact.exists
     assert not artifact.ok
 
@@ -894,7 +922,7 @@ datasets:
     output_path: data/assembly/sensor_panel.parquet
     sources:
       - name: water_quality
-        path: data/sensor_data/processed/aggregate/water_quality_streamflow.parquet
+        path: data/sensor_data/processed/aggregate/sensor_data_water_quality_streamflow.parquet
         join_keys: [station_code, datetime]
         variables: [ph, turbidity]
 """

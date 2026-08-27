@@ -1,5 +1,4 @@
 import logging
-from multiprocessing import cpu_count
 from pathlib import Path
 
 import numpy as np
@@ -7,11 +6,14 @@ import pandas as pd
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
+from src.data.shared.slurm import resolve_n_jobs
+
 from .constants import (
     BUCKET_COUNT_COLUMN,
     BUCKET_REACHABLE_COUNT_COLUMN,
     BUCKET_SHARE_COLUMN,
     DEFAULT_ASSEMBLY_LAND_COVER_PATH,
+    DEFAULT_RIVER_AGGREGATED_OUTPUT_PATH,
     DEFAULT_RIVER_NETWORK_PATH,
     DISTANCE_BUCKET_COLUMN,
     LAND_COVER_CLASS_COLUMN,
@@ -98,11 +100,11 @@ def aggregate_along_rivers(
     drainage_polygons_path=None,
     years=None,
     n_jobs=None,
-    output_path="data/land_cover/processed/aggregate/land_cover_river_aggregated.parquet",
+    output_path=DEFAULT_RIVER_AGGREGATED_OUTPUT_PATH,
 ):
     """Aggregate land cover variables upstream of each ADM2 unit."""
     if n_jobs is None:
-        n_jobs = cpu_count()
+        n_jobs = resolve_n_jobs()
 
     logger.info("Loading land cover data from %s", land_cover_path)
     land_cover_path = Path(land_cover_path)

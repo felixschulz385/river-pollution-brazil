@@ -170,11 +170,11 @@ datasets:
     output_path: data/assembly/sensor_panel.parquet
     sources:
       - name: water_quality
-        path: data/sensor_data/processed/aggregate/water_quality_streamflow.parquet
+        path: data/sensor_data/processed/aggregate/sensor_data_water_quality_streamflow.parquet
         join_keys: [station_code, datetime]
         variables: [ph]
       - name: river_system
-        path: data/river_network/processed/river_trenches.parquet
+        path: data/river_network/processed/river_network_trenches.parquet
         join_keys: [station_code]
         variables: []
 """

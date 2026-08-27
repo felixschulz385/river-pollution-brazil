@@ -2,6 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
+from src.data.shared.paths import processed_dir, raw_dir
 from src.data.sources.river_network.constants import PROCESSED_DIR as _RIVER_NETWORK_PROCESSED_DIR
 from src.data.sources.sensor_data.constants import (
     DEFAULT_STATIONS_RIVERS_PATH,
@@ -58,13 +59,13 @@ CLIMATE_ASSEMBLE_VARIANTS = {
 }
 
 DEFAULT_RIVER_NETWORK_PATH = _RIVER_NETWORK_PROCESSED_DIR
-DEFAULT_ERA5_LAND_STORE_PATH = Path("data/climate/raw/era5_land.zarr_nobackup")
-DEFAULT_ERA5_LAND_TRENCH_DAY_PATH = Path("data/climate/processed/extract/era5_land.parquet")
-DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH = Path(
-    "data/climate/processed/aggregate/climate_sensor_upstream.parquet"
+DEFAULT_ERA5_LAND_STORE_PATH = raw_dir(".", "climate") / "era5_land.zarr_nobackup"
+DEFAULT_ERA5_LAND_TRENCH_DAY_PATH = processed_dir(".", "climate", stage="extract") / "climate_era5_land.parquet"
+DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH = (
+    processed_dir(".", "climate", stage="aggregate") / "climate_sensor_upstream.parquet"
 )
-DEFAULT_ADM2_UPSTREAM_YEARLY_OUTPUT_PATH = Path(
-    "data/climate/processed/aggregate/climate_adm2_upstream_yearly.parquet"
+DEFAULT_ADM2_UPSTREAM_YEARLY_OUTPUT_PATH = (
+    processed_dir(".", "climate", stage="aggregate") / "climate_adm2_upstream_yearly.parquet"
 )
 
 # River-network distances are stored in kilometers. Buckets are 25 km wide,

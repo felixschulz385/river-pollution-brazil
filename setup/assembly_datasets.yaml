@@ -25,7 +25,7 @@ datasets:
     output_path: data/assembly/sensor_panel.parquet
     sources:
       - name: water_quality_streamflow
-        path: data/sensor_data/processed/aggregate/water_quality_streamflow.parquet
+        path: data/sensor_data/processed/aggregate/sensor_data_water_quality_streamflow.parquet
         join_keys: [station_code, datetime]
         variables:
           - rained
@@ -186,7 +186,7 @@ datasets:
           - streamflow_total_weight
           - streamflow_nearest_distance_m
       - name: river_system
-        path: data/river_network/processed/river_trenches.parquet
+        path: data/river_network/processed/river_network_trenches.parquet
         join_keys: [trench_id]
         variables:
           - system_id
@@ -292,7 +292,7 @@ datasets:
           - 2t_daily_max_mean_180d
           - 2t_daily_max_mean_365d
       - name: biome_sensor
-        path: data/biomes/processed/biome_sensor.parquet
+        path: data/biomes/processed/biomes_sensor.parquet
         join_keys: [station_code]
         variables:
           - biome
@@ -367,7 +367,7 @@ datasets:
         # them from the numeric-dtype enforcement applied to other variables.
         categorical_variables: [sex, age_group]
       - name: biome_adm2
-        path: data/biomes/processed/biome_adm2.parquet
+        path: data/biomes/processed/biomes_adm2.parquet
         join_keys: [mun_id]
         variables:
           - biome
@@ -375,7 +375,7 @@ datasets:
         # area, not a measurement -- exclude it from numeric-dtype enforcement.
         categorical_variables: [biome]
 
-# Deferred: health outputs (data/health/hospitalizations.parquet and related
+# Deferred: health outputs (data/health/processed/health_hospitalizations.parquet and related
 # tables) are long `metric_name`/`metric_value` tables rather than one wide
 # table per municipality-year, so wiring them in needs pivot support that
 # this config format does not yet have.

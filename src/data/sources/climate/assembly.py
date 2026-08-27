@@ -1,5 +1,4 @@
 import logging
-from multiprocessing import cpu_count
 from pathlib import Path
 import shutil
 import tempfile
@@ -9,6 +8,8 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 from tqdm import tqdm
+
+from src.data.shared.slurm import resolve_n_jobs
 
 from .constants import (
     ADJUSTED_DISTANCE_COLUMN,
@@ -915,7 +916,7 @@ def assemble_climate(
             f"Available variants: {sorted(CLIMATE_ASSEMBLE_VARIANTS)}"
         )
     if n_jobs is None:
-        n_jobs = cpu_count()
+        n_jobs = resolve_n_jobs()
 
     climate_path = _resolve_path(self.root_dir, climate_path, DEFAULT_ERA5_LAND_TRENCH_DAY_PATH)
     river_network_path = _resolve_path(self.root_dir, river_network_path, DEFAULT_RIVER_NETWORK_PATH)

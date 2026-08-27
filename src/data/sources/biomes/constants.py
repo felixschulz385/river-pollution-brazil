@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from src.data.shared.paths import processed_dir, raw_dir as _shared_raw_dir, source_root
 from src.data.sources.gadm.constants import DEFAULT_SIMPLIFIED_GADM_PATH as DEFAULT_GADM_PATH
 
 
@@ -37,16 +38,16 @@ DEFAULT_ADM2_LAYER = "ADM_ADM_2"
 DEFAULT_ADM2_ID_COLUMN = "CC_2"
 BRAZIL_PROJECTED_CRS = 5641
 
-DEFAULT_ADM2_OUTPUT_PATH = "data/biomes/processed/biome_adm2.parquet"
-DEFAULT_SENSOR_OUTPUT_PATH = "data/biomes/processed/biome_sensor.parquet"
+DEFAULT_ADM2_OUTPUT_PATH = str(processed_dir(".", "biomes") / "biomes_adm2.parquet")
+DEFAULT_SENSOR_OUTPUT_PATH = str(processed_dir(".", "biomes") / "biomes_sensor.parquet")
 
 
 def biomes_dir(root_dir: str | Path = ".") -> Path:
-    return Path(root_dir) / "data" / "biomes"
+    return source_root(root_dir, "biomes")
 
 
 def raw_dir(root_dir: str | Path = ".") -> Path:
-    return biomes_dir(root_dir) / "raw"
+    return _shared_raw_dir(root_dir, "biomes")
 
 
 def archive_path(root_dir: str | Path = ".") -> Path:

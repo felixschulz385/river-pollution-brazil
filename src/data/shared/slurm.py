@@ -9,6 +9,7 @@ runs."
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import subprocess
@@ -103,6 +104,24 @@ def render_sbatch_script(spec: dict, command_argv: Sequence[str], log_dir: str) 
     lines.append(command)
     lines.append("")
     return "\n".join(lines)
+
+
+def resolve_n_jobs() -> int:
+    """Worker count for CPU-bound parallel preprocessing steps.
+
+    `os.cpu_count()` reports the node's full core count, not what Slurm
+    actually allocated to this job -- `--mem`/`--cpus-per-task` are sized
+    together, so spinning up a worker per node core (e.g. 128 on a shared
+    node) can request far more memory than the job's cgroup allows and get
+    OOM-killed. Cap to `SLURM_CPUS_PER_TASK` when running under Slurm.
+    """
+    slurm_cpus = os.environ.get("SLURM_CPUS_PER_TASK")
+    if slurm_cpus:
+        try:
+            return max(1, int(slurm_cpus))
+        except ValueError:
+            pass
+    return max(1, os.cpu_count() or 1)
 
 
 def submit_job(script_text: str) -> str:

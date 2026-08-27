@@ -6,7 +6,7 @@ outputs.
 
 ## River Network Storage
 
-### `river_trenches.parquet`
+### `river_network_trenches.parquet`
 
 Main persisted trench table and single source of truth for matrix indexing.
 
@@ -23,7 +23,7 @@ Core columns:
 - `trench_index`
 - `geometry`
 
-### `drainage_areas.parquet`
+### `river_network_drainage_areas.parquet`
 
 One retained drainage polygon per `trench_id`.
 
@@ -34,7 +34,7 @@ Core columns:
 - `within_brazil`
 - `geometry`
 
-### `trench_adm2_matches.parquet`
+### `river_network_trench_adm2_matches.parquet`
 
 Exploded trench-to-ADM2 relation table.
 
@@ -48,7 +48,24 @@ Semantics:
 - One row per intersecting trench/ADM2 match.
 - This file is only the relation table produced from the spatial join subset.
 
-### `river_system_matrices.pkl`
+### `river_network_adm2_dominant_systems.parquet`
+
+One row per ADM2 region, giving its dominant river system.
+
+Core columns:
+
+- `adm2`
+- `system_id`
+
+Semantics:
+
+- `system_id` is chosen per ADM2 as the river system with the largest summed
+  intersecting trench distance (see `build_adm2_dominant_system_table()`
+  below).
+- Derived from `river_network_trench_adm2_matches.parquet` joined against
+  `river_network_trenches.parquet`'s `system_id`/`distance` columns.
+
+### `river_network_system_matrices.pkl`
 
 Python pickle storing sparse graph products keyed by `system_id`.
 
@@ -59,7 +76,7 @@ Top-level keys:
 - `trench_reachability_matrices`
 - `trench_distance_matrices`
 
-Matrix order is derived from `river_trenches.parquet`.
+Matrix order is derived from `river_network_trenches.parquet`.
 
 Semantics:
 
@@ -76,7 +93,7 @@ Semantics:
   from upstream trench `j` to downstream trench `i`.
 - Consumers that want all upstream trenches for a target trench should read the
   row corresponding to that target trench's `trench_index` and map nonzero
-  column positions back to trench ids using `river_trenches.parquet`.
+  column positions back to trench ids using `river_network_trenches.parquet`.
 
 ## RiverNetwork Methods
 
@@ -108,30 +125,43 @@ Adds the `within_brazil` flag to `self.drainage_areas`.
 
 ## Land Cover Outputs
 
-### `land_cover_results.feather`
+### `data/land_cover/processed/extract/land_cover.parquet`
 
 One row per (`trench_id`, `year`) with `land_cover_class_*` columns.
 
-### `land_cover_sensor_upstream.parquet`
+### `data/land_cover/processed/aggregate/land_cover_sensor_upstream.parquet`
 
 One row per (`station_code`, `year`) produced by the `land-cover assemble --variant sensor`
 pipeline.
 
-### `land_cover_adm2_upstream.parquet`
+### `data/land_cover/processed/aggregate/land_cover_adm2_upstream.parquet`
 
 One row per (`adm2_id`, `year`) produced by the `land-cover assemble --variant adm2`
 pipeline.
 
 Semantics:
 
-- Seed trenches come from `trench_adm2_matches.parquet`.
+- Seed trenches come from `river_network_trench_adm2_matches.parquet`.
 - If a trench intersects multiple ADM2 regions, it contributes to each of
   them.
 - Matrix lookup uses `system_id` and `trench_index` from
-  `river_trenches.parquet`.
+  `river_network_trenches.parquet`.
 - Both assembled outputs use the same bucketed upstream columns, such as
   `lc_0_10km_tot`, `lc_0_10km_n`, `lc_0_10km_c41_cnt`, and
   `lc_0_10km_c41_shr`.
+
+### `data/land_cover/processed/aggregate/land_cover_river_aggregated.parquet`
+
+One row per (`mun_id`, `year`, `bucket`, `land_cover_class`), produced by
+`aggregate_along_rivers()`.
+
+Semantics:
+
+- Long-format: `land_cover_class` is a row value and `share` is a single
+  fractional column, not per-class `{class}_shr` columns.
+- `bucket` is the 25km-wide upstream distance ring (see `n`/`cnt`/`share`
+  for reachable-trench-count, raw count, and fractional share within that
+  bucket).
 
 ## Population Outputs
 
@@ -140,7 +170,7 @@ Semantics:
 Raw BigQuery extract from `basedosdados.br_ms_populacao.municipio` joined to
 the municipality directory for names.
 
-### `data/population/population.parquet`
+### `data/population/processed/population.parquet`
 
 Cleaned municipality population table with columns:
 
@@ -152,17 +182,18 @@ Cleaned municipality population table with columns:
 
 ## Climate Outputs
 
-### `data/climate/processed/era5_land.parquet`
+### `data/climate/processed/extract/climate_era5_land.parquet`
 
 One row per (`trench_id`, `date`) produced from the processed ERA5-Land store.
 
 Semantics:
 
-- The Zarr store remains the internal daily raster intermediate.
+- The Zarr store (`data/climate/raw/era5_land.zarr_nobackup`) remains the
+  internal daily raster intermediate.
 - This parquet is the analysis-facing preprocess output.
 - Values are polygon means over drainage areas for each trench and day.
 
-### `data/climate/processed/era5_land/climate_sensor_upstream.parquet`
+### `data/climate/processed/aggregate/climate_sensor_upstream.parquet`
 
 One row per station-day sensor observation, indexed by (`station_code`, `datetime`).
 
@@ -174,7 +205,7 @@ Semantics:
 - Daily and trailing 7/30/90/180/365 day means are computed from the trench/day
   climate table.
 
-### `data/climate/processed/era5_land/climate_adm2_upstream_yearly.parquet`
+### `data/climate/processed/aggregate/climate_adm2_upstream_yearly.parquet`
 
 One row per (`adm2_id`, `year`) produced by upstream aggregation.
 
@@ -186,7 +217,7 @@ Semantics:
 
 ## Biome Outputs
 
-### `data/biomes/biome_adm2.parquet`
+### `data/biomes/processed/biomes_adm2.parquet`
 
 One row per `mun_id` with a `biome` label, produced by `src.data.sources.biomes`
 intersecting IBGE's terrestrial biome polygons with GADM ADM2 boundaries.
@@ -196,7 +227,7 @@ Semantics:
 - `biome` is the biome with the largest intersecting area within the
   municipality (dominant biome by area, not a fractional composition).
 
-### `data/biomes/biome_sensor.parquet`
+### `data/biomes/processed/biomes_sensor.parquet`
 
 One row per `station_code` with a `biome` label, produced by a point-in-polygon
 join between monitoring-station coordinates and the same biome polygons.

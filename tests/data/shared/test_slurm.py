@@ -8,6 +8,7 @@ from src.data.shared.slurm import (
     SlurmJobSpecError,
     load_job_spec,
     render_sbatch_script,
+    resolve_n_jobs,
     submit_job,
 )
 
@@ -121,3 +122,28 @@ def test_submit_job_raises_on_unparseable_output(monkeypatch):
     monkeypatch.setattr(subprocess, "run", fake_run)
     with pytest.raises(SlurmJobSpecError):
         submit_job("#!/bin/bash\necho hi\n")
+
+
+def test_resolve_n_jobs_uses_slurm_allocation_when_present(monkeypatch):
+    """Regression test for the OOM this fixes: land_cover preprocessing used
+    to default to os.cpu_count() (the full node's core count, e.g. 128),
+    which vastly oversubscribed the job's actual Slurm memory allocation."""
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "8")
+    assert resolve_n_jobs() == 8
+
+
+def test_resolve_n_jobs_falls_back_to_cpu_count_outside_slurm(monkeypatch):
+    monkeypatch.delenv("SLURM_CPUS_PER_TASK", raising=False)
+    monkeypatch.setattr("os.cpu_count", lambda: 4)
+    assert resolve_n_jobs() == 4
+
+
+def test_resolve_n_jobs_ignores_unparseable_slurm_value(monkeypatch):
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "not-a-number")
+    monkeypatch.setattr("os.cpu_count", lambda: 4)
+    assert resolve_n_jobs() == 4
+
+
+def test_resolve_n_jobs_never_returns_less_than_one(monkeypatch):
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "0")
+    assert resolve_n_jobs() == 1

@@ -82,6 +82,61 @@ def test_save_load_round_trip_preserves_trenches_and_matrices(tmp_path: Path):
     assert set(reloaded_upstream["trench_id"]) == {101, 102}
 
 
+def test_build_trench_adm2_table_and_dominant_system_table(tmp_path: Path):
+    """`generate()` now chains build_trench_adm2_table() into
+    build_adm2_dominant_system_table() -- the dominant system per ADM2 must
+    be the one with the greatest *summed* intersecting trench distance, not
+    just whichever trench/system happens to join first."""
+    network = RiverNetwork()
+    base = Point(-47.9, -15.8)  # Brasília
+    network.trenches = gpd.GeoDataFrame(
+        {
+            "trench_id": [201, 202, 203],
+            "distance": [10.0, 3.0, 3.0],
+            "system_id": ["A", "B", "B"],
+            "geometry": [
+                LineString([(base.x, base.y), (base.x + 0.01, base.y)]),
+                LineString([(base.x, base.y), (base.x, base.y + 0.01)]),
+                LineString([(base.x, base.y), (base.x - 0.01, base.y)]),
+            ],
+        },
+        crs=4326,
+    )
+
+    gadm_path = tmp_path / "gadm.gpkg"
+    adm2_boundary = gpd.GeoDataFrame({"CC_2": ["X"], "geometry": [base.buffer(1.0)]}, crs=4326)
+    adm2_boundary.to_file(gadm_path, layer="ADM_ADM_2", driver="GPKG")
+
+    trench_adm2 = network.build_trench_adm2_table(gadm_path=str(gadm_path), layer="ADM_ADM_2")
+    assert set(trench_adm2["trench_id"]) == {201, 202, 203}
+
+    dominant = network.build_adm2_dominant_system_table()
+
+    # System A's single trench (distance 10.0) outweighs system B's two
+    # trenches summed (3.0 + 3.0 = 6.0), so A must win despite B having more
+    # individual trenches in the ADM2.
+    assert dominant.set_index("adm2").loc["X", "system_id"] == "A"
+
+
+def test_save_load_round_trip_preserves_adm2_dominant_system_table(tmp_path: Path):
+    network = _fixture_network()
+    network.compute_subsystems()
+    network.compute_distance_matrices()
+    network.trench_adm2_table = pd.DataFrame({"trench_id": [101, 102], "adm2": ["X", "X"]})
+    network.build_adm2_dominant_system_table()
+
+    output_dir = tmp_path / "river_network"
+    network.save(str(output_dir))
+    assert (output_dir / "river_network_adm2_dominant_systems.parquet").exists()
+
+    reloaded = RiverNetwork()
+    reloaded.load(str(output_dir))
+
+    pd.testing.assert_frame_equal(
+        network.get_adm2_dominant_system_table(), reloaded.get_adm2_dominant_system_table()
+    )
+
+
 def test_annotate_drainage_areas_with_country_membership_reprojects_mismatched_crs(tmp_path: Path):
     # `drainage_areas` lives in a projected CRS (as it would after
     # `build_trench_adm2_table`'s BRAZIL_PROJECTED_CRS reprojection), while

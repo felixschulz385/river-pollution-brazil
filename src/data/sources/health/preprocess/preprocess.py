@@ -8,7 +8,18 @@ from pandas.api.types import is_numeric_dtype
 from src.data.shared.batches import load_manifest
 from src.data.sources.health.fetch.datasus import SIH_CHANNEL_METRICS, SIH_SELECTED_MORBIDITY_CHANNELS
 from src.data.sources.health.fetch.datasus import SIH_ALL_METRICS_KEY
-from ..constants import HEALTH_DATASET_NAME
+from ..constants import (
+    HEALTH_DATASET_NAME,
+    HOSPITALIZATIONS_FILENAME,
+    HOSPITALIZATIONS_ICD10_CHAPTER_FILENAME,
+    HOSPITALIZATIONS_SELECTED_MORBIDITY_LIST_FILENAME,
+    MORTALITY_POST_1996_FILENAME,
+    MORTALITY_PRE_1996_FILENAME,
+    birth_outcome_filename,
+)
+from ..constants import health_dir as _shared_health_dir
+from ..constants import processed_dir as _shared_processed_dir
+from ..constants import raw_dir as _shared_raw_dir
 from ..csv_utils import normalize_rows_to_header_width
 
 logger = logging.getLogger(__name__)
@@ -94,17 +105,18 @@ SIH_METRIC_NAMES_NORMALIZED = {
 }
 
 def _health_dir(root_dir):
-    path = os.path.join(root_dir, "data", "health")
+    path = str(_shared_health_dir(root_dir))
     os.makedirs(path, exist_ok=True)
     return path
 
 
 def _raw_dir(root_dir):
-    return os.path.join(_health_dir(root_dir), "raw")
+    _health_dir(root_dir)
+    return str(_shared_raw_dir(root_dir))
 
 
 def _processed_dir(root_dir):
-    path = os.path.join(_health_dir(root_dir), "processed")
+    path = str(_shared_processed_dir(root_dir))
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -326,11 +338,11 @@ def preprocess_mortality_age_tables(root_dir="."):
     sources = {
         "pre_1996": (
             os.path.join(raw_dir, "mortality_age_counts_pre_1996_raw.parquet"),
-            os.path.join(processed_dir, "scraping_pre_1996.csv"),
+            os.path.join(processed_dir, MORTALITY_PRE_1996_FILENAME),
         ),
         "post_1995": (
             os.path.join(raw_dir, "mortality_age_counts_post_1995_raw.parquet"),
-            os.path.join(processed_dir, "scraping_post_1996.csv"),
+            os.path.join(processed_dir, MORTALITY_POST_1996_FILENAME),
         ),
     }
 
@@ -809,7 +821,7 @@ def preprocess_hospitalization_tables(root_dir="."):
         total_frame = _empty_total_hospitalization_frame()
     outputs["SIH_RESIDENCE_TOTAL_MUNICIPALITY_YEAR"] = _preprocess_sih_total_request(
         total_frame,
-        os.path.join(processed_dir, "hospitalizations.parquet"),
+        os.path.join(processed_dir, HOSPITALIZATIONS_FILENAME),
     )
 
     try:
@@ -822,7 +834,7 @@ def preprocess_hospitalization_tables(root_dir="."):
         icd10_frame = _empty_icd10_hospitalization_frame()
     outputs["SIH_RESIDENCE_ICD10_CHAPTER_MUNICIPALITY_YEAR"] = _preprocess_sih_icd10_chapter_request(
         icd10_frame,
-        os.path.join(processed_dir, "hospitalizations_icd10_chapter.parquet"),
+        os.path.join(processed_dir, HOSPITALIZATIONS_ICD10_CHAPTER_FILENAME),
     )
 
     try:
@@ -835,7 +847,7 @@ def preprocess_hospitalization_tables(root_dir="."):
         morbidity_frame = _empty_morbidity_hospitalization_frame()
     outputs["SIH_RESIDENCE_SELECTED_MORBIDITY_LIST_MUNICIPALITY_YEAR"] = _preprocess_sih_morbidity_request(
         morbidity_frame,
-        os.path.join(processed_dir, "hospitalizations_selected_morbidity_list.parquet"),
+        os.path.join(processed_dir, HOSPITALIZATIONS_SELECTED_MORBIDITY_LIST_FILENAME),
     )
     return outputs
 
@@ -862,7 +874,7 @@ def preprocess_birth_outcome_tables(root_dir=".", outcome_names=None):
     for outcome_name in selected_outcomes:
         raw_path = os.path.join(raw_dir, f"{outcome_name}_raw.parquet")
         cleaned = _clean_birth_outcome_frame(pd.read_parquet(raw_path))
-        output_path = os.path.join(processed_dir, f"{outcome_name}.parquet")
+        output_path = os.path.join(processed_dir, birth_outcome_filename(outcome_name))
         cleaned.to_parquet(output_path, index=False)
         outputs[outcome_name] = output_path
 

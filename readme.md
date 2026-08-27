@@ -91,11 +91,11 @@ Supported health subtypes are `mortality`, `hospitalization`, and `birth`.
 
 The repository currently contains derived health outputs such as:
 
-- `data/health/processed/birth_weight.parquet`
-- `data/health/processed/gestational_duration.parquet`
-- `data/health/processed/hospitalizations.parquet`
-- `data/health/processed/hospitalizations_icd10_chapter.parquet`
-- `data/health/processed/hospitalizations_selected_morbidity_list.parquet`
+- `data/health/processed/health_birth_weight.parquet`
+- `data/health/processed/health_gestational_duration.parquet`
+- `data/health/processed/health_hospitalizations.parquet`
+- `data/health/processed/health_hospitalizations_icd10_chapter.parquet`
+- `data/health/processed/health_hospitalizations_selected_morbidity_list.parquet`
 
 ### Water Quality
 
@@ -118,11 +118,11 @@ The water-quality fetch pipeline supports additional options for browser executi
 
 The main assembled output currently tracked in the repository is:
 
-- `data/sensor_data/processed/aggregate/water_quality_streamflow.parquet`
+- `data/sensor_data/processed/aggregate/sensor_data_water_quality_streamflow.parquet`
 
 Transformation metadata used by the analysis pipeline is stored in:
 
-- `data/sensor_data/processed/extract/water_quality_transformations.json`
+- `data/sensor_data/processed/extract/sensor_data_water_quality_transformations.json`
 
 ### Land Cover
 
@@ -183,8 +183,8 @@ Optional arguments allow spatial subsetting and administrative annotation, inclu
 
 Current river-network outputs in `data/river_network/processed/` include:
 
-- `river_trenches.parquet`
-- `drainage_areas.parquet`
+- `river_network_trenches.parquet`
+- `river_network_drainage_areas.parquet`
 
 The expected persisted formats are described in `src/data/output_file_formats.md`.
 
@@ -227,10 +227,10 @@ python3 -m src.cli analysis sensor-data run \
 
 By default, analysis settings point to:
 
-- `data/sensor_data/processed/aggregate/water_quality_streamflow.parquet`
+- `data/sensor_data/processed/aggregate/sensor_data_water_quality_streamflow.parquet`
 - `data/land_cover/processed/aggregate/land_cover_sensor_upstream.parquet`
-- `data/sensor_data/processed/extract/water_quality_transformations.json`
-- `data/river_network/processed/river_trenches.parquet`
+- `data/sensor_data/processed/extract/sensor_data_water_quality_transformations.json`
+- `data/river_network/processed/river_network_trenches.parquet`
 - `output/analysis/sensor_data/`
 
 Each run writes a dedicated model subdirectory with:

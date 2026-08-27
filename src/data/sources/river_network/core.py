@@ -7,24 +7,24 @@ pipelines such as land-cover aggregation.
 
 Saved output files
 ------------------
-`river_trenches.parquet`
+`river_network_trenches.parquet`
     River trench records, including the canonical per-system matrix index
-    columns used to interpret `river_system_matrices.pkl`.
-`drainage_areas.parquet`
+    columns used to interpret `river_network_system_matrices.pkl`.
+`river_network_drainage_areas.parquet`
     Drainage polygons deduplicated to one row per `trench_id`.
-`trench_adm2_matches.parquet`
+`river_network_trench_adm2_matches.parquet`
     Exploded trench-to-ADM2 join table with one row per intersecting match.
-`adm2_dominant_systems.parquet`
+`river_network_adm2_dominant_systems.parquet`
     One row per ADM2 region with the dominant river `system_id`, selected by
     maximum summed intersecting trench distance.
-`river_system_matrices.pkl`
+`river_network_system_matrices.pkl`
     Matrix bundle keyed by `system_id`. The row and column ordering metadata
-    is not duplicated in the pickle; it is derived from `river_trenches.parquet`.
+    is not duplicated in the pickle; it is derived from `river_network_trenches.parquet`.
 
 Matrix semantics
 ----------------
 Node matrices are ordered by the per-system node indices stored indirectly via
-`river_trenches.parquet` (`upstream_node_index` and `downstream_node_index`).
+`river_network_trenches.parquet` (`upstream_node_index` and `downstream_node_index`).
 For a node matrix entry `(i, j)`, row `i` is an upstream node and column `j` is
 the downstream node reachable from it.
 
@@ -38,7 +38,7 @@ from upstream trench `j` to downstream trench `i`.
 Downstream consumers such as `src.data.sources.land_cover.assembly` therefore look up a
 target trench's `system_id` and `trench_index`, read that sparse matrix row, map
 the returned column indices back to trench identifiers using
-`river_trenches.parquet`, and bucket the resulting upstream distances.
+`river_network_trenches.parquet`, and bucket the resulting upstream distances.
 """
 
 import logging
@@ -821,7 +821,8 @@ class RiverNetwork:
         Loads trenches and drainage areas from `gpkg_path`, computes subsystems
         and distance matrices, annotates drainage areas with country
         membership, and builds the trench-to-ADM2 table from `gadm_path`
-        (required -- there is no partial/un-annotated output), then saves
+        (required -- there is no partial/un-annotated output), then derives
+        each ADM2's dominant river system from that table before saving
         everything to `output_dir`.
         """
         self.load_trenches(gpkg_path, bbox=bbox)
@@ -832,6 +833,7 @@ class RiverNetwork:
 
         self.annotate_drainage_areas_with_country_membership(gadm_path, layer=gadm_layer)
         self.build_trench_adm2_table(gadm_path=gadm_path, layer=gadm_adm2_layer)
+        self.build_adm2_dominant_system_table()
 
         self.save(output_dir)
 

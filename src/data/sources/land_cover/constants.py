@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from src.data.sources.river_network.constants import DRAINAGE_AREAS_FILENAME as _RIVER_NETWORK_DRAINAGE_AREAS_FILENAME
 from src.data.sources.river_network.constants import PROCESSED_DIR as _RIVER_NETWORK_PROCESSED_DIR
 from src.data.sources.sensor_data.constants import (
     DEFAULT_STATIONS_RIVERS_PATH,
@@ -32,7 +33,7 @@ def build_paths(root_dir: str | Path = ".") -> LandCoverPaths:
     land_cover_root = root / "data" / "land_cover"
     return LandCoverPaths(
         datadir=land_cover_root / "raw" / "lc_mapbiomas10_30",
-        drainage_path=root / _RIVER_NETWORK_PROCESSED_DIR / "drainage_areas.parquet",
+        drainage_path=root / _RIVER_NETWORK_PROCESSED_DIR / _RIVER_NETWORK_DRAINAGE_AREAS_FILENAME,
         legend_path=land_cover_root / "auxiliary" / "mapbiomas_legend.xlsx",
     )
 
@@ -60,6 +61,9 @@ DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH = (
 )
 DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH = (
     "data/land_cover/processed/aggregate/land_cover_adm2_upstream.parquet"
+)
+DEFAULT_RIVER_AGGREGATED_OUTPUT_PATH = (
+    "data/land_cover/processed/aggregate/land_cover_river_aggregated.parquet"
 )
 
 STATION_CODE_COLUMN = "station_code"

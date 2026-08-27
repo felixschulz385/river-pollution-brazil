@@ -1,11 +1,12 @@
 import logging
-from multiprocessing import cpu_count
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 from tqdm import tqdm
+
+from src.data.shared.slurm import resolve_n_jobs
 
 from .constants import (
     ADM2_ASSEMBLY_VARIANT,
@@ -486,7 +487,7 @@ def assemble_land_cover(
     variant = _normalize_assembly_variant(variant)
     output_path = output_path or _default_output_path_for_variant(variant)
     if n_jobs is None:
-        n_jobs = cpu_count()
+        n_jobs = resolve_n_jobs()
 
     if variant == ADM2_ASSEMBLY_VARIANT:
         from .aggregation import aggregate_along_rivers

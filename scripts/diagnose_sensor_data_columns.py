@@ -1,7 +1,7 @@
 """Diagnose why verification's `sensor_data` check reports missing columns.
 
 `data verify --source sensor_data` (and `data summary`) flag
-`water_quality_streamflow.parquet` as failed with:
+`sensor_data_water_quality_streamflow.parquet` as failed with:
 
     required_columns is missing required columns: ['datetime', 'station_code']
 
@@ -33,6 +33,9 @@ if __package__ in {None, ""}:
 
 import pandas as pd
 import pyarrow.parquet as pq
+
+from src.data.sources.sensor_data.constants import get_processed_dir
+from src.data.sources.sensor_data.schema import ASSEMBLED_SENSOR_DATA_PARQUET
 
 
 def diagnose(path: Path) -> None:
@@ -96,11 +99,11 @@ def main() -> None:
     parser.add_argument(
         "--path",
         default=None,
-        help="Override the parquet path (default: <root-dir>/data/sensor_data/water_quality_streamflow.parquet).",
+        help="Override the parquet path (default: <root-dir>'s sensor_data aggregate output).",
     )
     args = parser.parse_args()
 
-    path = Path(args.path) if args.path else Path(args.root_dir) / "data" / "sensor_data" / "water_quality_streamflow.parquet"
+    path = Path(args.path) if args.path else get_processed_dir(args.root_dir, stage="aggregate") / ASSEMBLED_SENSOR_DATA_PARQUET
     diagnose(path)
 
 

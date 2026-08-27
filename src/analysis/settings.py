@@ -102,16 +102,16 @@ class SensorAnalysisSettings:
     # Paths
     project_root: Path = PROJECT_ROOT
     sensor_data_path: Path = (
-        PROJECT_ROOT / "data/sensor_data/processed/aggregate/water_quality_streamflow.parquet"
+        PROJECT_ROOT / "data/sensor_data/processed/aggregate/sensor_data_water_quality_streamflow.parquet"
     )
     land_cover_path: Path = (
         PROJECT_ROOT / "data/land_cover/processed/aggregate/land_cover_sensor_upstream.parquet"
     )
     climate_data_path: Path | None = PROJECT_ROOT / "data/climate/processed/aggregate/climate_sensor_upstream.parquet"
     transformations_path: Path = (
-        PROJECT_ROOT / "data/sensor_data/processed/extract/water_quality_transformations.json"
+        PROJECT_ROOT / "data/sensor_data/processed/extract/sensor_data_water_quality_transformations.json"
     )
-    trenches_path: Path = PROJECT_ROOT / "data/river_network/processed/river_trenches.parquet"
+    trenches_path: Path = PROJECT_ROOT / "data/river_network/processed/river_network_trenches.parquet"
     output_dir: Path = PROJECT_ROOT / "output/analysis/sensor_data"
     sensor_id_column: str = "station_code"
     sensor_id_aliases: tuple[str, ...] = ("sensor_id", "station_code")

@@ -1,5 +1,4 @@
 import logging
-from multiprocessing import cpu_count
 from pathlib import Path
 
 import geopandas as gpd
@@ -8,7 +7,10 @@ import pandas as pd
 import rioxarray as rxr
 from joblib import Parallel, delayed
 
+from src.data.shared.slurm import resolve_n_jobs
+
 from .constants import (
+    DEFAULT_ASSEMBLY_LAND_COVER_PATH,
     LAND_COVER_CLASS_PREFIX,
     LAND_COVER_TOTAL_COLUMN,
     TRENCH_ID_COLUMN,
@@ -337,10 +339,10 @@ def _load_drainage_polygons(drainage_path, river_network_path):
     return drainage_polygons
 
 
-def preprocess_land_cover(self, n_jobs=None, river_network_path=None, output_path="data/land_cover/processed/extract/land_cover.parquet", log_level=None):
+def preprocess_land_cover(self, n_jobs=None, river_network_path=None, output_path=DEFAULT_ASSEMBLY_LAND_COVER_PATH, log_level=None):
     """Preprocess land cover data by extracting values for drainage polygons."""
     if n_jobs is None:
-        n_jobs = cpu_count()
+        n_jobs = resolve_n_jobs()
     if log_level is not None:
         configure_logging(log_level)
 

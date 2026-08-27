@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..constants import DEFAULT_POPULATION_RAW_FILENAME
 from ..constants import raw_dir as _raw_dir
 
 
@@ -40,7 +41,7 @@ def fetch_population_data(
             "google-cloud-bigquery is required to fetch population data."
         ) from exc
 
-    destination = Path(output_path) if output_path else _raw_dir(root_dir) / "population_raw.parquet"
+    destination = Path(output_path) if output_path else _raw_dir(root_dir) / DEFAULT_POPULATION_RAW_FILENAME
     destination.parent.mkdir(parents=True, exist_ok=True)
 
     client = bigquery.Client(project=billing_project)

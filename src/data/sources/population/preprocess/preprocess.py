@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from ..constants import DEFAULT_POPULATION_OUTPUT_FILENAME
+from ..constants import DEFAULT_POPULATION_OUTPUT_FILENAME, DEFAULT_POPULATION_RAW_FILENAME
 from ..constants import processed_dir as _processed_dir
 from ..constants import raw_dir as _raw_dir
 from src.data.sources.land_cover.constants import derive_mun_id_from_adm2_id
@@ -94,7 +94,7 @@ def preprocess_population_data(
 ) -> Path:
     """Load the raw population extract, normalize it, and persist the cleaned table."""
 
-    source = Path(raw_path) if raw_path else _raw_dir(root_dir) / "population_raw.parquet"
+    source = Path(raw_path) if raw_path else _raw_dir(root_dir) / DEFAULT_POPULATION_RAW_FILENAME
     if not source.exists():
         raise FileNotFoundError(f"Raw population file not found: {source}")
 

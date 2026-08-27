@@ -1,10 +1,11 @@
 import logging
-from multiprocessing import cpu_count
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
+
+from src.data.shared.slurm import resolve_n_jobs
 
 from ..constants import get_processed_dir
 from ..schema import (
@@ -308,7 +309,7 @@ def _build_station_matches(
 ):
     _validate_network(network)
     if n_jobs is None:
-        n_jobs = cpu_count()
+        n_jobs = resolve_n_jobs()
 
     trench_lookup, system_trench_ids = _build_trench_metadata(network)
 
@@ -478,7 +479,7 @@ def assemble_sensor_data(
 ):
     """Assemble cleaned water-quality observations with nearby streamflow data."""
     if n_jobs is None:
-        n_jobs = cpu_count()
+        n_jobs = resolve_n_jobs()
 
     water_quality_path = _resolve_path(
         root_dir,

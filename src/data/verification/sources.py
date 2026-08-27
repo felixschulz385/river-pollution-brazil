@@ -241,9 +241,11 @@ def _river_network_list_fetched(root_dir, force: bool = False) -> FetchListing:
 
 def _river_network_check_outputs(root_dir) -> list[OutputArtifactCheck]:
     from src.data.sources.river_network.constants import (
+        ADM2_DOMINANT_SYSTEM_TABLE_FILENAME,
         DRAINAGE_AREAS_FILENAME,
         PROCESSED_DIR,
         TRENCHES_FILENAME,
+        TRENCH_ADM2_TABLE_FILENAME,
         TRENCH_ID_COLUMN,
     )
 
@@ -269,6 +271,23 @@ def _river_network_check_outputs(root_dir) -> list[OutputArtifactCheck]:
                 _non_empty_check(frame),
             ],
         ),
+        _artifact_check(
+            "trench_adm2_matches",
+            river_dir / TRENCH_ADM2_TABLE_FILENAME,
+            lambda frame: [
+                check_required_columns(frame, ["trench_id", "adm2"]),
+                _non_empty_check(frame),
+            ],
+        ),
+        _artifact_check(
+            "adm2_dominant_systems",
+            river_dir / ADM2_DOMINANT_SYSTEM_TABLE_FILENAME,
+            lambda frame: [
+                check_required_columns(frame, ["adm2", "system_id"]),
+                _non_empty_check(frame),
+                _uniqueness_check(frame, "adm2"),
+            ],
+        ),
     ]
 
 
@@ -287,10 +306,12 @@ def _river_network_check_fetched(root_dir) -> list[OutputArtifactCheck]:
 
 def _river_network_fingerprint_paths(root_dir) -> list[Path]:
     from src.data.sources.river_network.constants import (
+        ADM2_DOMINANT_SYSTEM_TABLE_FILENAME,
         DEFAULT_RAW_GPKG_PATH,
         DRAINAGE_AREAS_FILENAME,
         PROCESSED_DIR,
         TRENCHES_FILENAME,
+        TRENCH_ADM2_TABLE_FILENAME,
     )
 
     river_dir = Path(root_dir) / PROCESSED_DIR
@@ -298,6 +319,8 @@ def _river_network_fingerprint_paths(root_dir) -> list[Path]:
         Path(root_dir) / DEFAULT_RAW_GPKG_PATH,
         river_dir / TRENCHES_FILENAME,
         river_dir / DRAINAGE_AREAS_FILENAME,
+        river_dir / TRENCH_ADM2_TABLE_FILENAME,
+        river_dir / ADM2_DOMINANT_SYSTEM_TABLE_FILENAME,
     ]
 
 
@@ -339,30 +362,44 @@ def _land_cover_list_fetched(root_dir, force: bool = False) -> FetchListing:
     return FetchListing(present=len(present_years), expected=len(expected_years), detail=detail)
 
 
+def _land_cover_share_range_check(frame, share_column) -> list[CheckResult]:
+    # Long-format table: land_cover_class is a row value, and the fraction is
+    # a single "share" column (not per-class "{class}_shr" columns), so one
+    # range check covers every class's rows.
+    if share_column not in frame.columns:
+        return []
+    return [
+        check_value_range(frame, share_column, lo=-1e-6, hi=1.0 + 1e-6, name=f"value_range:{share_column}")
+    ]
+
+
 def _land_cover_check_outputs(root_dir) -> list[OutputArtifactCheck]:
     from src.data.sources.land_cover.constants import (
         BUCKET_SHARE_COLUMN,
+        DEFAULT_RIVER_AGGREGATED_OUTPUT_PATH,
         DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH,
     )
 
-    def build_checks(frame):
-        checks = [
+    def build_sensor_checks(frame):
+        return [
             check_required_columns(frame, ["station_code", "year"]),
             _non_empty_check(frame),
+            *_land_cover_share_range_check(frame, BUCKET_SHARE_COLUMN),
         ]
-        # Long-format table: land_cover_class is a row value, and the fraction is
-        # a single "share" column (not per-class "{class}_shr" columns), so one
-        # range check covers every class's rows.
-        if BUCKET_SHARE_COLUMN in frame.columns:
-            checks.append(
-                check_value_range(
-                    frame, BUCKET_SHARE_COLUMN, lo=-1e-6, hi=1.0 + 1e-6, name=f"value_range:{BUCKET_SHARE_COLUMN}"
-                )
-            )
-        return checks
 
-    path = Path(root_dir) / DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH
-    return [_artifact_check("land_cover_sensor_upstream", path, build_checks)]
+    def build_river_aggregated_checks(frame):
+        return [
+            check_required_columns(frame, ["mun_id", "year"]),
+            _non_empty_check(frame),
+            *_land_cover_share_range_check(frame, BUCKET_SHARE_COLUMN),
+        ]
+
+    sensor_path = Path(root_dir) / DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH
+    river_aggregated_path = Path(root_dir) / DEFAULT_RIVER_AGGREGATED_OUTPUT_PATH
+    return [
+        _artifact_check("land_cover_sensor_upstream", sensor_path, build_sensor_checks),
+        _artifact_check("land_cover_river_aggregated", river_aggregated_path, build_river_aggregated_checks),
+    ]
 
 
 def _land_cover_check_fetched(root_dir) -> list[OutputArtifactCheck]:
@@ -395,14 +432,22 @@ def _land_cover_check_fetched(root_dir) -> list[OutputArtifactCheck]:
 
 
 def _land_cover_fingerprint_paths(root_dir) -> list[Path]:
-    from src.data.sources.land_cover.constants import DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH, build_paths
+    from src.data.sources.land_cover.constants import (
+        DEFAULT_RIVER_AGGREGATED_OUTPUT_PATH,
+        DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH,
+        build_paths,
+    )
 
     paths = build_paths(root_dir)
     try:
         raw_files = sorted(paths.datadir.glob("*.tif"))
     except OSError:
         raw_files = []
-    return [*raw_files, Path(root_dir) / DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH]
+    return [
+        *raw_files,
+        Path(root_dir) / DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH,
+        Path(root_dir) / DEFAULT_RIVER_AGGREGATED_OUTPUT_PATH,
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -767,12 +812,15 @@ def _biomes_fingerprint_paths(root_dir) -> list[Path]:
 # --------------------------------------------------------------------------
 
 def _population_list_fetched(root_dir, force: bool = False) -> FetchListing:
+    from src.data.sources.population.constants import DEFAULT_POPULATION_RAW_FILENAME
     from src.data.sources.population.constants import raw_dir as _population_raw_dir
 
-    path = _population_raw_dir(root_dir) / "population_raw.parquet"
+    path = _population_raw_dir(root_dir) / DEFAULT_POPULATION_RAW_FILENAME
     present = 1 if path.exists() else 0
     return FetchListing(
-        present=present, expected=1, detail=f"population_raw.parquet {'present' if present else 'missing'} at {path}."
+        present=present,
+        expected=1,
+        detail=f"{DEFAULT_POPULATION_RAW_FILENAME} {'present' if present else 'missing'} at {path}.",
     )
 
 
@@ -802,6 +850,7 @@ def _population_check_outputs(root_dir) -> list[OutputArtifactCheck]:
 
 
 def _population_check_fetched(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.population.constants import DEFAULT_POPULATION_RAW_FILENAME
     from src.data.sources.population.constants import raw_dir as _population_raw_dir
 
     def build_checks(frame):
@@ -811,17 +860,17 @@ def _population_check_fetched(root_dir) -> list[OutputArtifactCheck]:
             check_value_range(frame, "populacao", lo=0.0, hi=float("inf"), name="value_range:populacao"),
         ]
 
-    path = _population_raw_dir(root_dir) / "population_raw.parquet"
+    path = _population_raw_dir(root_dir) / DEFAULT_POPULATION_RAW_FILENAME
     return [_artifact_check("population_raw", path, build_checks)]
 
 
 def _population_fingerprint_paths(root_dir) -> list[Path]:
-    from src.data.sources.population.constants import DEFAULT_POPULATION_OUTPUT_FILENAME
+    from src.data.sources.population.constants import DEFAULT_POPULATION_OUTPUT_FILENAME, DEFAULT_POPULATION_RAW_FILENAME
     from src.data.sources.population.constants import processed_dir as _population_processed_dir
     from src.data.sources.population.constants import raw_dir as _population_raw_dir
 
     return [
-        _population_raw_dir(root_dir) / "population_raw.parquet",
+        _population_raw_dir(root_dir) / DEFAULT_POPULATION_RAW_FILENAME,
         _population_processed_dir(root_dir) / DEFAULT_POPULATION_OUTPUT_FILENAME,
     ]
 
@@ -837,13 +886,32 @@ _HEALTH_KNOWN_BATCH_TABLES = (
     "SIH_RESIDENCE_ICD10_CHAPTER_MUNICIPALITY_YEAR",
     "SIH_RESIDENCE_SELECTED_MORBIDITY_LIST_MUNICIPALITY_YEAR",
 )
-_HEALTH_OUTPUT_FILES = (
-    "hospitalizations.parquet",
-    "hospitalizations_icd10_chapter.parquet",
-    "hospitalizations_selected_morbidity_list.parquet",
-    "birth_weight.parquet",
-    "gestational_duration.parquet",
-)
+
+
+def _health_output_files() -> tuple[str, ...]:
+    from src.data.sources.health.constants import (
+        HOSPITALIZATIONS_FILENAME,
+        HOSPITALIZATIONS_ICD10_CHAPTER_FILENAME,
+        HOSPITALIZATIONS_SELECTED_MORBIDITY_LIST_FILENAME,
+        birth_outcome_filename,
+    )
+
+    return (
+        HOSPITALIZATIONS_FILENAME,
+        HOSPITALIZATIONS_ICD10_CHAPTER_FILENAME,
+        HOSPITALIZATIONS_SELECTED_MORBIDITY_LIST_FILENAME,
+        birth_outcome_filename("birth_weight"),
+        birth_outcome_filename("gestational_duration"),
+    )
+
+
+def _health_birth_outcome_files() -> set[str]:
+    from src.data.sources.health.constants import birth_outcome_filename
+
+    return {birth_outcome_filename("birth_weight"), birth_outcome_filename("gestational_duration")}
+
+
+_HEALTH_OUTPUT_FILES = _health_output_files()
 # All three SIH hospitalization tables share this long-format base schema
 # (see _empty_total/_icd10/_morbidity_hospitalization_frame in
 # src/data/sources/health/preprocess/preprocess.py); each adds its own extra
@@ -851,7 +919,7 @@ _HEALTH_OUTPUT_FILES = (
 _HEALTH_HOSPITALIZATION_REQUIRED_COLUMNS = ["municipality_code", "year", "metric_name", "metric_value"]
 # Birth outcome tables (_clean_birth_outcome_frame) keep a municipality id,
 # per-category count columns, and a "Total" column -- all non-negative counts.
-_HEALTH_BIRTH_OUTCOME_FILES = {"birth_weight.parquet", "gestational_duration.parquet"}
+_HEALTH_BIRTH_OUTCOME_FILES = _health_birth_outcome_files()
 _HEALTH_BIRTH_OUTCOME_REQUIRED_COLUMNS = ["mun_id", "year", "Total"]
 
 
@@ -895,7 +963,9 @@ def _health_check_outputs(root_dir) -> list[OutputArtifactCheck]:
                 )
         return checks
 
-    health_dir = Path(root_dir) / "data" / "health" / "processed"
+    from src.data.sources.health.constants import processed_dir as _health_processed_dir
+
+    health_dir = _health_processed_dir(root_dir)
     return [
         _artifact_check(
             filename,
@@ -954,7 +1024,9 @@ def _health_fingerprint_paths(root_dir) -> list[Path]:
     from src.data.sources.health.constants import HEALTH_DATASET_NAME
     from src.data.shared.batches import manifest_path
 
-    health_dir = Path(root_dir) / "data" / "health" / "processed"
+    from src.data.sources.health.constants import processed_dir as _health_processed_dir
+
+    health_dir = _health_processed_dir(root_dir)
     manifest_paths = [Path(manifest_path(root_dir, HEALTH_DATASET_NAME, table_name)) for table_name in _HEALTH_KNOWN_BATCH_TABLES]
     return [health_dir / filename for filename in _HEALTH_OUTPUT_FILES] + manifest_paths
 
