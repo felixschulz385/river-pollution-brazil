@@ -36,6 +36,13 @@ class SourceReport:
     # artifact concept, e.g. assembly).
     fetch_status: str = "not_applicable"
     fetched_checks: list[dict] = field(default_factory=list)
+    # True iff check_outputs() declared at least one artifact and every
+    # declared artifact exists -- content-agnostic on purpose (unlike
+    # `status`, this stays True even if a value-range/schema check on an
+    # existing artifact fails). Answers "has this source finished
+    # preprocessing" for dependency gating, independent of whether its
+    # output is fully correct.
+    preprocess_complete: bool = False
 
 
 def _timestamp() -> str:
@@ -107,6 +114,7 @@ class Verification:
                 from_cache=True,
                 fetch_status=existing.get("fetch_status", "not_applicable"),
                 fetched_checks=existing.get("fetched_checks", []),
+                preprocess_complete=existing.get("preprocess_complete", False),
             )
 
         try:
@@ -158,6 +166,7 @@ class Verification:
             ]
 
         outputs_present = any(artifact.exists for artifact in output_artifacts)
+        preprocess_complete = bool(output_artifacts) and all(artifact.exists for artifact in output_artifacts)
         any_present = fetch_listing.present > 0 or outputs_present
         all_checks: list[CheckResult] = [check for artifact in output_artifacts for check in artifact.checks]
 
@@ -214,6 +223,7 @@ class Verification:
             "outputs_present": outputs_present,
             "fetch_status": fetch_status,
             "fetched_checks": fetched_checks_payload,
+            "preprocess_complete": preprocess_complete,
         }
         _write_sidecar(sidecar, payload)
         logger.info("Verified source '%s': status=%s, fetch_status=%s", source, status, fetch_status)
@@ -228,6 +238,7 @@ class Verification:
             from_cache=False,
             fetch_status=fetch_status,
             fetched_checks=fetched_checks_payload,
+            preprocess_complete=preprocess_complete,
         )
 
     def verify(self, source: str | None = None, force: bool = False) -> dict[str, SourceReport]:
@@ -267,6 +278,7 @@ class Verification:
                     fetch_completeness=None,
                     from_cache=False,
                     fetch_status="failed",
+                    preprocess_complete=False,
                 )
         return reports
 

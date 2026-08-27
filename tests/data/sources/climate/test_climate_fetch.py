@@ -1171,6 +1171,7 @@ def test_cli_climate_preprocess_ignores_fetch_only_subtype_flag(
             "climate",
             "--phase",
             "extract",
+            "--skip-dependency-check",
             "--subtype",
             "era5_land_hourly",
             "--root-dir",

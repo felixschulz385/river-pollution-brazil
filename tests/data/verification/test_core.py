@@ -188,3 +188,80 @@ def test_sidecar_roundtrip_includes_fetched_checks(tmp_path, monkeypatch):
     assert cached_reports["biomes"].from_cache is True
     assert cached_reports["biomes"].fetch_status == "failed"
     assert cached_reports["biomes"].fetched_checks[0]["name"] == "raw_check"
+
+
+def _adapter_with_outputs(artifacts: list[OutputArtifactCheck]) -> SourceAdapter:
+    def list_fetched(root_dir, force=False):
+        return FetchListing(present=1, expected=1, detail="ok")
+
+    def check_outputs(root_dir):
+        return artifacts
+
+    def fingerprint_paths(root_dir):
+        return []
+
+    return SourceAdapter(
+        name="fake",
+        list_fetched=list_fetched,
+        check_outputs=check_outputs,
+        fingerprint_paths=fingerprint_paths,
+    )
+
+
+def test_preprocess_complete_true_when_all_output_artifacts_exist_even_if_checks_fail(tmp_path, monkeypatch):
+    """preprocess_complete is content-agnostic on purpose: a source with
+    every declared file present but a failing value-range/schema check still
+    counts as "preprocessed" for gating -- only presence matters, not
+    correctness (which is a separate, already-reported concern)."""
+    from src.data.verification import core as core_module
+
+    artifacts = [
+        OutputArtifactCheck(
+            label="a", path=tmp_path, exists=True, checks=[CheckResult(name="check", ok=False, message="bad")]
+        )
+    ]
+    monkeypatch.setitem(core_module.SOURCE_ADAPTERS, "biomes", _adapter_with_outputs(artifacts))
+
+    reports = Verification(root_dir=tmp_path).verify(source="biomes")
+
+    assert reports["biomes"].status == "failed"
+    assert reports["biomes"].preprocess_complete is True
+
+
+def test_preprocess_complete_false_when_any_output_artifact_missing(tmp_path, monkeypatch):
+    from src.data.verification import core as core_module
+
+    artifacts = [
+        OutputArtifactCheck(label="a", path=tmp_path, exists=True, checks=[CheckResult(name="check", ok=True)]),
+        OutputArtifactCheck(label="b", path=tmp_path, exists=False, checks=[]),
+    ]
+    monkeypatch.setitem(core_module.SOURCE_ADAPTERS, "biomes", _adapter_with_outputs(artifacts))
+
+    reports = Verification(root_dir=tmp_path).verify(source="biomes")
+
+    assert reports["biomes"].preprocess_complete is False
+
+
+def test_preprocess_complete_false_when_no_output_artifacts_declared(tmp_path, monkeypatch):
+    from src.data.verification import core as core_module
+
+    monkeypatch.setitem(core_module.SOURCE_ADAPTERS, "biomes", _adapter_with_outputs([]))
+
+    reports = Verification(root_dir=tmp_path).verify(source="biomes")
+
+    assert reports["biomes"].preprocess_complete is False
+
+
+def test_preprocess_complete_roundtrips_through_sidecar_cache(tmp_path, monkeypatch):
+    from src.data.verification import core as core_module
+
+    artifacts = [OutputArtifactCheck(label="a", path=tmp_path, exists=True, checks=[CheckResult(name="c", ok=True)])]
+    monkeypatch.setitem(core_module.SOURCE_ADAPTERS, "biomes", _adapter_with_outputs(artifacts))
+
+    Verification(root_dir=tmp_path).verify(source="biomes")
+    sidecar_path = tmp_path / "data" / "biomes" / ".verification.json"
+    assert json.loads(sidecar_path.read_text())["preprocess_complete"] is True
+
+    cached_reports = Verification(root_dir=tmp_path).verify(source="biomes")
+    assert cached_reports["biomes"].from_cache is True
+    assert cached_reports["biomes"].preprocess_complete is True

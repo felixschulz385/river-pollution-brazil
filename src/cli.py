@@ -90,6 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_parser.set_defaults(data_verb="fetch")
     fetch_parser.add_argument("--source", required=True, choices=sorted(SOURCE_REGISTRY))
     fetch_parser.add_argument("--slurm", action="store_true", help="Submit as a Slurm job instead of running locally.")
+    _add_dependency_flags(fetch_parser)
 
     preprocess_parser = data_subparsers.add_parser(
         "preprocess",
@@ -105,6 +106,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="For sources with a two-stage preprocess: raw extraction vs. roll-up into upstream panels.",
     )
     preprocess_parser.add_argument("--slurm", action="store_true", help="Submit as a Slurm job instead of running locally.")
+    _add_dependency_flags(preprocess_parser)
 
     assemble_parser = data_subparsers.add_parser(
         "assemble", help="Join preprocessed sources into an analysis-ready dataset"
@@ -112,8 +114,27 @@ def build_parser() -> argparse.ArgumentParser:
     assemble_parser.set_defaults(data_verb="assemble")
     configure_assembly_parser(assemble_parser, include_action=False)
     assemble_parser.add_argument("--slurm", action="store_true", help="Submit as a Slurm job instead of running locally.")
+    _add_dependency_flags(assemble_parser)
 
     return parser
+
+
+def _add_dependency_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--chain",
+        action="store_true",
+        help=(
+            "Auto-run any unmet prerequisite fetch/preprocess steps first, in "
+            "dependency order, before this one. Prerequisite steps always run "
+            "locally, even when combined with --slurm (only the originally "
+            "requested step is submitted to Slurm)."
+        ),
+    )
+    parser.add_argument(
+        "--skip-dependency-check",
+        action="store_true",
+        help="Bypass the prerequisite check and run even if prerequisites aren't satisfied.",
+    )
 
 
 def _resolve_action(source: str, verb: str, phase: str | None) -> str:
@@ -163,6 +184,75 @@ def _submit_slurm(job_key: str, log_dir_name: str) -> int:
     return 0
 
 
+def _dispatch_module(source: str, action: str, module_args: list[str]) -> None:
+    """Shared "import the source's __main__, parse its own flags, run()" core,
+    reused both for the directly-requested step (with the user's own
+    remainder flags) and for chained prerequisite steps (with just
+    --root-dir)."""
+    module = importlib.import_module(f"{SOURCE_REGISTRY[source]['package']}.__main__")
+    source_parser = argparse.ArgumentParser()
+    module.configure_parser(source_parser, include_action=False)
+    source_args = source_parser.parse_args(module_args)
+    source_args.action = action
+    module.run(source_args)
+
+
+def _dispatch_source_step(source: str, verb: str, root_dir: str) -> None:
+    """Run one chained prerequisite step locally with default source-module
+    flags (only --root-dir carried through). For a phased source's
+    "preprocess" step, runs both phases in sequence: "preprocessed" (for
+    gating purposes) means the source's final output artifact exists, which
+    for a phased source only appears once its aggregate phase has run."""
+    phases = SOURCE_REGISTRY[source]["phases"]
+    step_phases = phases if (verb == "preprocess" and phases is not None) else (None,)
+    for phase in step_phases:
+        action = _resolve_action(source, verb, phase)
+        _dispatch_module(source, action, ["--root-dir", root_dir])
+        logger.info("Chain: completed %s %s (%s) successfully", source, verb, action)
+
+
+def _extract_root_dir(remainder: list[str]) -> str:
+    """Pull --root-dir out of `data fetch`/`data preprocess`'s forwarded
+    remainder args (each source's own parser defines it, e.g.
+    `land_cover/__main__.py`), defaulting to "." like every source module
+    already does, so the dependency check looks at the same root the actual
+    run will use."""
+    for index, token in enumerate(remainder):
+        if token == "--root-dir" and index + 1 < len(remainder):
+            return remainder[index + 1]
+        if token.startswith("--root-dir="):
+            return token.split("=", 1)[1]
+    return "."
+
+
+def _enforce_dependencies(source: str, verb: str, root_dir: str, *, chain: bool) -> bool:
+    """Check `(source, verb)`'s prerequisites. Returns True if the caller
+    should stop (hard-blocked). When `chain` is True, runs every unmet
+    prerequisite step first (locally, regardless of --slurm) instead of
+    blocking. Raises ValueError if the chain can't be resolved, e.g. a
+    manual-placement source's (river_network's) raw data is missing."""
+    from src.data.pipeline_dependencies import build_chain, unmet_prerequisites
+
+    unmet = unmet_prerequisites(source, verb, root_dir=root_dir)
+    if not unmet:
+        return False
+
+    if not chain:
+        logger.error("Cannot %s '%s': prerequisites not satisfied.", verb, source)
+        for problem in unmet:
+            logger.error("  - %s", problem)
+        logger.error(
+            "Pass --chain to run these automatically first, or --skip-dependency-check to bypass this check."
+        )
+        return True
+
+    chain_steps = build_chain(source, verb, root_dir=root_dir)
+    for chain_source, chain_verb in chain_steps[:-1]:
+        logger.info("Chain: running %s %s (prerequisite of %s %s)", chain_source, chain_verb, source, verb)
+        _dispatch_source_step(chain_source, chain_verb, root_dir)
+    return False
+
+
 def _run_source_verb(args: argparse.Namespace) -> int:
     """Dispatch `data fetch`/`data preprocess` to the resolved source module."""
     source = args.source
@@ -175,21 +265,35 @@ def _run_source_verb(args: argparse.Namespace) -> int:
         logger.error("%s", exc)
         return 1
 
+    if not args.skip_dependency_check:
+        root_dir = _extract_root_dir(args.remainder)
+        try:
+            if _enforce_dependencies(source, verb, root_dir, chain=args.chain):
+                return 1
+        except ValueError as exc:
+            logger.error("%s", exc)
+            return 1
+
     if args.slurm:
         return _submit_slurm(_slurm_job_key(source, verb, phase), log_dir_name=f"{source}_{verb}")
 
-    module = importlib.import_module(f"{SOURCE_REGISTRY[source]['package']}.__main__")
-    source_parser = argparse.ArgumentParser()
-    module.configure_parser(source_parser, include_action=False)
-    source_args = source_parser.parse_args(args.remainder)
-    source_args.action = action
-    module.run(source_args)
+    _dispatch_module(source, action, args.remainder)
     logger.info("Completed %s %s (%s) successfully", source, verb, action)
     return 0
 
 
 def _run_assemble(args: argparse.Namespace) -> int:
     from src.data.assembly.__main__ import run as run_assembly
+    from src.data.pipeline_dependencies import ASSEMBLY_NODE
+
+    if not args.skip_dependency_check:
+        root_dir = getattr(args, "root_dir", ".")
+        try:
+            if _enforce_dependencies(ASSEMBLY_NODE, "assemble", root_dir, chain=args.chain):
+                return 1
+        except ValueError as exc:
+            logger.error("%s", exc)
+            return 1
 
     if args.slurm:
         return _submit_slurm(_slurm_job_key(None, "assemble", None), log_dir_name="assemble")

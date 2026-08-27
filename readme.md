@@ -59,9 +59,18 @@ preprocessing has two stages (`climate`, `land_cover`, `sensor_data`):
 `extract` (raw → per-source processed output) and `aggregate` (roll-up into
 sensor/ADM2 upstream panels).
 
+`fetch`/`preprocess`/`assemble` refuse to run if a prerequisite source
+hasn't been fetched/preprocessed yet (e.g. `land_cover preprocess` requires
+`river_network` to be preprocessed first), printing exactly which
+prerequisites are missing and how to fix them. Add `--chain` to
+auto-run whatever's missing first, in the correct order, or
+`--skip-dependency-check` to bypass the check entirely.
+
 Add `--slurm` to `fetch`/`preprocess`/`assemble` to submit the same
 invocation as a Slurm job instead of running it locally — see
-`setup/slurm_scripts/README.md` and `setup/slurm_jobs.yaml`.
+`setup/slurm_scripts/README.md` and `setup/slurm_jobs.yaml`. Prerequisite
+steps run via `--chain` always run locally, even when combined with
+`--slurm`; only the originally requested step is submitted as a job.
 
 Each data submodule also owns its own standalone entry point, e.g.
 `python3 -m src.data.sources.climate --help`; `src/cli.py` delegates to these rather
