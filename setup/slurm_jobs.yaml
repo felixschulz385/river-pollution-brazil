@@ -61,6 +61,17 @@ jobs:
     cpus_per_task: 4
     mem: 128G
 
+  # Biome polygon -> ADM2 / station roll-up. The heavy step is the
+  # geopandas overlay of the 1:250000 IBGE biome polygons against every
+  # ADM2 municipality in build_adm2_biomes(); single-threaded but
+  # memory-hungry on the detailed geometries.
+  biomes.preprocess:
+    job_name: preprocess_biomes
+    time: "0-01:00:00"
+    qos: 6hours
+    cpus_per_task: 4
+    mem: 64G
+
   # Formerly setup/slurm_scripts/generate_river_network.sh
   river_network.preprocess:
     job_name: preprocess_river_network
