@@ -1,8 +1,8 @@
 """Structured cross-source dependency graph gating `data fetch`/`data preprocess`/`data assemble`.
 
-Real data dependencies exist between sources (e.g. `sensor_data.fetch()`
-already hard-requires `river_network` to be preprocessed, deep inside
-`fetch/stations/inventory.py`) but nothing in `src/cli.py` checks them before
+Real data dependencies exist between sources (e.g. `sensor_data.preprocess()`
+hard-requires `river_network` and `gadm`, deep inside `preprocess/assembly.py`)
+but nothing in `src/cli.py` checks them before
 dispatching -- running a source out of order today just crashes inside its
 own preprocessing code. This module declares those dependencies explicitly,
 answers "what's blocking this stage" (`unmet_prerequisites`), and builds a
@@ -34,14 +34,15 @@ class StagePrerequisites:
 # requires that same source's own raw data to be present, a universal rule
 # applied by `unmet_prerequisites`/`build_chain` themselves, not repeated here.
 #
-# - sensor_data.fetch() reads river_network's processed trenches while
-#   matching stations to the river network (fetch/stations/inventory.py), and
-#   separately reads gadm's simplified boundary directly to filter stations
-#   to within Brazil.
+# - sensor_data.preprocess() reads river_network's processed trenches while
+#   matching stations to the river network, and separately reads gadm's
+#   simplified boundary directly to filter stations to within Brazil (both in
+#   preprocess/assembly.py, called as part of its single preprocess step).
+#   fetch has no such dependency -- only scraping happens there.
 # - land_cover.preprocess() and climate.preprocess() both read
 #   river_network's processed drainage areas; their aggregate/assemble
-#   sub-phase additionally reads sensor_data's fully-assembled output. Since
-#   dependencies are declared per verb (not per --phase), the whole
+#   sub-phase additionally reads sensor_data's fully-preprocessed output.
+#   Since dependencies are declared per verb (not per --phase), the whole
 #   "preprocess" verb is conservatively gated on both.
 # - biomes.preprocess() reads the "stations" table populated by
 #   sensor_data.fetch() (not sensor_data.preprocess()), and separately reads
@@ -55,7 +56,7 @@ class StagePrerequisites:
 # any of the three sources that read its simplified output.
 PIPELINE_DEPENDENCIES: dict[tuple[str, str], StagePrerequisites] = {
     ("river_network", "preprocess"): StagePrerequisites(requires_preprocessed=("gadm",)),
-    ("sensor_data", "fetch"): StagePrerequisites(requires_preprocessed=("river_network", "gadm")),
+    ("sensor_data", "preprocess"): StagePrerequisites(requires_preprocessed=("river_network", "gadm")),
     ("land_cover", "preprocess"): StagePrerequisites(requires_preprocessed=("river_network", "sensor_data")),
     ("climate", "preprocess"): StagePrerequisites(requires_preprocessed=("river_network", "sensor_data")),
     ("biomes", "preprocess"): StagePrerequisites(

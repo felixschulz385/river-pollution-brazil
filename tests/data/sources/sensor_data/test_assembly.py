@@ -2,17 +2,73 @@ from __future__ import annotations
 
 import math
 
+import geopandas as gpd
 import pandas as pd
 import pytest
+from shapely.geometry import LineString, Point, Polygon
 
+from src.data.sources.sensor_data.preprocess import assembly as assembly_module
 from src.data.sources.sensor_data.preprocess.assembly import (
     DISCHARGE_COLUMN,
     STATION_CODE_COLUMN,
     DATE_COLUMN,
     _aggregate_streamflow_matches,
+    _filter_stations_to_brazil,
+    _join_stations_to_trenches,
     _prepare_station_trenches,
     _prepare_streamflow_features,
 )
+
+
+class _FakeRiverNetwork:
+    """Stand-in for RiverNetwork that skips the real on-disk trench index."""
+
+    def __init__(self, trenches):
+        self.trenches = trenches
+
+
+def test_filter_stations_to_brazil_keeps_only_within_boundary(monkeypatch):
+    boundary = gpd.GeoDataFrame(
+        {"geometry": [Polygon([(-50.0, -15.0), (-40.0, -15.0), (-40.0, -5.0), (-50.0, -5.0)])]},
+        crs=4326,
+    )
+    monkeypatch.setattr(assembly_module.gpd, "read_file", lambda *args, **kwargs: boundary)
+
+    stations = gpd.GeoDataFrame(
+        {
+            "station_code": ["in_bounds", "out_of_bounds"],
+            "geometry": [Point(-45.0, -10.0), Point(10.0, 10.0)],
+        },
+        crs=4326,
+    )
+
+    result = _filter_stations_to_brazil(stations, "unused.gpkg")
+
+    assert result["station_code"].tolist() == ["in_bounds"]
+
+
+def test_join_stations_to_trenches_matches_nearest():
+    stations = gpd.GeoDataFrame(
+        {
+            "station_code": ["11111111", "22222222"],
+            "geometry": [Point(-45.0, -10.0), Point(-46.0, -12.0)],
+        },
+        crs=4326,
+    )
+    trenches = gpd.GeoDataFrame(
+        {"trench_id": [1, 2]},
+        geometry=[
+            LineString([(-45.0, -10.0), (-45.1, -10.1)]),
+            LineString([(-46.0, -12.0), (-46.1, -12.1)]),
+        ],
+        crs=4326,
+    )
+    network = _FakeRiverNetwork(trenches)
+
+    result = _join_stations_to_trenches(stations, network)
+
+    assert sorted(result["station_code"].tolist()) == ["11111111", "22222222"]
+    assert sorted(result["trench_id"].tolist()) == [1, 2]
 
 
 def test_prepare_station_trenches_dedupes_and_casts_types():

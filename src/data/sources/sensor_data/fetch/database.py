@@ -24,7 +24,6 @@ from ..constants import (
 DATABASE_METADATA_TABLE = "_sensor_data_table_metadata"
 RAW_STATIONS_TABLE = "stations_raw"
 STATIONS_TABLE = "stations"
-STATION_RIVERS_TABLE = "stations_rivers"
 SENSOR_DOWNLOADS_TABLE = "sensor_downloads"
 RAW_ARCHIVES_TABLE = "raw_archives"
 SENSOR_ARCHIVE_FILES_TABLE = "sensor_archive_files"

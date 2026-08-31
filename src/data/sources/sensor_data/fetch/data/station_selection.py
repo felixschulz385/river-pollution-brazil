@@ -1,6 +1,6 @@
 import pandas as pd
 
-from ..database import STATIONS_TABLE, STATION_RIVERS_TABLE, read_dataframe_table
+from ..database import STATIONS_TABLE, read_dataframe_table
 
 
 def _column_name(frame, *candidates):
@@ -35,17 +35,9 @@ def _normalise_station_name(value) -> str | None:
 
 
 def load_queryable_stations(root_dir="."):
-    # The station preprocess step prepares a single curated station-to-trench
-    # table. The archive API can expose multiple sensor families per station, so
-    # every curated station remains eligible for scraping.
-    curated_stations = read_dataframe_table(root_dir, STATION_RIVERS_TABLE)
-    curated_code_column = _column_name(curated_stations, "Codigo", "station_code", "codigo")
-    curated_stations = curated_stations.loc[:, [curated_code_column]].copy()
-    curated_stations = curated_stations.rename(columns={curated_code_column: "station_code"})
-    curated_stations["station_code"] = curated_stations["station_code"].map(_normalise_station_code)
-    curated_stations = curated_stations.dropna(subset=["station_code"])
-    curated_stations = curated_stations.reset_index(drop=True).drop_duplicates(subset=["station_code"])
-
+    # The station preprocess step prepares a bbox-filtered station inventory.
+    # The archive API can expose multiple sensor families per station, so
+    # every station in that inventory remains eligible for scraping.
     station_inventory = read_dataframe_table(root_dir, STATIONS_TABLE)
     inventory_code_column = _column_name(station_inventory, "Codigo", "station_code", "codigo")
     inventory_name_column = _column_name(station_inventory, "Nome", "station_name", "nome")
@@ -60,18 +52,4 @@ def load_queryable_stations(root_dir="."):
     station_inventory["station_name"] = station_inventory["station_name"].map(_normalise_station_name)
     station_inventory = station_inventory.dropna(subset=["station_code", "station_name"])
     station_inventory = station_inventory.drop_duplicates(subset=["station_code"], keep="first")
-
-    stations = curated_stations.merge(
-        station_inventory,
-        on="station_code",
-        how="left",
-        validate="one_to_one",
-    )
-    missing_names = stations["station_name"].isna()
-    if missing_names.any():
-        missing_codes = stations.loc[missing_names, "station_code"].tolist()
-        raise KeyError(
-            "Missing station_name values in stations table for station code(s): "
-            + ", ".join(missing_codes[:10])
-        )
-    return stations.set_index("station_code")
+    return station_inventory.reset_index(drop=True).set_index("station_code")

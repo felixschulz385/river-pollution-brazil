@@ -21,7 +21,7 @@ from .constants import (
     DEFAULT_ASSEMBLY_LAND_COVER_PATH,
     DEFAULT_RIVER_NETWORK_PATH,
     DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH,
-    DEFAULT_STATIONS_RIVERS_PATH,
+    DEFAULT_STATIONS_TRENCHES_PATH,
     DEFAULT_WATER_QUALITY_PATH,
     DISTANCE_BUCKET_COLUMN,
     LAND_COVER_CLASS_COLUMN,
@@ -319,6 +319,21 @@ def _aggregate_sensor_station_year(
     return rows
 
 
+def _reset_water_quality_index(water_quality_df):
+    """Bring `station_code`/`date` back as columns if sensor_data's assembled
+    output indexed on them (mirrors climate's prepare_observation_targets in
+    sensor_upstream.py). A no-op for a plain-column frame."""
+    index_names = [name for name in water_quality_df.index.names if name is not None]
+    missing_index_columns = [
+        column
+        for column in (STATION_CODE_COLUMN, DATE_COLUMN)
+        if column in index_names and column not in water_quality_df.columns
+    ]
+    if missing_index_columns:
+        return water_quality_df.reset_index(level=missing_index_columns)
+    return water_quality_df
+
+
 def _assemble_sensor_land_cover(
     land_cover_path,
     water_quality_path,
@@ -329,7 +344,7 @@ def _assemble_sensor_land_cover(
 ):
     """Assemble long-format sensor upstream land-cover buckets."""
     logger.info("Loading cleaned water-quality data from %s", water_quality_path)
-    water_quality_df = pd.read_parquet(water_quality_path)
+    water_quality_df = _reset_water_quality_index(pd.read_parquet(water_quality_path))
     logger.info("Loading station-river matches from %s", stations_rivers_path)
     stations_rivers_df = pd.read_parquet(stations_rivers_path)
     targets, station_trenches = _build_sensor_targets(
@@ -478,7 +493,7 @@ def assemble_land_cover(
     variant=SENSOR_ASSEMBLY_VARIANT,
     land_cover_path=DEFAULT_ASSEMBLY_LAND_COVER_PATH,
     water_quality_path=DEFAULT_WATER_QUALITY_PATH,
-    stations_rivers_path=DEFAULT_STATIONS_RIVERS_PATH,
+    stations_rivers_path=DEFAULT_STATIONS_TRENCHES_PATH,
     river_network_path=DEFAULT_RIVER_NETWORK_PATH,
     output_path=None,
     n_jobs=None,

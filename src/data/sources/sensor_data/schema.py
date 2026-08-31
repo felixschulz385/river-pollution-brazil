@@ -1,10 +1,15 @@
 WATER_QUALITY_SOURCE_TABLES = ("QualAgua", "water_quality")
 STREAMFLOW_SOURCE_TABLES = ("Vazoes", "Vazao", "streamflow")
-STATIONS_RIVERS_TABLE = "stations_rivers"
+RAW_STATIONS_PARQUET = "sensor_data_stations_raw.parquet"
+RAW_WATER_QUALITY_PARQUET = "sensor_data_water_quality_raw.parquet"
+RAW_STREAMFLOW_PARQUET = "sensor_data_streamflow_raw.parquet"
 CLEAN_WATER_QUALITY_PARQUET = "sensor_data_water_quality.parquet"
 CLEAN_STREAMFLOW_PARQUET = "sensor_data_streamflow.parquet"
-STATIONS_RIVERS_PARQUET = "sensor_data_stations_rivers.parquet"
-ASSEMBLED_SENSOR_DATA_PARQUET = "sensor_data_water_quality_streamflow.parquet"
+# Extract-stage station inventory (bbox-filtered only, no trench join yet).
+STATIONS_FILTERED_PARQUET = "sensor_data_stations_filtered.parquet"
+# Aggregate-stage station-to-trench join (requires GADM + river_network).
+STATIONS_TRENCHES_PARQUET = "sensor_data_stations_trenches.parquet"
+ASSEMBLED_SENSOR_DATA_PARQUET = "sensor_data.parquet"
 # Water-quality-cleaning QA byproducts live in this extract-stage subfolder,
 # separate from the datasets (water_quality/streamflow/stations_rivers) other
 # sources import directly -- see get_water_quality_cleaning_dir() in constants.py.
@@ -33,14 +38,14 @@ STREAMFLOW_LONG_CONSTANT_RUN_DAYS = 365
 STREAMFLOW_SUSPICIOUS_CONSTANT_RUN_DAYS = 31
 STREAMFLOW_JUMP_RATIO_THRESHOLD = 10_000.0
 STREAMFLOW_SMALL_LAG_THRESHOLD = 0.01
-STATIONS_RIVERS_COLUMNS = [
+STATIONS_TRENCHES_COLUMNS = [
     "station_code",
     # NOTE: the raw ANA HidroInventario station feed has no operating-agency
     # field (its query params `sgResp`/`sgOper` filter by agency but the XML
     # response never echoes it back), so `operator_agency_code` was dropped
     # from this list rather than being populated with an invented value.
     "trench_id",
-    "geometry_wkt",
+    "geometry",
 ]
 
 PORTUGUESE_TO_ENGLISH_COLUMNS = {

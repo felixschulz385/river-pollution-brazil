@@ -68,42 +68,54 @@ def test_unmet_prerequisites_land_cover_preprocess_empty_when_satisfied(monkeypa
 _GADM_SATISFIED = {"gadm": {"fetch_status": "verified", "preprocess_complete": True}}
 
 
-def test_unmet_prerequisites_sensor_data_fetch_requires_river_network_preprocessed(monkeypatch):
+_SENSOR_DATA_FETCHED = {"sensor_data": {"fetch_status": "verified", "preprocess_complete": False}}
+
+
+def test_unmet_prerequisites_sensor_data_preprocess_requires_river_network_preprocessed(monkeypatch):
     _stub_verification(
         monkeypatch,
         {
             "river_network": {"fetch_status": "verified", "preprocess_complete": False},
             **_GADM_SATISFIED,
+            **_SENSOR_DATA_FETCHED,
         },
     )
 
-    problems = unmet_prerequisites("sensor_data", "fetch")
+    problems = unmet_prerequisites("sensor_data", "preprocess")
 
     assert len(problems) == 1
     assert "'river_network' has not finished preprocessing yet" in problems[0]
 
 
-def test_unmet_prerequisites_sensor_data_fetch_requires_gadm_preprocessed(monkeypatch):
-    _stub_verification(monkeypatch, {"river_network": {"fetch_status": "verified", "preprocess_complete": True}})
+def test_unmet_prerequisites_sensor_data_preprocess_requires_gadm_preprocessed(monkeypatch):
+    _stub_verification(
+        monkeypatch,
+        {
+            "river_network": {"fetch_status": "verified", "preprocess_complete": True},
+            **_SENSOR_DATA_FETCHED,
+        },
+    )
 
-    problems = unmet_prerequisites("sensor_data", "fetch")
+    problems = unmet_prerequisites("sensor_data", "preprocess")
 
     assert len(problems) == 1
     assert "'gadm' has not finished preprocessing yet" in problems[0]
 
 
-def test_unmet_prerequisites_sensor_data_fetch_has_no_self_check(monkeypatch):
-    """Unlike "preprocess", the "fetch" verb has no universal self-check --
-    a source obviously doesn't need to already be fetched to fetch it."""
-    _stub_verification(
-        monkeypatch,
-        {
-            "river_network": {"fetch_status": "verified", "preprocess_complete": True},
-            **_GADM_SATISFIED,
-        },
-    )
+def test_unmet_prerequisites_sensor_data_fetch_has_no_cross_source_prerequisites(monkeypatch):
+    """Fetch only scrapes and exports raw parquet tables -- GADM/river_network
+    are required at the aggregate preprocessing stage, not fetch."""
+    _stub_verification(monkeypatch, {})  # river_network/gadm both unsatisfied
 
     assert unmet_prerequisites("sensor_data", "fetch") == []
+
+
+def test_unmet_prerequisites_fetch_verb_has_no_self_check(monkeypatch):
+    """Unlike "preprocess", the "fetch" verb has no universal self-check --
+    a source obviously doesn't need to already be fetched to fetch it."""
+    _stub_verification(monkeypatch, {})
+
+    assert unmet_prerequisites("biomes", "fetch") == []
 
 
 def test_unmet_prerequisites_biomes_requires_sensor_data_fetched(monkeypatch):
@@ -170,7 +182,7 @@ datasets:
     output_path: data/assembly/sensor_panel.parquet
     sources:
       - name: water_quality
-        path: data/sensor_data/processed/aggregate/sensor_data_water_quality_streamflow.parquet
+        path: data/sensor_data/processed/aggregate/sensor_data.parquet
         join_keys: [station_code, datetime]
         variables: [ph]
       - name: river_system

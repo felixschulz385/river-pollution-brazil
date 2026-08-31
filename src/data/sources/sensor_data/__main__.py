@@ -21,7 +21,7 @@ def configure_logging(level: str = "INFO") -> None:
 def configure_parser(parser, include_action=True):
     """Add sensor-data CLI arguments to ``parser``."""
     if include_action:
-        parser.add_argument("action", choices=["fetch", "preprocess", "assemble"])
+        parser.add_argument("action", choices=["fetch", "preprocess"])
     parser.add_argument("--root-dir", default=".")
     parser.add_argument("--brazil-boundary-path", default=None)
     parser.add_argument(
@@ -47,8 +47,6 @@ def configure_parser(parser, include_action=True):
         choices=["thread", "process"],
     )
     parser.add_argument("--log-every-tables", type=int, default=None)
-    parser.add_argument("--water-quality-path", default=None)
-    parser.add_argument("--streamflow-path", default=None)
     parser.add_argument("--stations-rivers-path", default=None)
     parser.add_argument("--output", default=None)
     parser.add_argument("--n_jobs", type=int, default=None)
@@ -73,14 +71,9 @@ def run(args):
     )
     if args.action == "fetch":
         agent.fetch()
-    elif args.action == "preprocess":
-        agent.preprocess()
     else:
-        agent.assemble(
-            water_quality_path=args.water_quality_path,
-            streamflow_path=args.streamflow_path,
+        agent.preprocess(
             stations_rivers_path=args.stations_rivers_path,
-            river_network_path=args.river_network_dir,
             output_path=args.output,
             n_jobs=args.n_jobs,
         )

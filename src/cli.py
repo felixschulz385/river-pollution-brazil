@@ -24,7 +24,7 @@ SOURCE_REGISTRY = {
     "gadm": dict(package="src.data.sources.gadm", fetch=False, phases=None),
     "health": dict(package="src.data.sources.health", fetch=True, phases=None),
     "climate": dict(package="src.data.sources.climate", fetch=True, phases=("extract", "aggregate")),
-    "sensor_data": dict(package="src.data.sources.sensor_data", fetch=True, phases=("extract", "aggregate")),
+    "sensor_data": dict(package="src.data.sources.sensor_data", fetch=True, phases=None),
     "land_cover": dict(package="src.data.sources.land_cover", fetch=True, phases=("extract", "aggregate")),
     "population": dict(package="src.data.sources.population", fetch=True, phases=None),
     "river_network": dict(package="src.data.sources.river_network", fetch=False, phases=None),

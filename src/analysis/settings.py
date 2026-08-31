@@ -102,7 +102,7 @@ class SensorAnalysisSettings:
     # Paths
     project_root: Path = PROJECT_ROOT
     sensor_data_path: Path = (
-        PROJECT_ROOT / "data/sensor_data/processed/aggregate/sensor_data_water_quality_streamflow.parquet"
+        PROJECT_ROOT / "data/sensor_data/processed/aggregate/sensor_data.parquet"
     )
     land_cover_path: Path = (
         PROJECT_ROOT / "data/land_cover/processed/aggregate/land_cover_sensor_upstream.parquet"

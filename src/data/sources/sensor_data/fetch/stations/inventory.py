@@ -6,16 +6,12 @@ from xml.etree import ElementTree as ET
 from ..database import (
     RAW_STATIONS_TABLE,
     STATIONS_TABLE,
-    STATION_RIVERS_TABLE,
     read_geodataframe_table,
     write_geodataframe_table,
 )
 from ...constants import (
     ensure_water_quality_dirs,
-    get_root_path,
 )
-from src.data.sources.gadm.constants import DEFAULT_SIMPLIFIED_GADM_PATH
-from src.data.sources.river_network.constants import PROCESSED_DIR as _RIVER_NETWORK_PROCESSED_DIR
 
 
 STATION_INVENTORY_URL = (
@@ -23,10 +19,6 @@ STATION_INVENTORY_URL = (
     "codEstDE=&codEstATE=&tpEst=&nmEst=&nmRio=&codSubBacia=&codBacia=&"
     "nmMunicipio=&nmEstado=&sgResp=&sgOper=&telemetrica="
 )
-DEFAULT_BRAZIL_BOUNDARY_PATH = DEFAULT_SIMPLIFIED_GADM_PATH
-DEFAULT_BRAZIL_BOUNDARY_LAYER = "ADM_ADM_0"
-DEFAULT_RIVER_NETWORK_DIR = _RIVER_NETWORK_PROCESSED_DIR
-BRAZIL_PROJECTED_CRS = 5641
 
 
 def parse_station_inventory_xml(xml_content):
@@ -64,18 +56,6 @@ def fetch_station_inventory(root_dir="."):
     return stations_geo
 
 
-def resolve_brazil_boundary_path(root_dir=".", brazil_boundary_path=None):
-    if brazil_boundary_path is None:
-        return get_root_path(root_dir) / DEFAULT_BRAZIL_BOUNDARY_PATH
-    return get_root_path(root_dir) / brazil_boundary_path
-
-
-def resolve_river_network_dir(root_dir=".", river_network_dir=None):
-    if river_network_dir is None:
-        return get_root_path(root_dir) / DEFAULT_RIVER_NETWORK_DIR
-    return get_root_path(root_dir) / river_network_dir
-
-
 def _column_name(frame, *candidates):
     for candidate in candidates:
         if candidate in frame.columns:
@@ -83,82 +63,31 @@ def _column_name(frame, *candidates):
     raise KeyError(f"None of these columns exist in the station inventory: {', '.join(candidates)}")
 
 
-def filter_station_inventory(stations_geo, brazil_boundary_path):
-    """Apply the geographic sanity checks used by the downstream pipeline."""
+def filter_station_inventory(stations_geo):
+    """Apply a cheap geographic sanity check to the raw station inventory.
+
+    This is intentionally not a precise Brazil-boundary filter (that requires
+    GADM, which is only available at assembly time) -- just a bounds check to
+    drop obviously bad coordinates before scraping station data.
+    """
     stations_geo = stations_geo.copy()
     longitude_column = _column_name(stations_geo, "Longitude", "longitude")
     latitude_column = _column_name(stations_geo, "Latitude", "latitude")
     stations_geo[longitude_column] = pd.to_numeric(stations_geo[longitude_column], errors="coerce")
     stations_geo[latitude_column] = pd.to_numeric(stations_geo[latitude_column], errors="coerce")
-    stations_geo = stations_geo.loc[stations_geo[longitude_column] > -100].copy()
-    brazil = gpd.read_file(
-        brazil_boundary_path,
-        layer=DEFAULT_BRAZIL_BOUNDARY_LAYER,
-        engine="pyogrio",
-    )
-    brazil_geometry = brazil.union_all()
-    stations_geo["in_bounds"] = stations_geo.within(brazil_geometry)
-    return stations_geo.loc[stations_geo["in_bounds"]].copy()
+    return stations_geo.loc[stations_geo[longitude_column] > -100].copy()
 
 
-def preprocess_station_inventory(
-    root_dir=".",
-    brazil_boundary_path=None,
-    river_network_dir=None,
-):
-    from src.data.sources.river_network import RiverNetwork
-
+def preprocess_station_inventory(root_dir="."):
     # The fetch step populates the raw station inventory in DuckDB. Preprocess
-    # narrows that raw feed down to a single curated station-to-trench table.
+    # narrows that raw feed down with a cheap sanity filter -- the precise
+    # Brazil-boundary filter and river-trench join happen later, at assembly
+    # time, since those require GADM and river_network.
     stations_geo = read_geodataframe_table(root_dir, RAW_STATIONS_TABLE)
-    stations_geo = filter_station_inventory(
-        stations_geo,
-        resolve_brazil_boundary_path(root_dir, brazil_boundary_path),
-    )
-
-    network = RiverNetwork()
-    network.load(resolve_river_network_dir(root_dir, river_network_dir))
-    if network.trenches is None:
-        raise ValueError("River network trenches are required before preprocessing stations.")
-
-    trenches = network.trenches[["trench_id", "geometry"]].copy()
-    station_code_column = _column_name(stations_geo, "Codigo", "codigo")
-    station_matches = gpd.sjoin_nearest(
-        stations_geo[[station_code_column, "geometry"]].to_crs(BRAZIL_PROJECTED_CRS),
-        trenches.to_crs(BRAZIL_PROJECTED_CRS),
-        how="left",
-        distance_col="distance_to_river",
-    )
-    station_matches = pd.DataFrame(
-        station_matches[[station_code_column, "trench_id", "distance_to_river"]]
-    ).sort_values([station_code_column, "distance_to_river"]).drop_duplicates(
-        subset=[station_code_column], keep="first"
-    )
-    stations_with_trench = stations_geo.merge(
-        station_matches.drop(columns=["distance_to_river"]),
-        on=station_code_column,
-        how="left",
-    )
-
-    # `stations` captures the filtered station inventory with original source
-    # fields. The companion `stations_rivers` table adds only the trench join
-    # key used by downstream scraping and analysis tasks. `preprocess_stations_rivers`
-    # (preprocess/preprocess.py) requires this table to expose a `station_code`
-    # column and a `geometry_wkt` text column, so rename/re-key those here
-    # rather than leaving the raw ANA field names (`Codigo`/`codigo`, a live
-    # `geometry` GeoSeries) for the downstream reader to guess at.
-    stations_rivers_table = stations_with_trench.rename(
-        columns={station_code_column: "station_code", "geometry": "geometry_wkt"}
-    ).set_geometry("geometry_wkt")
+    stations_geo = filter_station_inventory(stations_geo)
     write_geodataframe_table(
         root_dir,
         STATIONS_TABLE,
         stations_geo.reset_index(drop=True),
     )
-    write_geodataframe_table(
-        root_dir,
-        STATION_RIVERS_TABLE,
-        stations_rivers_table.reset_index(drop=True),
-        geometry_column="geometry_wkt",
-    )
-    return stations_with_trench
+    return stations_geo

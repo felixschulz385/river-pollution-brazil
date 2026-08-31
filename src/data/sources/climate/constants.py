@@ -5,7 +5,7 @@ import numpy as np
 from src.data.shared.paths import processed_dir, raw_dir
 from src.data.sources.river_network.constants import PROCESSED_DIR as _RIVER_NETWORK_PROCESSED_DIR
 from src.data.sources.sensor_data.constants import (
-    DEFAULT_STATIONS_RIVERS_PATH,
+    DEFAULT_STATIONS_TRENCHES_PATH,
     DEFAULT_WATER_QUALITY_PATH,
 )
 

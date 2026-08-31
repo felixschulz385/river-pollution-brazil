@@ -9,7 +9,7 @@ import pandas as pd
 from src.data.sources.river_network.constants import DRAINAGE_AREAS_FILENAME as _RIVER_NETWORK_DRAINAGE_AREAS_FILENAME
 from src.data.sources.river_network.constants import PROCESSED_DIR as _RIVER_NETWORK_PROCESSED_DIR
 from src.data.sources.sensor_data.constants import (
-    DEFAULT_STATIONS_RIVERS_PATH,
+    DEFAULT_STATIONS_TRENCHES_PATH,
     DEFAULT_WATER_QUALITY_PATH,
 )
 

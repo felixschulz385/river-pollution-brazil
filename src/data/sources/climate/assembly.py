@@ -23,7 +23,7 @@ from .constants import (
     DEFAULT_ERA5_LAND_TRENCH_DAY_PATH,
     DEFAULT_RIVER_NETWORK_PATH,
     DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH,
-    DEFAULT_STATIONS_RIVERS_PATH,
+    DEFAULT_STATIONS_TRENCHES_PATH,
     DEFAULT_WATER_QUALITY_PATH,
     DISTANCE_BUCKET_COLUMN,
     MONTH_COLUMN,
@@ -904,7 +904,7 @@ def assemble_climate(
     variant=SENSOR_UPSTREAM_DISTANCE_BUCKETS_VARIANT,
     climate_path=DEFAULT_ERA5_LAND_TRENCH_DAY_PATH,
     water_quality_path=DEFAULT_WATER_QUALITY_PATH,
-    stations_rivers_path=DEFAULT_STATIONS_RIVERS_PATH,
+    stations_rivers_path=DEFAULT_STATIONS_TRENCHES_PATH,
     river_network_path=DEFAULT_RIVER_NETWORK_PATH,
     output_path=None,
     n_jobs=None,
@@ -933,7 +933,7 @@ def assemble_climate(
         stations_rivers_path = _resolve_path(
             self.root_dir,
             stations_rivers_path,
-            DEFAULT_STATIONS_RIVERS_PATH,
+            DEFAULT_STATIONS_TRENCHES_PATH,
         )
         return _assemble_sensor_upstream_duckdb(
             climate_path=climate_path,

@@ -1,14 +1,12 @@
 import json
 import logging
-from pathlib import Path
 
-from ..constants import get_processed_dir, get_sensor_database_path, get_water_quality_cleaning_dir
+from ..constants import get_raw_dir, get_water_quality_cleaning_dir
 from .clean import clean_measurement_values, resolve_measurement_columns
 from .rename import rename_portuguese_fields
 from ..schema import (
+    ASSEMBLED_SENSOR_DATA_PARQUET,
     AUXILIARY_WATER_QUALITY_COLUMNS,
-    CLEAN_STREAMFLOW_PARQUET,
-    CLEAN_WATER_QUALITY_PARQUET,
     CLEANING_FLAGS_PARQUET,
     CLEANING_SUMMARY_PARQUET,
     DATETIME_COLUMN,
@@ -16,9 +14,9 @@ from ..schema import (
     LOG_TRANSFORM_SKEW_THRESHOLD,
     LOG_TRANSFORM_TAIL_RATIO,
     MIN_TRANSFORM_N,
-    STATIONS_RIVERS_COLUMNS,
-    STATIONS_RIVERS_PARQUET,
-    STATIONS_RIVERS_TABLE,
+    RAW_STATIONS_PARQUET,
+    RAW_STREAMFLOW_PARQUET,
+    RAW_WATER_QUALITY_PARQUET,
     STREAMFLOW_BAD_STATION_SENTINEL_SHARE,
     STREAMFLOW_DAILY_SCHEMA,
     STREAMFLOW_JUMP_RATIO_THRESHOLD,
@@ -26,10 +24,8 @@ from ..schema import (
     STREAMFLOW_MAX_VALID_DISCHARGE,
     STREAMFLOW_MISSING_SENTINEL,
     STREAMFLOW_SMALL_LAG_THRESHOLD,
-    STREAMFLOW_SOURCE_TABLES,
     STREAMFLOW_SUSPICIOUS_CONSTANT_RUN_DAYS,
     TRANSFORMATION_RECOMMENDATIONS_JSON,
-    WATER_QUALITY_SOURCE_TABLES,
 )
 
 logger = logging.getLogger(__name__)
@@ -282,82 +278,42 @@ def build_clean_streamflow_daily(frame):
     return daily.loc[:, STREAMFLOW_DAILY_SCHEMA].reset_index(drop=True)
 
 
-def _quote_identifier(name: str) -> str:
-    return '"' + str(name).replace('"', '""') + '"'
+def _read_raw_parquet(root_dir, filename):
+    """Read one of fetch's raw parquet outputs, raising a clear error if fetch
+    hasn't run yet."""
+    import pandas as pd
+
+    path = get_raw_dir(root_dir) / filename
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Raw sensor-data parquet not found: {path}. "
+            "Run `data fetch --source sensor_data` first."
+        )
+    return pd.read_parquet(path)
 
 
-def _available_tables(connection) -> set[str]:
-    tables = connection.execute(
-        "SELECT table_name FROM information_schema.tables"
-    ).fetchdf()
-    return set(tables["table_name"])
-
-
-def _resolve_first_available_table(connection, table_names) -> str:
-    tables = _available_tables(connection)
-    for table_name in table_names:
-        if table_name in tables:
-            return table_name
-    raise ValueError(
-        "No source table found. Expected one of: " + ", ".join(table_names)
-    )
-
-
-def _connect_sensor_database(root_dir="."):
-    import duckdb
-
-    database_path = get_sensor_database_path(root_dir)
-    if not Path(database_path).exists():
-        raise FileNotFoundError(f"Sensor database not found: {database_path}")
-    return duckdb.connect(str(database_path))
-
-
-def _read_first_available_table(root_dir=".", table_names=None):
-    """Read whichever of `table_names` exists first, returning (table_name, frame)."""
-    with _connect_sensor_database(root_dir) as connection:
-        source_table = _resolve_first_available_table(connection, table_names)
-        frame = connection.execute(
-            f"SELECT * FROM {_quote_identifier(source_table)}"
-        ).fetchdf()
-    return source_table, frame
-
-
-def _read_source_table(root_dir="."):
-    return _read_first_available_table(root_dir, WATER_QUALITY_SOURCE_TABLES)
-
-
-def _read_table(root_dir=".", table_name=None):
-    _, frame = _read_first_available_table(root_dir, [table_name])
-    return frame
-
-
-def _preprocess_output_dir(root_dir=".") -> Path:
-    output_dir = get_processed_dir(root_dir, stage="extract")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir
-
-
-def preprocess_stations_rivers(root_dir=".") -> str:
-    """Export a compact GeoParquet version of the station-to-river table."""
+def preprocess_stations(root_dir="."):
+    """Clean up the bbox-filtered station inventory's column names (no trench
+    join -- that happens at assembly time). Returned as a GeoDataFrame only:
+    nothing outside sensor_data's own assembly step consumes this, so it's
+    never written to disk."""
     import geopandas as gpd
 
-    stations = _read_table(root_dir, STATIONS_RIVERS_TABLE)
-    missing_columns = [
-        column for column in STATIONS_RIVERS_COLUMNS if column not in stations.columns
-    ]
-    if missing_columns:
-        raise KeyError(
-            "Missing required stations_rivers column(s): "
-            + ", ".join(missing_columns)
-        )
-
-    stations = stations.loc[:, STATIONS_RIVERS_COLUMNS].copy()
-    geometry = gpd.GeoSeries.from_wkt(stations["geometry_wkt"], crs=4326)
-    stations_geo = gpd.GeoDataFrame(stations, geometry=geometry, crs=4326)
-    output_path = _preprocess_output_dir(root_dir) / STATIONS_RIVERS_PARQUET
-    stations_geo.to_parquet(output_path, index=False)
-    logger.info("Wrote cleaned stations-rivers GeoParquet to %s.", output_path)
-    return str(output_path)
+    stations = gpd.read_parquet(get_raw_dir(root_dir) / RAW_STATIONS_PARQUET)
+    code_column = next(
+        (column for column in ("Codigo", "codigo", "station_code") if column in stations.columns),
+        None,
+    )
+    name_column = next(
+        (column for column in ("Nome", "nome", "station_name") if column in stations.columns),
+        None,
+    )
+    rename_map = {}
+    if code_column is not None:
+        rename_map[code_column] = "station_code"
+    if name_column is not None:
+        rename_map[name_column] = "station_name"
+    return stations.rename(columns=rename_map)
 
 
 def _json_scalar(value):
@@ -440,33 +396,34 @@ def _build_transformation_recommendations(summary, measurement_columns: dict[str
 
     return {
         "schema_version": 1,
-        "clean_data_file": CLEAN_WATER_QUALITY_PARQUET,
+        "clean_data_file": ASSEMBLED_SENSOR_DATA_PARQUET,
         "recommendations": recommendations,
     }
 
 
-def preprocess_sensor_data(root_dir=".") -> dict[str, str]:
-    """Rename, clean, and export sensor data as parquet files."""
-    source_table, raw_frame = _read_source_table(root_dir)
+def preprocess_sensor_data(root_dir=".") -> dict[str, object]:
+    """Rename and clean water-quality data. QA byproducts (cleaning flags,
+    summary, transformation recommendations) are written to disk; the
+    cleaned frame itself is returned only -- assembly (run right after)
+    writes the joined panel as the canonical output, so there's no separate
+    extract-stage water-quality file."""
+    raw_frame = _read_raw_parquet(root_dir, RAW_WATER_QUALITY_PARQUET)
     renamed_frame = rename_portuguese_fields(raw_frame)
     measurement_columns = resolve_measurement_columns(renamed_frame)
     if not measurement_columns:
-        raise ValueError(f"No configured pollution variables found in {source_table}.")
+        raise ValueError(f"No configured pollution variables found in {RAW_WATER_QUALITY_PARQUET}.")
 
     clean_frame, flags, summary = clean_measurement_values(
         renamed_frame,
         measurement_columns,
     )
     clean_frame = _drop_auxiliary_columns(_merge_date_time_columns(clean_frame))
-    output_dir = _preprocess_output_dir(root_dir)
-    clean_path = output_dir / CLEAN_WATER_QUALITY_PARQUET
     cleaning_dir = get_water_quality_cleaning_dir(root_dir)
     cleaning_dir.mkdir(parents=True, exist_ok=True)
     recommendations_path = cleaning_dir / TRANSFORMATION_RECOMMENDATIONS_JSON
     flags_path = cleaning_dir / CLEANING_FLAGS_PARQUET
     summary_path = cleaning_dir / CLEANING_SUMMARY_PARQUET
 
-    clean_frame.to_parquet(clean_path, index=False)
     flags.to_parquet(flags_path, index=False)
     summary.to_parquet(summary_path, index=False)
     recommendations = _build_transformation_recommendations(summary, measurement_columns)
@@ -477,39 +434,40 @@ def preprocess_sensor_data(root_dir=".") -> dict[str, str]:
 
     removed_count = int((flags["cleaning_label"] != "OK").sum())
     logger.info(
-        "Wrote cleaned water-quality parquet to %s with %s invalid value(s) set to NA.",
-        clean_path,
+        "Cleaned water-quality data with %s invalid value(s) set to NA. Not written "
+        "to disk here -- assembly (run right after) writes the joined panel "
+        "(sensor_data.parquet) as the canonical output.",
         removed_count,
     )
     return {
-        "clean": str(clean_path),
+        "clean_frame": clean_frame,
         "transformations": str(recommendations_path),
         "flags": str(flags_path),
         "summary": str(summary_path),
     }
 
 
-def preprocess_streamflow(root_dir=".") -> str:
-    """Clean monthly wide streamflow records into a daily regression-ready panel."""
-    source_table, raw_frame = _read_first_available_table(
-        root_dir,
-        STREAMFLOW_SOURCE_TABLES,
-    )
+def preprocess_streamflow(root_dir="."):
+    """Clean monthly wide streamflow records into a daily regression-ready
+    panel. Returned as a DataFrame only: nothing outside sensor_data's own
+    assembly step consumes this, so it's never written to disk."""
+    raw_frame = _read_raw_parquet(root_dir, RAW_STREAMFLOW_PARQUET)
     clean_streamflow = build_clean_streamflow_daily(raw_frame)
-    output_path = _preprocess_output_dir(root_dir) / CLEAN_STREAMFLOW_PARQUET
-    clean_streamflow.to_parquet(output_path, index=False)
     logger.info(
-        "Wrote cleaned streamflow parquet to %s with %s station-day row(s) from %s.",
-        output_path,
+        "Cleaned %s station-day streamflow row(s) from %s.",
         len(clean_streamflow),
-        source_table,
+        RAW_STREAMFLOW_PARQUET,
     )
-    return str(output_path)
+    return clean_streamflow
 
 
-def preprocess_all(root_dir=".") -> dict[str, str]:
-    """Run all sensor-data preprocessing exports."""
+def preprocess_all(root_dir=".") -> dict[str, object]:
+    """Run all sensor-data cleaning steps. Every result (water-quality,
+    streamflow, stations) is returned as a DataFrame only -- assembly (run
+    right after, in the same `preprocess()` call) consumes them in memory
+    and writes the final joined panel as the canonical output that
+    land_cover/climate read."""
     outputs = preprocess_sensor_data(root_dir=root_dir)
     outputs["streamflow"] = preprocess_streamflow(root_dir=root_dir)
-    outputs["stations_rivers"] = preprocess_stations_rivers(root_dir=root_dir)
+    outputs["stations"] = preprocess_stations(root_dir=root_dir)
     return outputs

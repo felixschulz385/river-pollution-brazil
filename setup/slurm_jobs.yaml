@@ -53,9 +53,12 @@ jobs:
     cpus_per_task: 4
     mem: 64G
 
-  # Formerly setup/slurm_scripts/assemble_sensor_data.sh
-  sensor_data.preprocess.aggregate:
-    job_name: aggregate_sensor_data
+  # Formerly setup/slurm_scripts/assemble_sensor_data.sh. sensor_data has a
+  # single preprocess step (cleaning + the GADM/river_network trench-join and
+  # streamflow matching); the resource profile below covers the latter, the
+  # heavy part.
+  sensor_data.preprocess:
+    job_name: preprocess_sensor_data
     time: "0-06:00:00"
     qos: 6hours
     cpus_per_task: 4

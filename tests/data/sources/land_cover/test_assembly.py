@@ -37,6 +37,40 @@ class _FakeRiverNetwork:
         self.loaded_path = path
 
 
+def test_reset_water_quality_index_brings_back_indexed_columns():
+    """sensor_data's assembled panel indexes on [station_code, date] (via
+    `.set_index(...)` in `assemble_sensor_data`) rather than keeping them as
+    plain columns; land_cover's target-building requires them as columns."""
+    indexed = pd.DataFrame(
+        {"ph": [7.0, 7.2]},
+        index=pd.MultiIndex.from_tuples(
+            [("11111111", pd.Timestamp("2020-01-01")), ("22222222", pd.Timestamp("2020-01-02"))],
+            names=[assembly.STATION_CODE_COLUMN, assembly.DATE_COLUMN],
+        ),
+    )
+
+    result = assembly._reset_water_quality_index(indexed)
+
+    assert assembly.STATION_CODE_COLUMN in result.columns
+    assert assembly.DATE_COLUMN in result.columns
+    assert sorted(result[assembly.STATION_CODE_COLUMN].tolist()) == ["11111111", "22222222"]
+
+
+def test_reset_water_quality_index_is_a_noop_for_plain_columns():
+    plain = pd.DataFrame(
+        {
+            assembly.STATION_CODE_COLUMN: ["11111111"],
+            assembly.DATE_COLUMN: [pd.Timestamp("2020-01-01")],
+            "ph": [7.0],
+        }
+    )
+
+    result = assembly._reset_water_quality_index(plain)
+
+    assert list(result.columns) == list(plain.columns)
+    assert isinstance(result.index, pd.RangeIndex)
+
+
 def test_assemble_land_cover_adm2_uses_bucketed_upstream_output(
     tmp_path: Path,
     monkeypatch,

@@ -12,7 +12,7 @@ datasets:
     output_path: data/assembly/sensor_panel.parquet
     sources:
       - name: water_quality
-        path: data/sensor_data/processed/aggregate/sensor_data_water_quality_streamflow.parquet
+        path: data/sensor_data/processed/aggregate/sensor_data.parquet
         join_keys: [station_code, datetime]
         variables: [ph]
       - name: land_cover

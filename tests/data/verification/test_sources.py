@@ -5,6 +5,7 @@ import json
 import pandas as pd
 import pytest
 
+from src.data.sources.sensor_data.schema import ASSEMBLED_SENSOR_DATA_PARQUET
 from src.data.verification.sources import SOURCE_ADAPTERS
 
 
@@ -387,7 +388,7 @@ def test_sensor_data_check_outputs_recognizes_columns_kept_as_named_index(tmp_pa
             "discharge": [10.0],
         }
     ).set_index(["station_code", "datetime"])
-    frame.to_parquet(output_dir / "sensor_data_water_quality_streamflow.parquet", index=True)
+    frame.to_parquet(output_dir / ASSEMBLED_SENSOR_DATA_PARQUET, index=True)
 
     adapter = SOURCE_ADAPTERS["sensor_data"]
     artifacts = adapter.check_outputs(tmp_path)
@@ -409,7 +410,7 @@ def test_sensor_data_check_outputs_flags_discharge_out_of_range(tmp_path):
             "streamflow_discharge_day": [2_000_000.0],
         }
     )
-    frame.to_parquet(output_dir / "sensor_data_water_quality_streamflow.parquet", index=False)
+    frame.to_parquet(output_dir / ASSEMBLED_SENSOR_DATA_PARQUET, index=False)
 
     adapter = SOURCE_ADAPTERS["sensor_data"]
     artifacts = adapter.check_outputs(tmp_path)
@@ -942,7 +943,7 @@ datasets:
     output_path: data/assembly/sensor_panel.parquet
     sources:
       - name: water_quality
-        path: data/sensor_data/processed/aggregate/sensor_data_water_quality_streamflow.parquet
+        path: data/sensor_data/processed/aggregate/sensor_data.parquet
         join_keys: [station_code, datetime]
         variables: [ph, turbidity]
 """

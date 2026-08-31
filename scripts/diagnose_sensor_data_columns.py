@@ -1,7 +1,7 @@
 """Diagnose why verification's `sensor_data` check reports missing columns.
 
 `data verify --source sensor_data` (and `data summary`) flag
-`sensor_data_water_quality_streamflow.parquet` as failed with:
+`sensor_data.parquet` as failed with:
 
     required_columns is missing required columns: ['datetime', 'station_code']
 
@@ -88,8 +88,8 @@ def diagnose(path: Path) -> None:
         print(
             f"  {still_missing} still missing even after reset_index() -- this file "
             "is genuinely missing data (likely produced by an older/incomplete "
-            "assembly run). Re-running `data preprocess --source sensor_data "
-            "--phase aggregate` should regenerate it correctly."
+            "assembly run). Re-running `data preprocess --source sensor_data` "
+            "should regenerate it correctly."
         )
 
 

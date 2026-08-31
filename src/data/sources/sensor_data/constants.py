@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from src.data.shared.paths import processed_dir
-from .schema import CLEAN_WATER_QUALITY_PARQUET, STATIONS_RIVERS_PARQUET, WATER_QUALITY_CLEANING_SUBDIR
+from .schema import ASSEMBLED_SENSOR_DATA_PARQUET, STATIONS_TRENCHES_PARQUET, WATER_QUALITY_CLEANING_SUBDIR
 
 # Downloaded station archive .zip files live in their own subfolder of raw/,
 # separate from the sensor_data.duckdb/sensor_downloads.duckdb files that
@@ -53,11 +53,19 @@ def get_download_log_database_path(root_dir="."):
     return get_raw_dir(root_dir) / "sensor_downloads.duckdb"
 
 
-# Canonical extract-stage output paths, for sources that consume these
-# outside sensor_data (e.g. land_cover, climate assembly) to import instead
-# of re-deriving the path themselves.
-DEFAULT_WATER_QUALITY_PATH = str(processed_dir(".", "sensor_data", stage="extract") / CLEAN_WATER_QUALITY_PARQUET)
-DEFAULT_STATIONS_RIVERS_PATH = str(processed_dir(".", "sensor_data", stage="extract") / STATIONS_RIVERS_PARQUET)
+# Canonical output paths, for sources that consume these outside sensor_data
+# (e.g. land_cover, climate assembly) to import instead of re-deriving the
+# path themselves.
+# The assembled panel already contains every cleaned water-quality column
+# (plus trench_id and streamflow) -- there's no separate extract-stage
+# water-quality file to point at; it's indexed on [station_code, date]
+# rather than having those as plain columns, so a reader needs to
+# reset_index() them back (climate's prepare_observation_targets already
+# does this; land_cover's _assemble_sensor_land_cover does it explicitly).
+DEFAULT_WATER_QUALITY_PATH = str(processed_dir(".", "sensor_data", stage="aggregate") / ASSEMBLED_SENSOR_DATA_PARQUET)
+# The station-to-trench join requires GADM + river_network, so it's only
+# available once sensor_data's aggregate stage has run.
+DEFAULT_STATIONS_TRENCHES_PATH = str(processed_dir(".", "sensor_data", stage="aggregate") / STATIONS_TRENCHES_PARQUET)
 
 
 def ensure_water_quality_dirs(root_dir="."):

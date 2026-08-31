@@ -55,9 +55,10 @@ python3 -m src.cli data assemble   --dataset <id>       # join preprocessed sour
 `--source` and `--phase` must precede any source-specific flags. `--source`
 is one of `health`, `climate`, `sensor_data`, `land_cover`, `population`,
 `river_network`, `biomes`. `--phase` only applies to sources whose
-preprocessing has two stages (`climate`, `land_cover`, `sensor_data`):
-`extract` (raw → per-source processed output) and `aggregate` (roll-up into
-sensor/ADM2 upstream panels).
+preprocessing has two stages (`climate`, `land_cover`): `extract` (raw →
+per-source processed output) and `aggregate` (roll-up into sensor/ADM2
+upstream panels). `sensor_data` has a single preprocess step that does both
+in one call.
 
 `fetch`/`preprocess`/`assemble` refuse to run if a prerequisite source
 hasn't been fetched/preprocessed yet (e.g. `land_cover preprocess` requires
@@ -99,13 +100,17 @@ The repository currently contains derived health outputs such as:
 
 ### Water Quality
 
-Water-quality processing is organized into fetch and preprocess (extract, then aggregate) stages:
+Water-quality processing is organized into a fetch stage (scrape raw data,
+export it to parquet) and a single preprocess stage (clean the raw parquet,
+then join it with GADM/river_network into the final panel):
 
 ```bash
 python3 -m src.cli data fetch      --source sensor_data --root-dir .
-python3 -m src.cli data preprocess --source sensor_data --phase extract --root-dir .
-python3 -m src.cli data preprocess --source sensor_data --phase aggregate --root-dir .
+python3 -m src.cli data preprocess --source sensor_data --root-dir .
 ```
+
+`fetch` has no GADM/river_network dependency; `preprocess` does (it needs
+both preprocessed first -- pass `--chain` to run them automatically).
 
 The water-quality fetch pipeline supports additional options for browser execution and partial reruns, including:
 
@@ -118,7 +123,7 @@ The water-quality fetch pipeline supports additional options for browser executi
 
 The main assembled output currently tracked in the repository is:
 
-- `data/sensor_data/processed/aggregate/sensor_data_water_quality_streamflow.parquet`
+- `data/sensor_data/processed/aggregate/sensor_data.parquet`
 
 Transformation metadata used by the analysis pipeline is stored in:
 
@@ -227,7 +232,7 @@ python3 -m src.cli analysis sensor-data run \
 
 By default, analysis settings point to:
 
-- `data/sensor_data/processed/aggregate/sensor_data_water_quality_streamflow.parquet`
+- `data/sensor_data/processed/aggregate/sensor_data.parquet`
 - `data/land_cover/processed/aggregate/land_cover_sensor_upstream.parquet`
 - `data/sensor_data/processed/extract/water_quality_cleaning/sensor_data_water_quality_transformations.json`
 - `data/river_network/processed/river_network_trenches.parquet`

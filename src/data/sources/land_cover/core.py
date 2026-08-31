@@ -73,7 +73,7 @@ class LandCover:
         from .constants import (
             DEFAULT_ASSEMBLY_LAND_COVER_PATH,
             DEFAULT_RIVER_NETWORK_PATH,
-            DEFAULT_STATIONS_RIVERS_PATH,
+            DEFAULT_STATIONS_TRENCHES_PATH,
             DEFAULT_WATER_QUALITY_PATH,
             SENSOR_ASSEMBLY_VARIANT,
         )
@@ -83,7 +83,7 @@ class LandCover:
             variant=variant or SENSOR_ASSEMBLY_VARIANT,
             land_cover_path=land_cover_path or DEFAULT_ASSEMBLY_LAND_COVER_PATH,
             water_quality_path=water_quality_path or DEFAULT_WATER_QUALITY_PATH,
-            stations_rivers_path=stations_rivers_path or DEFAULT_STATIONS_RIVERS_PATH,
+            stations_rivers_path=stations_rivers_path or DEFAULT_STATIONS_TRENCHES_PATH,
             river_network_path=river_network_path or DEFAULT_RIVER_NETWORK_PATH,
             output_path=output_path,
             n_jobs=n_jobs,

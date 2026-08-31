@@ -1,6 +1,7 @@
 import logging
 from pathlib import Path
 
+import geopandas as gpd
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
@@ -13,7 +14,9 @@ from ..schema import (
     CLEAN_STREAMFLOW_PARQUET,
     CLEAN_WATER_QUALITY_PARQUET,
     DATETIME_COLUMN,
-    STATIONS_RIVERS_PARQUET,
+    STATIONS_FILTERED_PARQUET,
+    STATIONS_TRENCHES_COLUMNS,
+    STATIONS_TRENCHES_PARQUET,
     STREAMFLOW_MATCH_RADIUS_M,
     STREAMFLOW_ROLLING_WINDOWS,
 )
@@ -21,6 +24,7 @@ from ..schema import (
 from src.data.sources.river_network import RiverNetwork
 from src.data.sources import river_network as rn_module
 from src.data.sources.river_network.constants import PROCESSED_DIR as RIVER_NETWORK_PROCESSED_DIR
+from src.data.sources.gadm.constants import DEFAULT_SIMPLIFIED_GADM_PATH
 from src.data.shared.sensor_upstream import prepare_entity_links, sparse_row
 
 
@@ -29,6 +33,8 @@ logger = logging.getLogger(__name__)
 STATION_CODE_COLUMN = "station_code"
 DATE_COLUMN = "date"
 TRENCH_ID_COLUMN = "trench_id"
+DEFAULT_BRAZIL_BOUNDARY_LAYER = "ADM_ADM_0"
+BRAZIL_PROJECTED_CRS = 5641
 DISCHARGE_COLUMN = "discharge"
 STREAMFLOW_DAY_COLUMN = "streamflow_discharge_day"
 STREAMFLOW_FEATURE_COLUMNS = (
@@ -68,6 +74,40 @@ def _validate_columns(frame, columns, frame_name):
         raise KeyError(
             f"Missing required {frame_name} column(s): " + ", ".join(missing)
         )
+
+
+def _filter_stations_to_brazil(stations_geo, brazil_boundary_path):
+    """Precise Brazil-boundary filter (GADM), applied here rather than at
+    fetch time since only assembly requires GADM as a dependency."""
+    brazil = gpd.read_file(
+        brazil_boundary_path,
+        layer=DEFAULT_BRAZIL_BOUNDARY_LAYER,
+        engine="pyogrio",
+    )
+    brazil_geometry = brazil.union_all()
+    in_bounds = stations_geo.within(brazil_geometry)
+    return stations_geo.loc[in_bounds].copy()
+
+
+def _join_stations_to_trenches(stations_geo, network):
+    """Match each station to its nearest river trench."""
+    trenches = network.trenches[[TRENCH_ID_COLUMN, "geometry"]].copy()
+    station_matches = gpd.sjoin_nearest(
+        stations_geo[[STATION_CODE_COLUMN, "geometry"]].to_crs(BRAZIL_PROJECTED_CRS),
+        trenches.to_crs(BRAZIL_PROJECTED_CRS),
+        how="left",
+        distance_col="distance_to_river",
+    )
+    station_matches = pd.DataFrame(
+        station_matches[[STATION_CODE_COLUMN, TRENCH_ID_COLUMN, "distance_to_river"]]
+    ).sort_values([STATION_CODE_COLUMN, "distance_to_river"]).drop_duplicates(
+        subset=[STATION_CODE_COLUMN], keep="first"
+    )
+    return stations_geo.merge(
+        station_matches.drop(columns=["distance_to_river"]),
+        on=STATION_CODE_COLUMN,
+        how="left",
+    )
 
 
 def _prepare_station_trenches(stations_rivers):
@@ -470,43 +510,84 @@ def _aggregate_streamflow_matches(water_quality_keys, station_matches, streamflo
 def assemble_sensor_data(
     root_dir=".",
     water_quality_path=None,
+    water_quality_frame=None,
     streamflow_path=None,
+    streamflow_frame=None,
+    stations_path=None,
+    stations_frame=None,
     stations_rivers_path=None,
     river_network_path=RIVER_NETWORK_PROCESSED_DIR,
+    brazil_boundary_path=None,
     output_path=None,
     match_radius_m=STREAMFLOW_MATCH_RADIUS_M,
     n_jobs=None,
 ):
-    """Assemble cleaned water-quality observations with nearby streamflow data."""
+    """Assemble cleaned water-quality observations with nearby streamflow data.
+
+    This is the stage where GADM (Brazil-boundary filter) and river_network
+    (station-to-trench join, reachability matching) are required -- fetch and
+    extract-stage preprocessing have no such dependency.
+
+    `water_quality_frame`/`streamflow_frame`/`stations_frame` let a caller
+    that just cleaned this data in memory (the normal
+    `SensorData.preprocess()` flow) pass it straight through instead of
+    writing then re-reading a parquet file -- none of the three cleaned
+    inputs have a consumer of their own outside this function (the output
+    this function writes, `sensor_data.parquet`, is the canonical file
+    land_cover/climate read), so none are written to disk
+    separately. When not given, the corresponding `*_path` is read from disk
+    instead (e.g. for standalone reuse against a manually-placed file).
+    """
     if n_jobs is None:
         n_jobs = resolve_n_jobs()
 
-    water_quality_path = _resolve_path(
-        root_dir,
-        water_quality_path,
-        CLEAN_WATER_QUALITY_PARQUET,
-        stage="extract",
-    )
-    streamflow_path = _resolve_path(
-        root_dir, streamflow_path, CLEAN_STREAMFLOW_PARQUET, stage="extract"
-    )
-    stations_rivers_path = _resolve_path(
+    if water_quality_frame is None:
+        water_quality_path = _resolve_path(
+            root_dir,
+            water_quality_path,
+            CLEAN_WATER_QUALITY_PARQUET,
+            stage="extract",
+        )
+    if streamflow_frame is None:
+        streamflow_path = _resolve_path(
+            root_dir, streamflow_path, CLEAN_STREAMFLOW_PARQUET, stage="extract"
+        )
+    if stations_frame is None:
+        stations_path = _resolve_path(
+            root_dir,
+            stations_path,
+            STATIONS_FILTERED_PARQUET,
+            stage="extract",
+        )
+    # Unlike the other paths above, `stations_rivers_path` names an *output*:
+    # the station-to-trench join is computed here (it needs GADM and
+    # river_network), not read from a pre-built file.
+    stations_rivers_output_path = _resolve_path(
         root_dir,
         stations_rivers_path,
-        STATIONS_RIVERS_PARQUET,
-        stage="extract",
+        STATIONS_TRENCHES_PARQUET,
+        stage="aggregate",
     )
     river_network_path = _resolve_project_path(
         root_dir,
         river_network_path,
         RIVER_NETWORK_PROCESSED_DIR,
     )
+    brazil_boundary_path = _resolve_project_path(
+        root_dir,
+        brazil_boundary_path,
+        DEFAULT_SIMPLIFIED_GADM_PATH,
+    )
     output_path = _resolve_path(
         root_dir, output_path, ASSEMBLED_SENSOR_DATA_PARQUET, stage="aggregate"
     )
 
-    logger.info("Loading cleaned water-quality data from %s.", water_quality_path)
-    water_quality = pd.read_parquet(water_quality_path)
+    if water_quality_frame is not None:
+        logger.info("Using in-memory cleaned water-quality data (%s row(s)).", len(water_quality_frame))
+        water_quality = water_quality_frame.copy()
+    else:
+        logger.info("Loading cleaned water-quality data from %s.", water_quality_path)
+        water_quality = pd.read_parquet(water_quality_path)
     _validate_columns(water_quality, [STATION_CODE_COLUMN, DATETIME_COLUMN], "water-quality")
     assembled = water_quality.copy()
     assembled[STATION_CODE_COLUMN] = assembled[STATION_CODE_COLUMN].astype(str)
@@ -524,12 +605,39 @@ def assemble_sensor_data(
             collapsed_observation_count,
         )
 
-    logger.info("Loading cleaned streamflow data from %s.", streamflow_path)
-    streamflow = pd.read_parquet(streamflow_path)
+    if streamflow_frame is not None:
+        logger.info("Using in-memory cleaned streamflow data (%s row(s)).", len(streamflow_frame))
+        streamflow = streamflow_frame.copy()
+    else:
+        logger.info("Loading cleaned streamflow data from %s.", streamflow_path)
+        streamflow = pd.read_parquet(streamflow_path)
     streamflow_features = _prepare_streamflow_features(streamflow)
 
-    logger.info("Loading station-river matches from %s.", stations_rivers_path)
-    stations_rivers = pd.read_parquet(stations_rivers_path)
+    logger.info("Loading river network from %s.", river_network_path)
+    network = RiverNetwork()
+    network.load(str(river_network_path))
+    _validate_network(network)
+
+    if stations_frame is not None:
+        logger.info("Using in-memory station inventory (%s row(s)).", len(stations_frame))
+        stations_geo = stations_frame.copy()
+    else:
+        logger.info("Loading station inventory from %s.", stations_path)
+        stations_geo = gpd.read_parquet(stations_path)
+    _validate_columns(stations_geo, [STATION_CODE_COLUMN], "stations")
+    stations_geo[STATION_CODE_COLUMN] = stations_geo[STATION_CODE_COLUMN].astype(str)
+
+    logger.info("Filtering stations to within Brazil using %s.", brazil_boundary_path)
+    stations_geo = _filter_stations_to_brazil(stations_geo, brazil_boundary_path)
+    logger.info("Joining %s in-bounds station(s) to their nearest river trench.", len(stations_geo))
+    stations_rivers = _join_stations_to_trenches(stations_geo, network)
+
+    stations_rivers_output_path.parent.mkdir(parents=True, exist_ok=True)
+    stations_rivers.loc[:, STATIONS_TRENCHES_COLUMNS].to_parquet(
+        stations_rivers_output_path, index=False
+    )
+    logger.info("Wrote station-to-trench join to %s.", stations_rivers_output_path)
+
     station_trenches = _prepare_station_trenches(stations_rivers)
     station_trench_lookup = station_trenches.drop_duplicates(
         subset=[STATION_CODE_COLUMN],
@@ -541,10 +649,6 @@ def assemble_sensor_data(
         how="left",
         validate="many_to_one",
     )
-
-    logger.info("Loading river network from %s.", river_network_path)
-    network = RiverNetwork()
-    network.load(str(river_network_path))
 
     water_quality_stations = assembled[STATION_CODE_COLUMN].dropna().unique()
     streamflow_stations = streamflow_features[STATION_CODE_COLUMN].dropna().unique()
