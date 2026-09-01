@@ -236,10 +236,10 @@ def test_land_cover_check_outputs_flags_out_of_range_share(tmp_path):
     assert not artifacts[0].ok
 
 
-def test_land_cover_check_outputs_tracks_river_aggregated(tmp_path):
-    """land_cover_river_aggregated.parquet is a real, always-produced output
-    of aggregate_along_rivers() -- it must be tracked like the other
-    aggregate-stage outputs, not silently ignored."""
+def test_land_cover_check_outputs_tracks_adm2_upstream(tmp_path):
+    """land_cover_adm2_upstream.parquet -- the ADM2/river roll-up produced by
+    aggregate_along_rivers() -- must be tracked like the other aggregate-stage
+    outputs, not silently ignored."""
     output_dir = tmp_path / "data" / "land_cover" / "processed" / "aggregate"
     output_dir.mkdir(parents=True)
     frame = pd.DataFrame(
@@ -250,14 +250,14 @@ def test_land_cover_check_outputs_tracks_river_aggregated(tmp_path):
             "share": [0.5],
         }
     )
-    frame.to_parquet(output_dir / "land_cover_river_aggregated.parquet", index=False)
+    frame.to_parquet(output_dir / "land_cover_adm2_upstream.parquet", index=False)
 
     adapter = SOURCE_ADAPTERS["land_cover"]
     artifacts = adapter.check_outputs(tmp_path)
 
-    river_aggregated = next(a for a in artifacts if a.label == "land_cover_river_aggregated")
-    assert river_aggregated.exists
-    assert river_aggregated.ok
+    adm2_upstream = next(a for a in artifacts if a.label == "land_cover_adm2_upstream")
+    assert adm2_upstream.exists
+    assert adm2_upstream.ok
 
 
 def test_land_cover_check_fetched_missing(tmp_path):

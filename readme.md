@@ -136,12 +136,13 @@ Land-cover processing is also organized into fetch and preprocess (extract, then
 ```bash
 python3 -m src.cli data fetch      --source land_cover
 python3 -m src.cli data preprocess --source land_cover --phase extract --river-network-path data/river_network/processed
-python3 -m src.cli data preprocess --source land_cover --phase aggregate --variant sensor --river-network-path data/river_network/processed
+python3 -m src.cli data preprocess --source land_cover --phase aggregate --river-network-path data/river_network/processed
 ```
 
 In the current code, `fetch` is only a placeholder and expects raw MapBiomas files to be obtained manually and placed in the configured data directory.
 
-The assembly step supports at least two output variants:
+The aggregate stage builds two output variants, and runs both by default
+(`--variant all`); pass `--variant sensor` or `--variant adm2` for just one:
 
 - `sensor`: upstream land cover by monitoring station and year
 - `adm2`: upstream land cover by municipality-level administrative unit and year
@@ -149,6 +150,7 @@ The assembly step supports at least two output variants:
 Current derived land-cover outputs include:
 
 - `data/land_cover/processed/aggregate/land_cover_sensor_upstream.parquet`
+- `data/land_cover/processed/aggregate/land_cover_adm2_upstream.parquet`
 
 ### Population
 

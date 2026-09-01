@@ -129,15 +129,23 @@ Adds the `within_brazil` flag to `self.drainage_areas`.
 
 One row per (`trench_id`, `year`) with `land_cover_class_*` columns.
 
+Both aggregate-stage outputs below are produced together by the default
+`data preprocess --source land_cover --phase aggregate` run (`--variant all`);
+pass `--variant sensor` or `--variant adm2` to build just one.
+
 ### `data/land_cover/processed/aggregate/land_cover_sensor_upstream.parquet`
 
-One row per (`station_code`, `year`) produced by the `land-cover assemble --variant sensor`
-pipeline.
+Long-format, one row per (`station_code`, `year`, `bucket`, `land_cover_class`).
+`bucket` is the 25 km-wide upstream distance ring; `n`/`cnt`/`share` are the
+reachable-trench count, raw class count, and fractional class share within that
+bucket. `land_cover_class` is a row value and `share` is a single fractional
+column, not per-class `{class}_shr` columns.
 
 ### `data/land_cover/processed/aggregate/land_cover_adm2_upstream.parquet`
 
-One row per (`adm2_id`, `year`) produced by the `land-cover assemble --variant adm2`
-pipeline.
+Long-format, one row per (`mun_id`, `year`, `bucket`, `land_cover_class`),
+produced by `aggregate_along_rivers()`. Same `bucket`/`n`/`cnt`/`share` columns
+as the sensor output, plus `bucket_intersects_adm2`.
 
 Semantics:
 
@@ -146,22 +154,6 @@ Semantics:
   them.
 - Matrix lookup uses `system_id` and `trench_index` from
   `river_network_trenches.parquet`.
-- Both assembled outputs use the same bucketed upstream columns, such as
-  `lc_0_10km_tot`, `lc_0_10km_n`, `lc_0_10km_c41_cnt`, and
-  `lc_0_10km_c41_shr`.
-
-### `data/land_cover/processed/aggregate/land_cover_river_aggregated.parquet`
-
-One row per (`mun_id`, `year`, `bucket`, `land_cover_class`), produced by
-`aggregate_along_rivers()`.
-
-Semantics:
-
-- Long-format: `land_cover_class` is a row value and `share` is a single
-  fractional column, not per-class `{class}_shr` columns.
-- `bucket` is the 25km-wide upstream distance ring (see `n`/`cnt`/`share`
-  for reachable-trench-count, raw count, and fractional share within that
-  bucket).
 
 ## Population Outputs
 

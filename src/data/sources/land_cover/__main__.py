@@ -1,7 +1,7 @@
 import argparse
 import logging
 
-from .constants import DEFAULT_ASSEMBLY_LAND_COVER_PATH
+from .constants import ASSEMBLY_VARIANTS, DEFAULT_ASSEMBLY_LAND_COVER_PATH
 from .core import LandCover
 from .preprocess import configure_logging
 from src.data.sources.river_network.constants import PROCESSED_DIR as RIVER_NETWORK_PROCESSED_DIR
@@ -21,7 +21,14 @@ def configure_parser(parser, include_action=True):
     parser.add_argument("--datadir", default=None)
     parser.add_argument("--drainage-path", default=None)
     parser.add_argument("--legend-path", default=None)
-    parser.add_argument("--variant", default="sensor")
+    parser.add_argument(
+        "--variant",
+        default="all",
+        choices=["all", *ASSEMBLY_VARIANTS],
+        help="Assemble variant -- 'all' (default) runs the sensor and ADM2 "
+        "upstream panels sequentially; --output is not supported with 'all' "
+        "since each variant writes its own default output path.",
+    )
     parser.add_argument("--land-cover-path", default=None)
     parser.add_argument("--water-quality-path", default=None)
     parser.add_argument("--stations-rivers-path", default=None)
@@ -46,15 +53,19 @@ def run(args):
             log_level=getattr(args, "log_level", None),
         )
     else:
-        agent.assemble(
-            variant=args.variant,
-            land_cover_path=args.land_cover_path,
-            water_quality_path=args.water_quality_path,
-            stations_rivers_path=args.stations_rivers_path,
-            river_network_path=args.river_network_path or RIVER_NETWORK_PROCESSED_DIR,
-            output_path=args.output,
-            n_jobs=args.n_jobs,
-        )
+        variants = list(ASSEMBLY_VARIANTS) if args.variant == "all" else [args.variant]
+        if args.variant == "all" and args.output is not None:
+            raise ValueError("--output is not supported with --variant all; run each variant separately.")
+        for variant in variants:
+            agent.assemble(
+                variant=variant,
+                land_cover_path=args.land_cover_path,
+                water_quality_path=args.water_quality_path,
+                stations_rivers_path=args.stations_rivers_path,
+                river_network_path=args.river_network_path or RIVER_NETWORK_PROCESSED_DIR,
+                output_path=args.output,
+                n_jobs=args.n_jobs,
+            )
 
 
 def main():

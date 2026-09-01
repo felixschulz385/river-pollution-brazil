@@ -43,6 +43,14 @@ class SourceReport:
     # preprocessing" for dependency gating, independent of whether its
     # output is fully correct.
     preprocess_complete: bool = False
+    # How many artifacts check_outputs() declared, and how many of those
+    # actually exist. A declared-but-absent artifact contributes zero checks
+    # (it can't fail one), so it never lowers the passed/total ratio -- it
+    # only flips `status` to "outstanding". The summary renders
+    # `outputs_expected - outputs_found` as an explicit "(N missing)" hint so
+    # that gap isn't invisible next to an unexplained "outstanding".
+    outputs_expected: int = 0
+    outputs_found: int = 0
 
 
 def _timestamp() -> str:
@@ -124,6 +132,8 @@ class Verification:
                 fetch_status=existing.get("fetch_status", "not_applicable"),
                 fetched_checks=existing.get("fetched_checks", []),
                 preprocess_complete=existing.get("preprocess_complete", False),
+                outputs_expected=existing.get("outputs_expected", 0),
+                outputs_found=existing.get("outputs_found", 0),
             )
 
         try:
@@ -175,6 +185,8 @@ class Verification:
             ]
 
         outputs_present = any(artifact.exists for artifact in output_artifacts)
+        outputs_expected = len(output_artifacts)
+        outputs_found = sum(1 for artifact in output_artifacts if artifact.exists)
         preprocess_complete = bool(output_artifacts) and all(artifact.exists for artifact in output_artifacts)
         any_present = fetch_listing.present > 0 or outputs_present
         all_checks: list[CheckResult] = [check for artifact in output_artifacts for check in artifact.checks]
@@ -233,6 +245,8 @@ class Verification:
             "fetch_status": fetch_status,
             "fetched_checks": fetched_checks_payload,
             "preprocess_complete": preprocess_complete,
+            "outputs_expected": outputs_expected,
+            "outputs_found": outputs_found,
         }
         _write_sidecar(sidecar, payload)
         logger.info("Verified source '%s': status=%s, fetch_status=%s", source, status, fetch_status)
@@ -248,6 +262,8 @@ class Verification:
             fetch_status=fetch_status,
             fetched_checks=fetched_checks_payload,
             preprocess_complete=preprocess_complete,
+            outputs_expected=outputs_expected,
+            outputs_found=outputs_found,
         )
 
     def verify(self, source: str | None = None, force: bool = False) -> dict[str, SourceReport]:

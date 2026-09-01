@@ -12,8 +12,8 @@ from .constants import (
     BUCKET_COUNT_COLUMN,
     BUCKET_REACHABLE_COUNT_COLUMN,
     BUCKET_SHARE_COLUMN,
+    DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH,
     DEFAULT_ASSEMBLY_LAND_COVER_PATH,
-    DEFAULT_RIVER_AGGREGATED_OUTPUT_PATH,
     DEFAULT_RIVER_NETWORK_PATH,
     DISTANCE_BUCKET_COLUMN,
     LAND_COVER_CLASS_COLUMN,
@@ -100,7 +100,7 @@ def aggregate_along_rivers(
     drainage_polygons_path=None,
     years=None,
     n_jobs=None,
-    output_path=DEFAULT_RIVER_AGGREGATED_OUTPUT_PATH,
+    output_path=DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH,
 ):
     """Aggregate land cover variables upstream of each ADM2 unit."""
     if n_jobs is None:

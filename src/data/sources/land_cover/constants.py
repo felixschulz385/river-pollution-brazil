@@ -62,9 +62,6 @@ DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH = (
 DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH = (
     "data/land_cover/processed/aggregate/land_cover_adm2_upstream.parquet"
 )
-DEFAULT_RIVER_AGGREGATED_OUTPUT_PATH = (
-    "data/land_cover/processed/aggregate/land_cover_river_aggregated.parquet"
-)
 
 STATION_CODE_COLUMN = "station_code"
 DATETIME_COLUMN = "datetime"

@@ -96,10 +96,14 @@ class LandCover:
         drainage_polygons_path=None,
         years=None,
         n_jobs=None,
-        output_path="data/land_cover/processed/aggregate/land_cover_river_aggregated.parquet",
+        output_path=None,
     ):
         """Aggregate land-cover variables upstream of each ADM2 unit."""
-        from .constants import DEFAULT_ASSEMBLY_LAND_COVER_PATH, DEFAULT_RIVER_NETWORK_PATH
+        from .constants import (
+            DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH,
+            DEFAULT_ASSEMBLY_LAND_COVER_PATH,
+            DEFAULT_RIVER_NETWORK_PATH,
+        )
 
         return _aggregate_along_rivers(
             self,
@@ -108,5 +112,5 @@ class LandCover:
             drainage_polygons_path=drainage_polygons_path,
             years=years,
             n_jobs=n_jobs,
-            output_path=output_path,
+            output_path=output_path or DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH,
         )
