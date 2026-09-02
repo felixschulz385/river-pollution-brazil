@@ -1111,6 +1111,206 @@ def test_retrieve_batched_dataset_reschedules_then_caps_verification_failures(
     assert len(get_remote_calls) == calls_before_final_check
 
 
+class _DummyJobsPage:
+    """Minimal stand-in for `ecmwf.datastores.Jobs` used by the bulk-listing tests."""
+
+    def __init__(self, jobs: list[dict], nxt: "_DummyJobsPage | None" = None) -> None:
+        self.json = {"jobs": jobs}
+        self.next = nxt
+
+
+def _write_submitted_manifest(target: Path, request_id: str, batch: str) -> None:
+    manifest_path_for(target).write_text(
+        f'{{\n  "dataset": "test-dataset",\n  "request": {{"batch": "{batch}"}},\n'
+        f'  "request_id": "{request_id}",\n  "status": "submitted"\n}}',
+        encoding="utf-8",
+    )
+
+
+def test_retrieve_batched_dataset_resolves_active_requests_from_bulk_listing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_cdsapi(
+        tmp_path,
+        "url: https://cds.climate.copernicus.eu/api\nkey: user:secret\n",
+    )
+    output_dir = tmp_path / "data" / "climate" / "raw" / "bulk_test"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    _write_submitted_manifest(output_dir / "bulk_test_a.grib", "req-a", "a")
+    _write_submitted_manifest(output_dir / "bulk_test_b.grib", "req-b", "b")
+
+    get_jobs_calls: list[dict] = []
+
+    class DummyClient:
+        def get_jobs(self, **params):
+            get_jobs_calls.append(params)
+            return _DummyJobsPage(
+                [
+                    {"jobID": "req-a", "status": "accepted"},
+                    {"jobID": "req-b", "status": "running"},
+                ]
+            )
+
+        def get_remote(self, request_id):
+            raise AssertionError(f"get_remote should not be called; got {request_id!r}")
+
+        def submit(self, dataset, request):
+            raise AssertionError("submit should not be called for active requests")
+
+    monkeypatch.setattr(
+        "src.data.sources.climate.fetch.common.create_datastores_client",
+        lambda root_dir=".": DummyClient(),
+    )
+    # Force the cooldown open so both batches are candidates this cycle; the
+    # point of the test is that they're still resolved without get_remote.
+    monkeypatch.setattr(
+        "src.data.sources.climate.fetch.common._manifest_is_due_for_remote_check",
+        lambda manifest: True,
+    )
+
+    retrieve_batched_dataset(
+        root_dir=tmp_path,
+        dataset="test-dataset",
+        request_factory=lambda **batch: {"batch": batch["batch"]},
+        output_subdir="bulk_test",
+        file_prefix="bulk_test",
+        batches=[{"batch": "a"}, {"batch": "b"}],
+        output_name_factory=lambda batch: f"bulk_test_{batch['batch']}.grib",
+    )
+
+    assert len(get_jobs_calls) == 1
+    manifest_a = load_download_manifest(output_dir / "bulk_test_a.grib")
+    manifest_b = load_download_manifest(output_dir / "bulk_test_b.grib")
+    assert manifest_a["status"] == "submitted"
+    assert manifest_a["remote_status"] == "accepted"
+    assert manifest_b["remote_status"] == "running"
+
+
+def test_retrieve_batched_dataset_downloads_finished_request_from_bulk_listing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_cdsapi(
+        tmp_path,
+        "url: https://cds.climate.copernicus.eu/api\nkey: user:secret\n",
+    )
+    output_dir = tmp_path / "data" / "climate" / "raw" / "bulk_test"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    target = output_dir / "bulk_test_done.grib"
+    _write_submitted_manifest(target, "req-done", "done")
+
+    get_remote_calls: list[str] = []
+
+    class DummyResults:
+        def download(self, dest):
+            Path(dest).write_text("grib", encoding="utf-8")
+            return dest
+
+    class DummyRemote:
+        request_id = "req-done"
+        status = "successful"
+        results_ready = True
+
+        def get_results(self):
+            return DummyResults()
+
+        def get_receipt(self):
+            return {"request_id": self.request_id}
+
+    class DummyClient:
+        def get_jobs(self, **params):
+            return _DummyJobsPage([{"jobID": "req-done", "status": "successful"}])
+
+        def get_remote(self, request_id):
+            get_remote_calls.append(request_id)
+            return DummyRemote()
+
+        def submit(self, dataset, request):
+            raise AssertionError("submit should not be called")
+
+    monkeypatch.setattr(
+        "src.data.sources.climate.fetch.common.create_datastores_client",
+        lambda root_dir=".": DummyClient(),
+    )
+    # Cooldown firmly shut: a request the listing reports as finished must be
+    # picked up anyway, rather than waiting the accepted-recheck cooldown out.
+    monkeypatch.setattr(
+        "src.data.sources.climate.fetch.common._manifest_is_due_for_remote_check",
+        lambda manifest: False,
+    )
+
+    retrieve_batched_dataset(
+        root_dir=tmp_path,
+        dataset="test-dataset",
+        request_factory=lambda **batch: {"batch": batch["batch"]},
+        output_subdir="bulk_test",
+        file_prefix="bulk_test",
+        batches=[{"batch": "done"}],
+        output_name_factory=lambda batch: "bulk_test_done.grib",
+        verify_batch=lambda path: VerificationResult(ok=True),
+    )
+
+    assert get_remote_calls == ["req-done"]
+    manifest = load_download_manifest(target)
+    assert manifest["status"] == "downloaded"
+    assert target.exists()
+
+
+def test_retrieve_batched_dataset_falls_back_when_bulk_listing_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_cdsapi(
+        tmp_path,
+        "url: https://cds.climate.copernicus.eu/api\nkey: user:secret\n",
+    )
+    output_dir = tmp_path / "data" / "climate" / "raw" / "bulk_test"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    _write_submitted_manifest(output_dir / "bulk_test_x.grib", "req-x", "x")
+
+    get_remote_calls: list[str] = []
+
+    class ActiveRemote:
+        request_id = "req-x"
+        status = "accepted"
+        results_ready = False
+
+    class DummyClient:
+        def get_jobs(self, **params):
+            raise RuntimeError("jobs listing temporarily unavailable")
+
+        def get_remote(self, request_id):
+            get_remote_calls.append(request_id)
+            return ActiveRemote()
+
+        def submit(self, dataset, request):
+            raise AssertionError("submit should not be called for active requests")
+
+    monkeypatch.setattr(
+        "src.data.sources.climate.fetch.common.create_datastores_client",
+        lambda root_dir=".": DummyClient(),
+    )
+    monkeypatch.setattr(
+        "src.data.sources.climate.fetch.common._manifest_is_due_for_remote_check",
+        lambda manifest: True,
+    )
+
+    retrieve_batched_dataset(
+        root_dir=tmp_path,
+        dataset="test-dataset",
+        request_factory=lambda **batch: {"batch": batch["batch"]},
+        output_subdir="bulk_test",
+        file_prefix="bulk_test",
+        batches=[{"batch": "x"}],
+        output_name_factory=lambda batch: "bulk_test_x.grib",
+    )
+
+    # A failed bulk listing degrades to the per-request check rather than
+    # stalling the batch.
+    assert get_remote_calls == ["req-x"]
+    manifest = load_download_manifest(output_dir / "bulk_test_x.grib")
+    assert manifest["status"] == "submitted"
+    assert manifest["remote_status"] == "accepted"
+
+
 def test_cli_climate_help_mentions_subtype(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as excinfo:
         data_cli_main(["data", "fetch", "--source", "climate", "--help"])

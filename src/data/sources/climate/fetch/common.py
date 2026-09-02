@@ -29,6 +29,7 @@ WORKER_RECHECK_SECONDS = 120
 ENABLE_PERIODIC_RECHECKS = True
 FILE_LOCK_POLL_SECONDS = 2
 FILE_LOCK_TIMEOUT_SECONDS = 900
+FILE_LOCK_LOG_INTERVAL_SECONDS = 60
 REMOTE_RECHECK_ACCEPTED_SECONDS = 900
 REMOTE_RECHECK_RUNNING_SECONDS = 300
 MAX_VERIFICATION_ATTEMPTS = 3
@@ -137,20 +138,44 @@ def _read_lock_metadata(lock_path: Path):
         return None
 
 
+def _throttled_lock_log(started_at, next_log_at, template, name):
+    """Emit `template % (name, elapsed_seconds)` only once we're past
+    `next_log_at`, so a long lock wait produces a line a minute rather than one
+    every `FILE_LOCK_POLL_SECONDS`. Returns `(new_next_log_at, did_log)`.
+    """
+    now = monotonic()
+    if now < next_log_at:
+        return next_log_at, False
+    logger.info(template, name, int(now - started_at))
+    return now + FILE_LOCK_LOG_INTERVAL_SECONDS, True
+
+
 def _wait_for_lock_release(target_path: Path, *, timeout_seconds=FILE_LOCK_TIMEOUT_SECONDS):
     lock_path = lock_path_for(target_path)
-    deadline = monotonic() + timeout_seconds
+    started_at = monotonic()
+    deadline = started_at + timeout_seconds
+    next_log_at = started_at
+    ever_logged = False
     while lock_path.exists():
         if monotonic() >= deadline:
             owner = _read_lock_metadata(lock_path)
             raise ClimateFileLockTimeoutError(
                 f"Timed out waiting for lock {lock_path} to be released. Metadata={owner!r}"
             )
-        logger.info(
-            "Waiting for climate file lock on %s before continuing.",
+        next_log_at, did_log = _throttled_lock_log(
+            started_at,
+            next_log_at,
+            "Waiting for climate file lock on %s to be released (%ss elapsed).",
             target_path.name,
         )
+        ever_logged = ever_logged or did_log
         sleep(FILE_LOCK_POLL_SECONDS)
+    if ever_logged:
+        logger.info(
+            "Climate file lock on %s released after %ss.",
+            target_path.name,
+            int(monotonic() - started_at),
+        )
 
 
 @contextmanager
@@ -161,7 +186,10 @@ def climate_file_lock(
     timeout_seconds=FILE_LOCK_TIMEOUT_SECONDS,
 ):
     lock_path = lock_path_for(target_path)
-    deadline = monotonic() + timeout_seconds
+    started_at = monotonic()
+    deadline = started_at + timeout_seconds
+    next_log_at = started_at
+    ever_logged = False
     payload = {
         "target_path": str(target_path),
         "lock_path": str(lock_path),
@@ -180,11 +208,20 @@ def climate_file_lock(
                 raise ClimateFileLockTimeoutError(
                     f"Timed out acquiring lock for {target_path}. Metadata={owner_metadata!r}"
                 )
-            logger.info(
-                "Climate file %s is locked by another process; waiting.",
+            next_log_at, did_log = _throttled_lock_log(
+                started_at,
+                next_log_at,
+                "Climate file %s is locked by another process; waiting (%ss elapsed).",
                 target_path.name,
             )
+            ever_logged = ever_logged or did_log
             sleep(FILE_LOCK_POLL_SECONDS)
+    if ever_logged:
+        logger.info(
+            "Acquired climate file lock on %s after %ss.",
+            target_path.name,
+            int(monotonic() - started_at),
+        )
 
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -357,6 +394,56 @@ def _is_remote_not_found_error(exc: Exception) -> bool:
     )
 
 
+REMOTE_JOB_LIST_PAGE_LIMIT = 500
+REMOTE_JOB_LIST_MAX_PAGES = 50
+REMOTE_ACTIVE_STATUSES = {"accepted", "running"}
+
+
+def _fetch_remote_status_map(client, known_request_ids):
+    """Return ``{request_id: status}`` for ``known_request_ids`` from a single
+    bulk jobs listing, or ``{}`` when no listing is available.
+
+    This replaces one ``client.get_remote(request_id)`` round-trip per
+    outstanding batch with a single paginated ``client.get_jobs()`` call.
+    Pages are walked newest-first and iteration stops as soon as every known
+    request id has been seen, so a long account history doesn't force a full
+    scan. Any failure (no ``get_jobs`` on the client, network error, malformed
+    payload) degrades gracefully to an empty map, and callers fall back to the
+    per-request checks.
+    """
+    known = {rid for rid in known_request_ids if rid}
+    if not known:
+        return {}
+
+    get_jobs = getattr(client, "get_jobs", None)
+    if get_jobs is None:
+        return {}
+
+    status_map: dict[str, str | None] = {}
+    try:
+        page = get_jobs(sortby="-created", limit=REMOTE_JOB_LIST_PAGE_LIMIT)
+        pages_seen = 0
+        while page is not None and pages_seen < REMOTE_JOB_LIST_MAX_PAGES:
+            pages_seen += 1
+            payload = getattr(page, "json", None)
+            jobs = payload.get("jobs", []) if isinstance(payload, dict) else []
+            for job in jobs:
+                request_id = job.get("jobID")
+                if request_id in known:
+                    status_map[request_id] = job.get("status")
+            if known <= status_map.keys():
+                break
+            page = getattr(page, "next", None)
+    except Exception as exc:
+        logger.warning(
+            "Could not retrieve the climate remote job listing (%s); "
+            "falling back to per-request status checks this cycle.",
+            exc,
+        )
+        return {}
+    return status_map
+
+
 def _check_existing_request(
     *,
     client,
@@ -364,6 +451,7 @@ def _check_existing_request(
     request,
     output_path: Path,
     verify_batch=None,
+    remote_status_map=None,
 ):
     manifest = load_download_manifest(output_path)
     if should_skip_download(output_path):
@@ -373,10 +461,27 @@ def _check_existing_request(
     if manifest is None or "request_id" not in manifest:
         return {"is_active": False, "is_running": False}
 
-    logger.info(
+    request_id = manifest["request_id"]
+    mapped_status = (remote_status_map or {}).get(request_id)
+    if mapped_status in REMOTE_ACTIVE_STATUSES:
+        # The bulk jobs listing already told us this request is still queued or
+        # running, so skip the per-request round-trip. Mirrors the
+        # `_remote_is_active(remote)` branch below.
+        write_download_manifest(
+            output_path,
+            dataset=dataset,
+            request=request,
+            status="submitted",
+            request_id=request_id,
+            remote_status=mapped_status,
+            remote_checked_at=_timestamp(),
+        )
+        return {"is_active": True, "is_running": mapped_status == "running"}
+
+    logger.debug(
         "Checking climate batch %s with request_id=%s.",
         output_path.name,
-        manifest["request_id"],
+        request_id,
     )
     try:
         remote = client.get_remote(manifest["request_id"])
@@ -571,7 +676,7 @@ def _submit_request(
     request,
     output_path: Path,
 ):
-    logger.info("Submitting climate batch %s for dataset %s.", output_path.name, dataset)
+    logger.debug("Submitting climate batch %s for dataset %s.", output_path.name, dataset)
     existing_manifest = load_download_manifest(output_path)
     verification_attempts = existing_manifest.get("verification_attempts", 0) if existing_manifest else 0
     remote = client.submit(dataset, request)
@@ -629,7 +734,7 @@ def _manifest_is_locally_active(target_path: Path):
     return download_status in {"submitted", "downloading"}
 
 
-def _log_worker_summary_box(
+def _log_worker_summary(
     *,
     dataset,
     cycle_number,
@@ -640,28 +745,36 @@ def _log_worker_summary_box(
     submitted_this_cycle,
     counts,
 ):
-    lines = [
-        f"Dataset           : {dataset}",
-        f"Worker cycle      : {cycle_number}",
-        f"Total batches     : {total_batches}",
-        f"Outstanding remote: {active_requests}/{MAX_ACTIVE_REMOTE_REQUESTS}",
-        f"Running remote    : {running_requests}/{running_request_limit}",
-        f"Submitted cycle   : {submitted_this_cycle}",
-        f"Downloaded        : {counts['downloaded']}",
-        f"Submitted         : {counts['submitted']}",
-        f"Downloading       : {counts['downloading']}",
-        f"Rejected          : {counts['rejected']}",
-        f"Failed            : {counts['failed']}",
-        f"Verification failed: {counts['verification_failed']}",
-        f"Not started       : {counts['not_started']}",
+    # One compact line per cycle instead of a multi-line box: the box repeated
+    # ~16 near-identical lines every recheck even when nothing had changed.
+    progress = (
+        f"{counts['downloaded']}/{total_batches} done, "
+        f"{counts['submitted']} submitted, {counts['downloading']} downloading, "
+        f"{counts['not_started']} not started"
+    )
+    problems = [
+        f"{counts[key]} {label}"
+        for key, label in (
+            ("failed", "failed"),
+            ("rejected", "rejected"),
+            ("verification_failed", "verification-failed"),
+        )
+        if counts[key]
     ]
-    content_width = max(len(line) for line in lines + ["Climate Worker"])
-    top_border = "+" + "-" * (content_width + 2) + "+"
-    box_lines = [top_border, f"| {'Climate Worker'.ljust(content_width)} |"]
-    box_lines.append("|" + " " * (content_width + 2) + "|")
-    box_lines.extend(f"| {line.ljust(content_width)} |" for line in lines)
-    box_lines.append(top_border)
-    logger.info("\n%s", "\n".join(box_lines))
+    problems_str = f"; {', '.join(problems)}" if problems else ""
+    logger.info(
+        "Climate worker [%s] cycle %s: %s; remote %s/%s active (%s/%s running), "
+        "+%s submitted this cycle%s.",
+        dataset,
+        cycle_number,
+        progress,
+        active_requests,
+        MAX_ACTIVE_REMOTE_REQUESTS,
+        running_requests,
+        running_request_limit,
+        submitted_this_cycle,
+        problems_str,
+    )
 
 
 def retrieve_yearly_dataset(
@@ -710,10 +823,15 @@ def _refresh_remote_statuses(
 ):
     """Check remote status for batches that need it this cycle.
 
-    Running batches that are due for a recheck are prioritized first (so a
-    batch close to completing isn't starved by the running-limit check
-    below); every other batch is then rechecked unless it's already
-    up-to-date, over the running-request budget, or not yet due. Returns
+    A single bulk `client.get_jobs()` listing is fetched up front; batches
+    whose request is still queued/running per that listing are resolved from
+    it without a per-request round-trip. Running batches that are due for a
+    recheck are prioritized first (so a batch close to completing isn't
+    starved by the running-limit check below); every other batch is then
+    rechecked unless it's already up-to-date, over the running-request
+    budget, or not yet due -- except that a request the listing reports as
+    already finished is always picked up, cooldown and budget
+    notwithstanding, so it downloads promptly. Returns
     `(manifest_states, active_requests, running_requests)`.
     """
     manifest_states = {}
@@ -724,12 +842,35 @@ def _refresh_remote_statuses(
             "state": state,
         }
 
+    known_request_ids = {
+        state_bundle["manifest"]["request_id"]
+        for state_bundle in manifest_states.values()
+        if state_bundle["manifest"] and "request_id" in state_bundle["manifest"]
+    }
+    remote_status_map = _fetch_remote_status_map(client, known_request_ids)
+
+    def _mapped_status(output_path):
+        manifest = manifest_states[output_path]["manifest"]
+        if not manifest or "request_id" not in manifest:
+            return None
+        return remote_status_map.get(manifest["request_id"])
+
+    def _bulk_reports_terminal(output_path):
+        status = _mapped_status(output_path)
+        return status is not None and status not in REMOTE_ACTIVE_STATUSES
+
+    def _needs_check_now(output_path):
+        # Cooldown as usual, but never make a finished request wait it out.
+        return _is_due_manifest_candidate(
+            output_path, manifest_states
+        ) or _bulk_reports_terminal(output_path)
+
     priority_running_checks = []
     for idx, output_path, request in batch_payloads:
         manifest_state = manifest_states[output_path]["state"]
         if not manifest_state["is_running"]:
             continue
-        if not _is_due_manifest_candidate(output_path, manifest_states):
+        if not _needs_check_now(output_path):
             continue
         priority_running_checks.append((idx, output_path, request))
 
@@ -741,6 +882,7 @@ def _refresh_remote_statuses(
             request=request,
             output_path=output_path,
             verify_batch=verify_batch,
+            remote_status_map=remote_status_map,
         )
         manifest_states[output_path] = {
             "manifest": load_download_manifest(output_path),
@@ -761,7 +903,11 @@ def _refresh_remote_statuses(
         if manifest_state["is_running"]:
             continue
 
-        if running_requests >= running_request_limit and manifest_state["is_active"]:
+        if (
+            running_requests >= running_request_limit
+            and manifest_state["is_active"]
+            and not _bulk_reports_terminal(output_path)
+        ):
             logger.debug(
                 "Skipping non-running remote status checks after satisfying the running limit (%s/%s).",
                 running_requests,
@@ -769,7 +915,7 @@ def _refresh_remote_statuses(
             )
             continue
 
-        if not _is_due_manifest_candidate(output_path, manifest_states):
+        if not _needs_check_now(output_path):
             logger.debug(
                 "Skipping remote recheck for %s because the last check is still fresh.",
                 output_path.name,
@@ -782,6 +928,7 @@ def _refresh_remote_statuses(
             request=request,
             output_path=output_path,
             verify_batch=verify_batch,
+            remote_status_map=remote_status_map,
         )
         manifest_states[output_path] = {
             "manifest": load_download_manifest(output_path),
@@ -834,7 +981,7 @@ def _run_retrieval_cycle(
         verify_batch=verify_batch,
         running_request_limit=running_request_limit,
     )
-    logger.info(
+    logger.debug(
         "Climate queue occupancy after status checks: %s/%s outstanding remote requests, %s/%s running remote requests.",
         active_requests,
         MAX_ACTIVE_REMOTE_REQUESTS,
@@ -850,7 +997,7 @@ def _run_retrieval_cycle(
     )
 
     counts = _manifest_status_counts(batch_payloads)
-    _log_worker_summary_box(
+    _log_worker_summary(
         dataset=dataset,
         cycle_number=cycle_number,
         total_batches=total_batches,
@@ -915,7 +1062,7 @@ def retrieve_batched_dataset(
             logger.info("Climate worker stopping: no active remote requests remain.")
             break
 
-        logger.info(
+        logger.debug(
             "Climate worker sleeping for %s seconds before the next status re-check cycle.",
             WORKER_RECHECK_SECONDS,
         )

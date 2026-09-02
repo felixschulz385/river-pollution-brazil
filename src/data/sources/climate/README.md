@@ -14,8 +14,8 @@ variant only -- `preprocess` always drains every GRIB-origin variant
 neither is a choice worth splitting on downstream of fetch:
 
 ```
-python code/data/cli.py climate fetch --subtype <subtype> [--root-dir .]
-python code/data/cli.py climate preprocess [--root-dir .]
+python -m src.cli data fetch --source climate --subtype <subtype> [--root-dir .]
+python -m src.cli data preprocess --source climate [--root-dir .]
 ```
 
 `--root-dir` defaults to the current working directory and should point at the
@@ -60,7 +60,7 @@ live ARCO store, slicing to our area, aggregating hourly -> daily, and
 writing into the local store all happen in one place, under `fetch`:
 
 ```
-python code/data/cli.py climate fetch --subtype era5_land_arco --root-dir .
+python -m src.cli data fetch --source climate --subtype era5_land_arco --root-dir .
 ```
 
 `era5_land_arco` has no separate `preprocess` step - opening the live store,
@@ -85,8 +85,8 @@ Notes:
 Two steps, since this path still goes through CDS's async job queue:
 
 ```
-python code/data/cli.py climate fetch --subtype era5_land_hourly --root-dir .
-python code/data/cli.py climate preprocess --root-dir .
+python -m src.cli data fetch --source climate --subtype era5_land_hourly --root-dir .
+python -m src.cli data preprocess --source climate --root-dir .
 ```
 
 `fetch` submits one job per (year, month) batch (480 total), polls CDS, and
@@ -112,8 +112,8 @@ run in the background and resume if interrupted.
 ### CDS daily-mean (`era5_land_daily`) - temporary cross-check, not required
 
 ```
-python code/data/cli.py climate fetch --subtype era5_land_daily --root-dir .
-python code/data/cli.py climate preprocess --root-dir .
+python -m src.cli data fetch --source climate --subtype era5_land_daily --root-dir .
+python -m src.cli data preprocess --source climate --root-dir .
 ```
 
 This duplicates `2t`/`2d`/`swvl1`/`swvl2` via a second CDS product that

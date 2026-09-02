@@ -637,6 +637,40 @@ def test_climate_check_fetched_flags_out_of_range_value(tmp_path):
     assert not artifacts[0].ok
 
 
+def test_climate_check_fetched_applies_stored_unit_conversion(tmp_path):
+    """`ERA5L_VALUE_RANGES` is in raw GRIB units (Kelvin, metres) but the shared
+    store is written unit-converted (degC, mm/day). The check must re-apply each
+    array's recorded ``scale_factor_applied`` / ``offset_applied`` to the range,
+    and tolerate the sub-epsilon float noise the conversion leaves behind."""
+    import numpy as np
+    import xarray as xr
+
+    from src.data.sources.climate.constants import DEFAULT_ERA5_LAND_STORE_PATH
+
+    store_path = tmp_path / DEFAULT_ERA5_LAND_STORE_PATH
+    time = pd.date_range("2020-01-01", periods=3, freq="D")
+    coords = {"time": time, "latitude": [-10.0], "longitude": [-45.0]}
+    dataset = xr.Dataset(
+        {
+            # 25 degC -- fine, but far outside the raw [180, 340] K range
+            "2t": (("time", "latitude", "longitude"), np.full((3, 1, 1), 25.0)),
+            # realistic soil moisture with a negative rounding artifact at zero
+            "swvl1": (("time", "latitude", "longitude"), np.full((3, 1, 1), -1.3e-20)),
+        },
+        coords=coords,
+    )
+    dataset["2t"].attrs.update(scale_factor_applied=1.0, offset_applied=-273.15, units="degC")
+    dataset["swvl1"].attrs.update(scale_factor_applied=1.0, offset_applied=0.0, units="m3 m-3")
+    dataset.to_zarr(store_path, mode="w", consolidated=False)
+
+    adapter = SOURCE_ADAPTERS["climate"]
+    artifacts = adapter.check_fetched(tmp_path)
+
+    by_name = {c.name: c for c in artifacts[0].checks}
+    assert by_name["value_range:2t"].ok
+    assert by_name["value_range:swvl1"].ok
+
+
 # --------------------------------------------------------------------------
 # biomes
 # --------------------------------------------------------------------------

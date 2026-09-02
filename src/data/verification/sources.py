@@ -738,6 +738,23 @@ def _climate_check_outputs(root_dir) -> list[OutputArtifactCheck]:
 _CLIMATE_RAW_SAMPLE_TIME_STEPS = 30
 
 
+def _era5l_stored_bounds(data_array, lo: float, hi: float) -> tuple[float, float]:
+    """Translate a raw-GRIB-unit range into the unit the shared zarr store holds.
+
+    `ERA5L_VALUE_RANGES` (imported from the fetch-stage verifier) is expressed in
+    raw ERA5-Land units -- Kelvin for temperature, metres for accumulations --
+    because that verifier runs on raw GRIB batches before preprocessing.
+    `preprocess/era5_land.py` writes this store as ``raw * scale_factor + offset``
+    (degC for 2t/2d, mm/day for tp/sro/ssro/pev) and records the constants it used
+    on each array as ``scale_factor_applied`` / ``offset_applied``. Re-apply the
+    same affine transform to the range so the check compares like with like.
+    """
+    scale = float(data_array.attrs.get("scale_factor_applied", 1.0))
+    offset = float(data_array.attrs.get("offset_applied", 0.0))
+    a, b = lo * scale + offset, hi * scale + offset
+    return (a, b) if a <= b else (b, a)
+
+
 def _climate_check_fetched(root_dir) -> list[OutputArtifactCheck]:
     import xarray as xr
 
@@ -784,12 +801,21 @@ def _climate_check_fetched(root_dir) -> list[OutputArtifactCheck]:
                 continue
             observed_min = float(data_array.min())
             observed_max = float(data_array.max())
-            ok = observed_min >= lo and observed_max <= hi
+            bound_lo, bound_hi = _era5l_stored_bounds(data_array, lo, hi)
+            # Preprocessing's float32 affine transform leaves sub-epsilon noise
+            # (e.g. swvl min at ~-1e-20); allow slack proportional to the bound
+            # magnitude so that alone doesn't fail an otherwise-clean variable.
+            tol = 1e-6 * max(1.0, abs(bound_lo), abs(bound_hi))
+            ok = observed_min >= bound_lo - tol and observed_max <= bound_hi + tol
+            units = data_array.attrs.get("units", "?")
             checks.append(
                 CheckResult(
                     name=f"value_range:{variable}",
                     ok=ok,
-                    message=f"Observed [{observed_min}, {observed_max}], expected [{lo}, {hi}].",
+                    message=(
+                        f"Observed [{observed_min}, {observed_max}] {units}, "
+                        f"expected [{bound_lo}, {bound_hi}] {units}."
+                    ),
                 )
             )
     finally:

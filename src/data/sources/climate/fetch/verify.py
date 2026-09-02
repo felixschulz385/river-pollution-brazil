@@ -14,8 +14,9 @@ ERA5L_VALUE_RANGES = {
     # Potential evaporation is an accumulated hourly-forecast field; observed
     # minimums in this domain (hot/dry regions of Brazil) range down to ~-0.34,
     # well past an initial -0.1 guess that wasn't calibrated against real data.
-    # Keep a wide margin below the worst observed value.
-    "pev": (-0.5, 0.05),
+    # The positive tail reaches ~0.057 in some months (e.g. Feb 1996/2007), so
+    # an 0.05 cap wrongly rejected whole batches -- keep a wide margin both ways.
+    "pev": (-0.5, 0.1),
     "2t": (180.0, 340.0),
     "2d": (180.0, 340.0),
     "swvl1": (0.0, 1.0),

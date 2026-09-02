@@ -188,6 +188,16 @@ ERA5L_VAR_CONFIG = {
     },
 }
 
+# CDS's `reanalysis-era5-land` hourly GRIB product archives these as running
+# accumulations that reset at 00:00 UTC each day (the ARCO store, by contrast,
+# serves per-hour values). The GRIB path must deaccumulate them to hourly
+# increments before the daily sum -- see `_deaccumulate_hourly_since_utc_midnight`
+# and `resample_era5l_hourly_to_daily`'s `deaccumulate` flag. `tp` is also an
+# accumulation in ERA5-Land but is only ever sourced from ARCO, so it is not
+# listed here; 2t/2d/swvl* are instantaneous.
+ERA5L_GRIB_ACCUMULATED_VARS = ("sro", "ssro", "pev")
+
+
 def _root(root_dir=".") -> Path:
     return Path(root_dir)
 
@@ -1167,9 +1177,41 @@ def _configured_dataset(dataset: xr.Dataset) -> xr.Dataset:
     return dataset[[var for var in ERA5L_VAR_CONFIG if var in dataset.data_vars]]
 
 
-def resample_era5l_hourly_to_daily(ds: xr.Dataset, var_config: dict) -> xr.Dataset:
+def _deaccumulate_hourly_since_utc_midnight(da: xr.DataArray) -> xr.DataArray:
+    """Turn an ERA5-Land accumulated field into per-hour increments.
+
+    CDS's ``reanalysis-era5-land`` hourly product archives tp/sro/ssro/pev as
+    running daily accumulations (metres accumulated since 00:00 UTC of each
+    valid time's own day, reset every midnight; the field valid at 00:00 holds
+    the previous day's 24-hour total). A daily ``sum`` over the 24 snapshots
+    therefore overcounts by roughly an order of magnitude. ``diff`` recovers the
+    hourly increment at every step except the first of each UTC day (01:00,
+    whose predecessor is the previous day's full total); there the raw value
+    already *is* the increment, since the accumulation restarts from zero at
+    00:00. The very first timestamp of the series has no predecessor and comes
+    back NaN -- for a full-month input that lands in a pre-`period_start` bucket
+    that `_drop_incomplete_boundary_day` discards anyway.
+
+    Only the GRIB path needs this; the ARCO analysis-ready store already exposes
+    tp as per-hour values, so its caller leaves ``deaccumulate`` off.
+    """
+    increments = da.diff("time", label="upper").reindex(time=da["time"])
+    first_step_of_utc_day = da["time"].dt.hour == 1
+    return xr.where(first_step_of_utc_day, da, increments).assign_attrs(da.attrs)
+
+
+def resample_era5l_hourly_to_daily(
+    ds: xr.Dataset, var_config: dict, *, deaccumulate: bool = False
+) -> xr.Dataset:
     ds = _rename_dataset_dims(ds)
     ds = _configured_dataset(ds)
+    if deaccumulate:
+        # Must run on the raw UTC time axis, before the Brazil-local shift
+        # below, so "first step of the UTC day" stays identifiable as hour == 1.
+        ds = ds.sortby("time")
+        for var_name in ERA5L_GRIB_ACCUMULATED_VARS:
+            if var_name in ds.data_vars:
+                ds[var_name] = _deaccumulate_hourly_since_utc_midnight(ds[var_name])
     # Bucket by Brazil-local calendar day, not UTC day: shifting every
     # timestamp back by `BRAZIL_UTC_OFFSET_HOURS` before resampling makes
     # the resulting daily bin's date label equal the correct local calendar
@@ -1271,7 +1313,7 @@ def _prepare_dataset_for_store(
     period_start=None,
 ) -> xr.Dataset:
     if subtype == "era5_land_hourly":
-        prepared = resample_era5l_hourly_to_daily(dataset, ERA5L_VAR_CONFIG)
+        prepared = resample_era5l_hourly_to_daily(dataset, ERA5L_VAR_CONFIG, deaccumulate=True)
         if period_start is not None:
             prepared = _drop_incomplete_boundary_day(prepared, period_start)
     elif subtype == "era5_land_daily":

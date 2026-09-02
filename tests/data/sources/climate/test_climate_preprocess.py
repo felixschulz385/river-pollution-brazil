@@ -404,6 +404,39 @@ def test_resample_hourly_to_daily_buckets_by_brazil_local_day_not_utc() -> None:
     assert pd.Timestamp(daily["time"].item()) == pd.Timestamp("1984-12-31")
 
 
+def _accumulated_sro_dataset(periods: int = 72) -> xr.Dataset:
+    """Hourly `sro` as ERA5-Land's GRIB path delivers it: metres accumulated
+    since 00:00 UTC of each valid time's own day, reset every midnight, with
+    the 00:00 field carrying the previous day's 24-hour total. True per-hour
+    increment here is a constant 0.002 m."""
+    time = pd.date_range("1985-01-01T00:00", periods=periods, freq="1h")
+    hours = time.hour.to_numpy()
+    accum = np.where(hours == 0, 0.002 * 24, 0.002 * hours).astype(np.float32)
+    return xr.Dataset(
+        data_vars={"sro": (("time", "latitude", "longitude"), accum.reshape(periods, 1, 1))},
+        coords={"time": time, "latitude": np.array([-10.0]), "longitude": np.array([-50.0])},
+    )
+
+
+def test_resample_hourly_to_daily_deaccumulates_accumulation_vars() -> None:
+    ds = _accumulated_sro_dataset()
+
+    daily = resample_era5l_hourly_to_daily(ds, ERA5L_VAR_CONFIG, deaccumulate=True)
+
+    # 24 hourly increments of 0.002 m -> 0.048 m -> 48 mm/day after the x1000 scale.
+    assert daily["sro"].sel(time="1985-01-01").isel(latitude=0, longitude=0).item() == pytest.approx(48.0, abs=1e-3)
+    assert daily["sro"].sel(time="1985-01-02").isel(latitude=0, longitude=0).item() == pytest.approx(48.0, abs=1e-3)
+
+
+def test_resample_hourly_to_daily_without_deaccumulate_overcounts_accumulations() -> None:
+    ds = _accumulated_sro_dataset()
+
+    daily = resample_era5l_hourly_to_daily(ds, ERA5L_VAR_CONFIG, deaccumulate=False)
+
+    # Summing the raw running accumulations inflates the daily total ~12x.
+    assert daily["sro"].sel(time="1985-01-02").isel(latitude=0, longitude=0).item() > 300.0
+
+
 def test_drop_incomplete_boundary_day_removes_only_earlier_dates() -> None:
     time = pd.to_datetime(["1985-01-31", "1985-02-01", "1985-02-02"])
     ds = xr.Dataset(
