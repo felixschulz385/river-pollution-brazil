@@ -365,13 +365,23 @@ def test_land_cover_check_fetched_caches_unchanged_tiles(tmp_path):
 # sensor_data
 # --------------------------------------------------------------------------
 
-def test_sensor_data_list_fetched_no_database(tmp_path):
+def test_sensor_data_list_fetched_counts_raw_export_parquets(tmp_path):
+    from src.data.sources.sensor_data.constants import get_raw_dir
+    from src.data.sources.sensor_data.schema import RAW_STATIONS_PARQUET
+
     adapter = SOURCE_ADAPTERS["sensor_data"]
 
     listing = adapter.list_fetched(tmp_path)
-
     assert listing.present == 0
-    assert listing.expected == 1
+    assert listing.expected == 3
+
+    raw = get_raw_dir(tmp_path)
+    raw.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"station_code": ["1"]}).to_parquet(raw / RAW_STATIONS_PARQUET, index=False)
+
+    listing = adapter.list_fetched(tmp_path)
+    assert listing.present == 1
+    assert listing.expected == 3
 
 
 def test_sensor_data_check_outputs_recognizes_columns_kept_as_named_index(tmp_path):
@@ -424,38 +434,24 @@ def test_sensor_data_check_fetched_missing(tmp_path):
 
     artifacts = adapter.check_fetched(tmp_path)
 
-    assert len(artifacts) == 2
+    # station_inventory + raw_water_quality + raw_streamflow, all absent; the
+    # archives dir doesn't exist so no raw_archives artifact is emitted.
+    assert {a.label for a in artifacts} == {"station_inventory", "raw_water_quality", "raw_streamflow"}
     assert all(not artifact.exists for artifact in artifacts)
 
 
-def test_sensor_data_check_fetched_db_file_present_without_stations_table_reports_absent(tmp_path):
-    """The duckdb FILE can exist (holding some other table) without the
-    "stations" table ever having been populated -- exists must reflect
-    whether the table is actually there, not merely whether the file is."""
-    import pandas as pd
-    from src.data.sources.sensor_data.fetch.database import write_dataframe_table
+def test_sensor_data_check_fetched_unreadable_stations_parquet_reports_failed_not_crashed(tmp_path):
+    """A stations parquet that exists but isn't a valid GeoParquet (truncated,
+    or written by an older export without geometry) must surface as a failed
+    check, not propagate an exception and crash verification -- see the module
+    docstring's "must degrade gracefully... never raised" contract."""
+    from src.data.sources.sensor_data.constants import get_raw_dir
+    from src.data.sources.sensor_data.schema import RAW_STATIONS_PARQUET
 
-    write_dataframe_table(str(tmp_path), "some_other_table", pd.DataFrame({"x": [1]}))
-
-    adapter = SOURCE_ADAPTERS["sensor_data"]
-    artifacts = adapter.check_fetched(tmp_path)
-
-    station_artifact = next(a for a in artifacts if a.label == "station_inventory")
-    assert not station_artifact.exists
-    assert station_artifact.checks == []
-
-
-def test_sensor_data_check_fetched_malformed_stations_table_reports_failed_not_crashed(tmp_path):
-    """A `stations` table that exists but doesn't match what
-    read_geodataframe_table's stored metadata expects (e.g. left over from an
-    interrupted or pre-metadata-tracking write, missing the geometry column
-    entirely) must surface as a failed check, not propagate the KeyError and
-    crash verification -- see the module docstring's "must degrade
-    gracefully... never raised" contract."""
-    import pandas as pd
-    from src.data.sources.sensor_data.fetch.database import STATIONS_TABLE, write_dataframe_table
-
-    write_dataframe_table(str(tmp_path), STATIONS_TABLE, pd.DataFrame({"station_code": ["1"]}))
+    raw = get_raw_dir(tmp_path)
+    raw.mkdir(parents=True, exist_ok=True)
+    # A plain (non-geo) parquet: readable by pandas, but gpd.read_parquet raises.
+    pd.DataFrame({"station_code": ["1"]}).to_parquet(raw / RAW_STATIONS_PARQUET, index=False)
 
     adapter = SOURCE_ADAPTERS["sensor_data"]
     artifacts = adapter.check_fetched(tmp_path)
@@ -482,18 +478,31 @@ def test_sensor_data_check_fetched_empty_raw_dir_reports_absent(tmp_path):
     assert archive_artifact.checks == []
 
 
-def test_sensor_data_check_fetched_valid_station_inventory_and_archive(tmp_path):
+def test_sensor_data_check_fetched_valid_raw_exports_and_archive(tmp_path):
     import zipfile
 
     import geopandas as gpd
-    from src.data.sources.sensor_data.constants import get_archives_dir
-    from src.data.sources.sensor_data.fetch.database import STATIONS_TABLE, write_geodataframe_table
-
-    stations = pd.DataFrame({"station_code": ["11111111"]})
-    stations_geo = gpd.GeoDataFrame(
-        stations, geometry=gpd.points_from_xy([-45.0], [-10.0]), crs=4326
+    from src.data.sources.sensor_data.constants import get_archives_dir, get_raw_dir
+    from src.data.sources.sensor_data.schema import (
+        RAW_STATIONS_PARQUET,
+        RAW_STREAMFLOW_PARQUET,
+        RAW_WATER_QUALITY_PARQUET,
     )
-    write_geodataframe_table(tmp_path, STATIONS_TABLE, stations_geo)
+
+    raw = get_raw_dir(tmp_path)
+    raw.mkdir(parents=True, exist_ok=True)
+    stations_geo = gpd.GeoDataFrame(
+        {"Codigo": ["11111111"]},
+        geometry=gpd.points_from_xy([-45.0], [-10.0]),
+        crs=4326,
+    )
+    stations_geo.to_parquet(raw / RAW_STATIONS_PARQUET, index=False)
+    pd.DataFrame({"station_code": ["11111111"], "ph": [7.0]}).to_parquet(
+        raw / RAW_WATER_QUALITY_PARQUET, index=False
+    )
+    pd.DataFrame({"station_code": ["11111111"], "discharge_1": [1.0]}).to_parquet(
+        raw / RAW_STREAMFLOW_PARQUET, index=False
+    )
 
     archives_dir = get_archives_dir(tmp_path)
     archives_dir.mkdir(parents=True, exist_ok=True)
@@ -503,6 +512,12 @@ def test_sensor_data_check_fetched_valid_station_inventory_and_archive(tmp_path)
     adapter = SOURCE_ADAPTERS["sensor_data"]
     artifacts = adapter.check_fetched(tmp_path)
 
+    assert {a.label for a in artifacts} == {
+        "station_inventory",
+        "raw_water_quality",
+        "raw_streamflow",
+        "raw_archives",
+    }
     assert all(artifact.exists for artifact in artifacts)
     assert all(artifact.ok for artifact in artifacts)
 

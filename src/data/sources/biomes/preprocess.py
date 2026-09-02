@@ -116,30 +116,45 @@ def _first_present_column(frame, candidates):
 
 
 def _load_station_points(root_dir="."):
-    from src.data.sources.sensor_data.fetch.database import (
-        STATIONS_TABLE,
-        read_dataframe_table,
-        read_geodataframe_table,
-    )
+    """Load monitoring-station point geometries from sensor_data's raw export.
+
+    Reads `raw/sensor_data_stations_raw.parquet` -- the GeoParquet
+    `export_raw_tables` writes as fetch's public station inventory -- rather
+    than the internal `sensor_data.duckdb` `stations` table.
+    """
+    from src.data.sources.sensor_data.constants import get_raw_dir
+    from src.data.sources.sensor_data.schema import RAW_STATIONS_PARQUET
+
+    stations_path = get_raw_dir(root_dir) / RAW_STATIONS_PARQUET
+    if not stations_path.exists():
+        raise FileNotFoundError(
+            f"Raw sensor-data station inventory not found: {stations_path}. "
+            "Run `data fetch --source sensor_data` first."
+        )
 
     try:
-        stations = read_geodataframe_table(root_dir, STATIONS_TABLE)
-    except KeyError:
-        # Some `stations` tables were written without geometry metadata (e.g.
-        # by an older pipeline run); fall back to building points from raw
-        # latitude/longitude columns in that case.
+        stations = gpd.read_parquet(stations_path)
+    except Exception:
+        stations = None
+    if (
+        stations is None
+        or "geometry" not in getattr(stations, "columns", [])
+        or bool(stations["geometry"].isna().all())
+    ):
+        # A parquet written by an older export without geometry -- fall back to
+        # building points from raw latitude/longitude columns.
         logger.warning(
-            "'%s' table has no recorded geometry column; deriving station "
-            "points from latitude/longitude columns instead.",
-            STATIONS_TABLE,
+            "%s has no usable geometry column; deriving station points from "
+            "latitude/longitude columns instead.",
+            stations_path,
         )
-        raw_stations = read_dataframe_table(root_dir, STATIONS_TABLE)
+        raw_stations = pd.read_parquet(stations_path)
         longitude_column = _first_present_column(raw_stations, STATION_LONGITUDE_COLUMN_CANDIDATES)
         latitude_column = _first_present_column(raw_stations, STATION_LATITUDE_COLUMN_CANDIDATES)
         if longitude_column is None or latitude_column is None:
             raise ValueError(
-                f"'{STATIONS_TABLE}' table has neither a recorded geometry column nor "
-                f"latitude/longitude columns among {STATION_LATITUDE_COLUMN_CANDIDATES} / "
+                f"{stations_path} has neither a geometry column nor latitude/longitude "
+                f"columns among {STATION_LATITUDE_COLUMN_CANDIDATES} / "
                 f"{STATION_LONGITUDE_COLUMN_CANDIDATES}; available columns: "
                 f"{list(raw_stations.columns)}."
             ) from None
@@ -154,7 +169,7 @@ def _load_station_points(root_dir="."):
     station_code_column = _first_present_column(stations, ("Codigo", "codigo", STATION_CODE_COLUMN))
     if station_code_column is None:
         raise ValueError(
-            f"'{STATIONS_TABLE}' table has no station-code column among "
+            f"{stations_path} has no station-code column among "
             f"('Codigo', 'codigo', '{STATION_CODE_COLUMN}'); available columns: "
             f"{list(stations.columns)}."
         )

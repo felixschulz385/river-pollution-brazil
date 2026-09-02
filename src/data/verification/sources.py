@@ -455,15 +455,25 @@ def _land_cover_fingerprint_paths(root_dir) -> list[Path]:
 # --------------------------------------------------------------------------
 
 def _sensor_data_list_fetched(root_dir, force: bool = False) -> FetchListing:
-    from src.data.sources.sensor_data.constants import get_download_log_database_path
-
-    db_path = get_download_log_database_path(root_dir)
-    present = 1 if db_path.exists() else 0
-    return FetchListing(
-        present=present,
-        expected=1,
-        detail=f"sensor_downloads.duckdb {'present' if present else 'missing'} at {db_path}.",
+    from src.data.sources.sensor_data.constants import get_raw_dir
+    from src.data.sources.sensor_data.schema import (
+        RAW_STATIONS_PARQUET,
+        RAW_STREAMFLOW_PARQUET,
+        RAW_WATER_QUALITY_PARQUET,
     )
+
+    # fetch's DuckDB files are an internal working store; its public hand-off --
+    # and the only thing preprocess (and biomes) actually read -- is the trio of
+    # raw export parquets `export_raw_tables` writes into `raw/`. Judge fetch
+    # completeness from those, not from the download-log database.
+    raw = get_raw_dir(root_dir)
+    expected_files = (RAW_STATIONS_PARQUET, RAW_WATER_QUALITY_PARQUET, RAW_STREAMFLOW_PARQUET)
+    present_files = [name for name in expected_files if (raw / name).exists()]
+    missing = [name for name in expected_files if name not in present_files]
+    detail = f"{len(present_files)}/{len(expected_files)} raw export parquet(s) present in {raw}."
+    if missing:
+        detail += f" Missing: {missing}."
+    return FetchListing(present=len(present_files), expected=len(expected_files), detail=detail)
 
 
 def _sensor_data_check_outputs(root_dir) -> list[OutputArtifactCheck]:
@@ -499,38 +509,47 @@ def _sensor_data_check_outputs(root_dir) -> list[OutputArtifactCheck]:
 
 
 def _sensor_data_check_fetched(root_dir) -> list[OutputArtifactCheck]:
-    from src.data.sources.sensor_data.constants import get_archives_dir, get_sensor_database_path
+    import geopandas as gpd
+
+    from src.data.sources.sensor_data.constants import get_archives_dir, get_raw_dir
     from src.data.sources.sensor_data.fetch.data.download import (
         _cached_is_parseable_zip,
         _load_zip_verification_cache,
         _save_zip_verification_cache,
     )
-    from src.data.sources.sensor_data.fetch.database import STATIONS_TABLE, read_geodataframe_table, table_exists
+    from src.data.sources.sensor_data.schema import (
+        RAW_STATIONS_PARQUET,
+        RAW_STREAMFLOW_PARQUET,
+        RAW_WATER_QUALITY_PARQUET,
+    )
 
     artifacts: list[OutputArtifactCheck] = []
+    raw = get_raw_dir(root_dir)
 
-    db_path = get_sensor_database_path(root_dir)
-    if not table_exists(root_dir, STATIONS_TABLE):
-        artifacts.append(_absent_artifact("station_inventory", db_path))
+    # Station inventory: `export_raw_tables` writes this GeoParquet as fetch's
+    # public output -- it's what preprocess and biomes read, not the internal
+    # DuckDB `stations` table -- so verify the parquet directly.
+    stations_path = raw / RAW_STATIONS_PARQUET
+    if not stations_path.exists():
+        artifacts.append(_absent_artifact("station_inventory", stations_path))
     else:
         try:
-            stations = read_geodataframe_table(root_dir, STATIONS_TABLE)
+            stations = gpd.read_parquet(stations_path)
         except Exception as exc:
-            # The table can exist (e.g. left over from an interrupted or
-            # pre-metadata-tracking write) without matching what
-            # read_geodataframe_table's stored metadata expects -- that's a
-            # data problem to report, not a reason to crash verification.
+            # A file that exists but isn't a valid GeoParquet (e.g. truncated,
+            # or written by an older export without geometry) is a data
+            # problem to report, not a reason to crash verification.
             artifacts.append(
                 OutputArtifactCheck(
                     label="station_inventory",
-                    path=db_path,
+                    path=stations_path,
                     exists=True,
                     checks=[
                         CheckResult(
                             name="readable",
                             ok=False,
                             message=(
-                                f"Could not read '{STATIONS_TABLE}' table: "
+                                f"Could not read {RAW_STATIONS_PARQUET} as a GeoDataFrame: "
                                 f"{exc.__class__.__name__}: {exc}. Try re-running "
                                 "`data fetch --source sensor_data` to rewrite it."
                             ),
@@ -538,9 +557,7 @@ def _sensor_data_check_fetched(root_dir) -> list[OutputArtifactCheck]:
                     ],
                 )
             )
-            stations = None
-
-        if stations is not None:
+        else:
             checks = [_non_empty_check(stations, name="non_empty")]
             if "geometry" in stations.columns:
                 null_fraction = float(stations.geometry.isna().mean()) if not stations.empty else 1.0
@@ -551,12 +568,38 @@ def _sensor_data_check_fetched(root_dir) -> list[OutputArtifactCheck]:
                         message=f"{null_fraction:.2%} null geometries.",
                     )
                 )
+            else:
+                checks.append(
+                    CheckResult(name="null_fraction:geometry", ok=False, message="No geometry column.")
+                )
             artifacts.append(
-                OutputArtifactCheck(label="station_inventory", path=db_path, exists=True, checks=checks)
+                OutputArtifactCheck(
+                    label="station_inventory", path=stations_path, exists=True, checks=checks
+                )
             )
 
+    # The other two raw export parquets preprocess reads.
+    for label, filename in (
+        ("raw_water_quality", RAW_WATER_QUALITY_PARQUET),
+        ("raw_streamflow", RAW_STREAMFLOW_PARQUET),
+    ):
+        path = raw / filename
+        frame = _safe_read_parquet(path)
+        if frame is None:
+            artifacts.append(_missing_artifact(label, path))
+        else:
+            artifacts.append(
+                OutputArtifactCheck(label=label, path=path, exists=True, checks=[_non_empty_check(frame)])
+            )
+
+    # Raw MDB archives are a fetch-internal working artifact consumed before the
+    # parquets above are written. `data fetch` runs locally (Selenium); a
+    # preprocess-only checkout (e.g. HPC) legitimately has no `archives/` dir, so
+    # only check archive integrity when the directory is actually present.
     archives_dir = get_archives_dir(root_dir)
-    zip_paths = sorted(archives_dir.glob("*.zip")) if archives_dir.exists() else []
+    if not archives_dir.exists():
+        return artifacts
+    zip_paths = sorted(archives_dir.glob("*.zip"))
     if not zip_paths:
         artifacts.append(_absent_artifact("raw_archives", archives_dir))
     else:
@@ -586,16 +629,19 @@ def _sensor_data_check_fetched(root_dir) -> list[OutputArtifactCheck]:
 
 
 def _sensor_data_fingerprint_paths(root_dir) -> list[Path]:
-    from src.data.sources.sensor_data.constants import (
-        get_download_log_database_path,
-        get_processed_dir,
-        get_sensor_database_path,
+    from src.data.sources.sensor_data.constants import get_processed_dir, get_raw_dir
+    from src.data.sources.sensor_data.schema import (
+        ASSEMBLED_SENSOR_DATA_PARQUET,
+        RAW_STATIONS_PARQUET,
+        RAW_STREAMFLOW_PARQUET,
+        RAW_WATER_QUALITY_PARQUET,
     )
-    from src.data.sources.sensor_data.schema import ASSEMBLED_SENSOR_DATA_PARQUET
 
+    raw = get_raw_dir(root_dir)
     return [
-        get_sensor_database_path(root_dir),
-        get_download_log_database_path(root_dir),
+        raw / RAW_STATIONS_PARQUET,
+        raw / RAW_WATER_QUALITY_PARQUET,
+        raw / RAW_STREAMFLOW_PARQUET,
         get_processed_dir(root_dir, stage="aggregate") / ASSEMBLED_SENSOR_DATA_PARQUET,
     ]
 
