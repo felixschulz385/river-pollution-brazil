@@ -33,6 +33,7 @@
 .DS_Store
 .DS_Store?
 .codex/
+.claude/
 
 # Python packaging/build artifacts
 __pycache__/
