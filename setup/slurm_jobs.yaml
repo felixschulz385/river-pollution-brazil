@@ -42,7 +42,7 @@ jobs:
     time: "0-12:00:00"
     qos: 1day
     cpus_per_task: 4
-    mem: 64G
+    mem: 128G
 
   # Formerly setup/slurm_scripts/assemble_land_cover_adm2.sh and
   # assemble_land_cover_sensor.sh. Default --variant is "all", running the

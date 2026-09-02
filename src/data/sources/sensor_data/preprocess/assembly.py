@@ -432,18 +432,26 @@ def _aggregate_streamflow_matches(water_quality_keys, station_matches, streamflo
     if station_matches.empty:
         return pd.DataFrame(columns=empty_columns)
 
-    matched = station_matches.merge(
-        streamflow_features,
-        left_on="streamflow_station_code",
-        right_on=STATION_CODE_COLUMN,
+    # Restrict to the (wq_station, date) pairs actually observed *before*
+    # touching the streamflow daily history. Merging station_matches into the
+    # full streamflow_features on station code alone fans every one of the
+    # ~2.5e5 match pairs out across that streamflow station's entire
+    # multi-decade daily series (order 1e9 rows) only for the next join to
+    # throw away every date without a matching water-quality observation --
+    # that intermediate frame is what OOMs the box. Bring the observed dates
+    # in first, then pull the streamflow feature values with an exact
+    # (station, date) key match that cannot fan out.
+    candidate_pairs = water_quality_keys.merge(
+        station_matches,
+        on="wq_station_code",
         how="inner",
-        validate="many_to_many",
-    ).drop(columns=[STATION_CODE_COLUMN])
-    matched = matched.merge(
-        water_quality_keys,
-        on=["wq_station_code", DATE_COLUMN],
+    )
+    matched = candidate_pairs.merge(
+        streamflow_features.rename(
+            columns={STATION_CODE_COLUMN: "streamflow_station_code"}
+        ),
+        on=["streamflow_station_code", DATE_COLUMN],
         how="inner",
-        validate="many_to_many",
     )
     if matched.empty:
         return pd.DataFrame(columns=empty_columns)
