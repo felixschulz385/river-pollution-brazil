@@ -45,11 +45,13 @@ jobs:
     mem: 64G
 
   # Formerly setup/slurm_scripts/assemble_land_cover_adm2.sh and
-  # assemble_land_cover_sensor.sh (identical resources; --variant picks which).
+  # assemble_land_cover_sensor.sh. Default --variant is "all", running the
+  # sensor and ADM2 upstream panels sequentially in one job; pass --variant
+  # explicitly to submit just one. Time budget covers both.
   land_cover.preprocess.aggregate:
     job_name: aggregate_land_cover
-    time: "0-06:00:00"
-    qos: 6hours
+    time: "0-12:00:00"
+    qos: 1day
     cpus_per_task: 4
     mem: 64G
 

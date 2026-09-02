@@ -116,6 +116,12 @@ def _build_table(title, reports, *, source_column, fetched_column, show_stage, s
         checks = report.checks or []
         passed = sum(1 for check in checks if check.get("ok"))
         checks_display = f"{passed}/{len(checks)}" if checks else "-"
+        # A declared-but-absent output artifact runs zero checks, so it never
+        # shows up in the ratio above -- it only flips `status` to
+        # "outstanding". Spell the gap out so that status isn't unexplained.
+        missing_outputs = report.outputs_expected - report.outputs_found
+        if missing_outputs > 0 and report.status == "outstanding":
+            checks_display += f" ({missing_outputs} output{'s' if missing_outputs != 1 else ''} missing)"
         status_display = f"[{style}]{report.status}[/{style}]" if style else report.status
 
         fetch_method = SOURCE_ADAPTERS[name].fetch_method

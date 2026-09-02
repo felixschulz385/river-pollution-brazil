@@ -242,6 +242,28 @@ def test_preprocess_complete_false_when_any_output_artifact_missing(tmp_path, mo
     assert reports["biomes"].preprocess_complete is False
 
 
+def test_output_artifact_counts_expose_a_missing_declared_output(tmp_path, monkeypatch):
+    """A declared-but-absent output runs zero checks, so the passed/total
+    ratio stays clean while `status` goes "outstanding". outputs_expected /
+    outputs_found carry the gap so the summary can spell it out, and they
+    survive the sidecar round-trip."""
+    from src.data.verification import core as core_module
+
+    artifacts = [
+        OutputArtifactCheck(label="a", path=tmp_path, exists=True, checks=[CheckResult(name="check", ok=True)]),
+        OutputArtifactCheck(label="b", path=tmp_path, exists=False, checks=[]),
+    ]
+    monkeypatch.setitem(core_module.SOURCE_ADAPTERS, "biomes", _adapter_with_outputs(artifacts))
+
+    reports = Verification(root_dir=tmp_path).verify(source="biomes")
+    assert reports["biomes"].status == "outstanding"
+    assert (reports["biomes"].outputs_expected, reports["biomes"].outputs_found) == (2, 1)
+
+    sidecar_path = tmp_path / "data" / "biomes" / ".verification.json"
+    payload = json.loads(sidecar_path.read_text())
+    assert (payload["outputs_expected"], payload["outputs_found"]) == (2, 1)
+
+
 def test_preprocess_complete_false_when_no_output_artifacts_declared(tmp_path, monkeypatch):
     from src.data.verification import core as core_module
 

@@ -376,7 +376,7 @@ def _land_cover_share_range_check(frame, share_column) -> list[CheckResult]:
 def _land_cover_check_outputs(root_dir) -> list[OutputArtifactCheck]:
     from src.data.sources.land_cover.constants import (
         BUCKET_SHARE_COLUMN,
-        DEFAULT_RIVER_AGGREGATED_OUTPUT_PATH,
+        DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH,
         DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH,
     )
 
@@ -387,7 +387,7 @@ def _land_cover_check_outputs(root_dir) -> list[OutputArtifactCheck]:
             *_land_cover_share_range_check(frame, BUCKET_SHARE_COLUMN),
         ]
 
-    def build_river_aggregated_checks(frame):
+    def build_adm2_upstream_checks(frame):
         return [
             check_required_columns(frame, ["mun_id", "year"]),
             _non_empty_check(frame),
@@ -395,10 +395,10 @@ def _land_cover_check_outputs(root_dir) -> list[OutputArtifactCheck]:
         ]
 
     sensor_path = Path(root_dir) / DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH
-    river_aggregated_path = Path(root_dir) / DEFAULT_RIVER_AGGREGATED_OUTPUT_PATH
+    adm2_upstream_path = Path(root_dir) / DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH
     return [
         _artifact_check("land_cover_sensor_upstream", sensor_path, build_sensor_checks),
-        _artifact_check("land_cover_river_aggregated", river_aggregated_path, build_river_aggregated_checks),
+        _artifact_check("land_cover_adm2_upstream", adm2_upstream_path, build_adm2_upstream_checks),
     ]
 
 
@@ -433,7 +433,7 @@ def _land_cover_check_fetched(root_dir) -> list[OutputArtifactCheck]:
 
 def _land_cover_fingerprint_paths(root_dir) -> list[Path]:
     from src.data.sources.land_cover.constants import (
-        DEFAULT_RIVER_AGGREGATED_OUTPUT_PATH,
+        DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH,
         DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH,
         build_paths,
     )
@@ -446,7 +446,7 @@ def _land_cover_fingerprint_paths(root_dir) -> list[Path]:
     return [
         *raw_files,
         Path(root_dir) / DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH,
-        Path(root_dir) / DEFAULT_RIVER_AGGREGATED_OUTPUT_PATH,
+        Path(root_dir) / DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH,
     ]
 
 
