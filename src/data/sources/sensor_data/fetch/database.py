@@ -142,6 +142,15 @@ def _read_metadata(
     }
 
 
+def _column_is_entirely_null(connection, quoted_table_name: str, column_name: str) -> bool:
+    """True when a column has only ever held NULLs, so its type carries no data."""
+    quoted_column = _quote_identifier(column_name)
+    non_null_count = connection.execute(
+        f"SELECT COUNT(*) FROM {quoted_table_name} WHERE {quoted_column} IS NOT NULL"
+    ).fetchone()[0]
+    return non_null_count == 0
+
+
 def _table_exists_on_connection(connection, table_name: str) -> bool:
     return (
         connection.execute(
@@ -196,16 +205,29 @@ def append_dataframe_table(
             connection.execute(f"CREATE TABLE {quoted_table_name} AS SELECT * FROM _table_frame")
             _write_metadata(connection, table_name, json_columns=json_columns)
         else:
-            existing_columns = {
-                row[1]
+            existing_column_types = {
+                row[1]: row[2]
                 for row in connection.execute(f"PRAGMA table_info({quoted_table_name})").fetchall()
             }
             frame_schema = connection.execute("DESCRIBE SELECT * FROM _table_frame").fetchall()
             for column_name, column_type, *_ in frame_schema:
-                if column_name not in existing_columns:
-                    quoted_column_name = _quote_identifier(column_name)
+                quoted_column_name = _quote_identifier(column_name)
+                if column_name not in existing_column_types:
                     connection.execute(
                         f"ALTER TABLE {quoted_table_name} ADD COLUMN {quoted_column_name} {column_type}"
+                    )
+                    continue
+                # A column DuckDB first saw as all-NULL gets an arbitrary inferred
+                # type (often INTEGER); when a later batch brings real values of
+                # another type the INSERT would fail to cast. The old type meant
+                # nothing -- no rows used it -- so retype the column to match.
+                if (
+                    existing_column_types[column_name] != column_type
+                    and _column_is_entirely_null(connection, quoted_table_name, column_name)
+                ):
+                    connection.execute(
+                        f"ALTER TABLE {quoted_table_name} "
+                        f"ALTER COLUMN {quoted_column_name} SET DATA TYPE {column_type}"
                     )
             connection.execute(f"INSERT INTO {quoted_table_name} BY NAME SELECT * FROM _table_frame")
         connection.unregister("_table_frame")

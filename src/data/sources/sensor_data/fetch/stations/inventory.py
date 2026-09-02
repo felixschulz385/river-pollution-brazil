@@ -1,12 +1,16 @@
+import logging
+import time
+from xml.etree import ElementTree as ET
+
 import pandas as pd
 import geopandas as gpd
 import requests
-from xml.etree import ElementTree as ET
 
 from ..database import (
     RAW_STATIONS_TABLE,
     STATIONS_TABLE,
     read_geodataframe_table,
+    table_exists,
     write_geodataframe_table,
 )
 from ...constants import (
@@ -14,11 +18,20 @@ from ...constants import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 STATION_INVENTORY_URL = (
     "http://telemetriaws1.ana.gov.br/ServiceANA.asmx/HidroInventario?"
     "codEstDE=&codEstATE=&tpEst=&nmEst=&nmRio=&codSubBacia=&codBacia=&"
     "nmMunicipio=&nmEstado=&sgResp=&sgOper=&telemetrica="
 )
+
+# The ANA endpoint is frequently overloaded and answers with HTTP 500 (or drops
+# the connection) for minutes at a time. Retry transient failures with an
+# exponential backoff before giving up.
+STATION_INVENTORY_MAX_ATTEMPTS = 5
+STATION_INVENTORY_BACKOFF_SECONDS = 5.0
 
 
 def parse_station_inventory_xml(xml_content):
@@ -35,13 +48,69 @@ def parse_station_inventory_xml(xml_content):
     return pd.DataFrame(station_rows)
 
 
-def fetch_station_inventory(root_dir="."):
-    """Fetch the raw ANA station inventory and cache it in DuckDB."""
-    ensure_water_quality_dirs(root_dir)
-    response = requests.get(url=STATION_INVENTORY_URL, timeout=60)
-    response.raise_for_status()
+def _is_retryable_http_error(error):
+    """Retry 5xx and 429 (server-side / rate limit); a 4xx won't fix itself."""
+    status_code = getattr(error.response, "status_code", None)
+    return status_code is None or status_code >= 500 or status_code == 429
 
-    stations = parse_station_inventory_xml(response.content)
+
+def _download_station_inventory_frame():
+    """Fetch and parse the ANA station inventory, retrying transient failures.
+
+    Returns a non-empty DataFrame, or re-raises the last error once the retry
+    budget is exhausted.
+    """
+    last_error = None
+    for attempt in range(1, STATION_INVENTORY_MAX_ATTEMPTS + 1):
+        try:
+            response = requests.get(url=STATION_INVENTORY_URL, timeout=60)
+            response.raise_for_status()
+            stations = parse_station_inventory_xml(response.content)
+            if stations.empty:
+                raise ValueError("ANA station inventory response contained no station rows.")
+            return stations
+        except requests.HTTPError as error:
+            if not _is_retryable_http_error(error):
+                raise
+            last_error = error
+        except (requests.RequestException, ET.ParseError, ValueError) as error:
+            last_error = error
+        if attempt == STATION_INVENTORY_MAX_ATTEMPTS:
+            break
+        wait_seconds = STATION_INVENTORY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+        logger.warning(
+            "Station inventory fetch attempt %s/%s failed (%s); retrying in %.0fs.",
+            attempt,
+            STATION_INVENTORY_MAX_ATTEMPTS,
+            last_error,
+            wait_seconds,
+        )
+        time.sleep(wait_seconds)
+    raise last_error
+
+
+def fetch_station_inventory(root_dir=".", *, allow_stale_cache=True):
+    """Fetch the raw ANA station inventory and cache it in DuckDB.
+
+    Transient failures against the ANA endpoint are retried with an exponential
+    backoff. If every attempt still fails and a previously fetched inventory is
+    already cached in DuckDB, that stale copy is reused (with a warning) so the
+    rest of the fetch pipeline can proceed instead of aborting on an ANA outage.
+    Pass ``allow_stale_cache=False`` to require a fresh download.
+    """
+    ensure_water_quality_dirs(root_dir)
+    try:
+        stations = _download_station_inventory_frame()
+    except (requests.RequestException, ET.ParseError, ValueError) as error:
+        if allow_stale_cache and table_exists(root_dir, RAW_STATIONS_TABLE):
+            logger.warning(
+                "Could not refresh the ANA station inventory (%s); "
+                "falling back to the cached copy already in DuckDB.",
+                error,
+            )
+            return read_geodataframe_table(root_dir, RAW_STATIONS_TABLE)
+        raise
+
     stations_geo = gpd.GeoDataFrame(
         stations,
         geometry=gpd.points_from_xy(

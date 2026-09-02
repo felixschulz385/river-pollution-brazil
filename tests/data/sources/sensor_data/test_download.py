@@ -1,13 +1,71 @@
 from __future__ import annotations
 
+import pandas as pd
 from selenium.common.exceptions import InvalidSessionIdException
 
 from src.data.sources.sensor_data.fetch.data import download as download_module
 from src.data.sources.sensor_data.fetch.data.download import (
+    _download_log_frame,
     _station_code_matches,
     _wait_for_download_completion,
     download_by_id,
 )
+from src.data.sources.sensor_data.fetch.database import (
+    SENSOR_DOWNLOADS_TABLE,
+    append_dataframe_table,
+    read_dataframe_table,
+)
+
+
+def _log_record(**overrides):
+    record = dict(
+        run_id="run-1",
+        attempted_at="2026-01-01T00:00:00Z",
+        fetch_mode="default",
+        station_code="111",
+        result_tab="conventional",
+        station_type=None,
+        download_format="mdb",
+        status="downloaded",
+        success=1,
+        attempts=1,
+        archive_path=None,
+        last_error=None,
+    )
+    record.update(overrides)
+    return record
+
+
+def test_download_log_frame_survives_all_null_then_error_string(tmp_path) -> None:
+    """An early checkpoint of only-successful downloads (every `last_error` None)
+    must not make DuckDB type the column as INTEGER and then choke on the first
+    real error string later in the run -- the exact crash seen in production."""
+    root_dir = str(tmp_path)
+
+    append_dataframe_table(
+        root_dir,
+        SENSOR_DOWNLOADS_TABLE,
+        _download_log_frame([_log_record(), _log_record(station_code="112")]),
+    )
+    append_dataframe_table(
+        root_dir,
+        SENSOR_DOWNLOADS_TABLE,
+        _download_log_frame(
+            [
+                _log_record(
+                    station_code="2555001",
+                    status="failed",
+                    success=0,
+                    attempts=5,
+                    last_error="Station 2555001 not found in conventional results.",
+                )
+            ]
+        ),
+    )
+
+    frame = read_dataframe_table(root_dir, SENSOR_DOWNLOADS_TABLE)
+    failed = frame.loc[frame["station_code"] == "2555001"].iloc[0]
+    assert failed["last_error"] == "Station 2555001 not found in conventional results."
 
 
 def test_station_code_matches_requires_digit_boundaries() -> None:

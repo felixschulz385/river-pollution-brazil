@@ -56,6 +56,34 @@ DOWNLOAD_LOG_COLUMNS = [
     "archive_path",
     "last_error",
 ]
+DOWNLOAD_LOG_TEXT_COLUMNS = (
+    "run_id",
+    "attempted_at",
+    "fetch_mode",
+    "station_code",
+    "result_tab",
+    "station_type",
+    "download_format",
+    "status",
+    "archive_path",
+    "last_error",
+)
+
+
+def _download_log_frame(records: list[dict[str, object]]) -> pd.DataFrame:
+    """Build the download-log frame with stable column dtypes.
+
+    Without pinned dtypes, a checkpoint batch that happens to hold only
+    successful downloads (every ``last_error`` / ``station_type`` / ``archive_path``
+    None) makes DuckDB infer that column as INTEGER when it creates the table,
+    and the first real string later in the run fails to cast on insert. Forcing
+    the text columns to the pandas string dtype keeps DuckDB inferring VARCHAR
+    regardless of a single batch's contents.
+    """
+    frame = pd.DataFrame(records, columns=DOWNLOAD_LOG_COLUMNS)
+    return frame.astype(
+        {column: "string" for column in DOWNLOAD_LOG_TEXT_COLUMNS if column in frame.columns}
+    )
 FETCH_MODES = {
     "default",
     "missing-only",
@@ -280,7 +308,12 @@ def _current_raw_archives_frame(archives_dir: Path) -> pd.DataFrame:
             continue
     if cache_dirty:
         _save_zip_verification_cache(archives_dir, cache)
-    return pd.DataFrame(records, columns=["filename", "file_size_bytes"])
+    # Pin the column dtypes so an empty listing still persists as a VARCHAR/BIGINT
+    # table; without this DuckDB infers all-null object columns as INTEGER and the
+    # regexp_matches(filename, ...) pending-station query fails to bind.
+    return pd.DataFrame(records, columns=["filename", "file_size_bytes"]).astype(
+        {"filename": "string", "file_size_bytes": "int64"}
+    )
 
 
 def _compute_pending_station_ids(
@@ -1168,7 +1201,7 @@ def fetch_station_data(
                 append_dataframe_table(
                     root_dir,
                     SENSOR_DOWNLOADS_TABLE,
-                    pd.DataFrame(download_record_buffer, columns=DOWNLOAD_LOG_COLUMNS),
+                    _download_log_frame(download_record_buffer),
                 )
                 download_record_buffer = []
             completed_stations = idx + 1
@@ -1193,11 +1226,11 @@ def fetch_station_data(
         append_dataframe_table(
             root_dir,
             SENSOR_DOWNLOADS_TABLE,
-            pd.DataFrame(download_record_buffer, columns=DOWNLOAD_LOG_COLUMNS),
+            _download_log_frame(download_record_buffer),
         )
     write_dataframe_table(
         root_dir,
         RAW_ARCHIVES_TABLE,
         _current_raw_archives_frame(archives_dir),
     )
-    return pd.DataFrame(download_records, columns=DOWNLOAD_LOG_COLUMNS)
+    return _download_log_frame(download_records)
