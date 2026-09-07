@@ -629,6 +629,10 @@ def tabularize_era5_land_by_trench(root_dir=".", n_jobs: int | None = None) -> P
         # still running) race on that shared staging directory and swap, which
         # can corrupt the final table -- the GRIB->zarr preprocessing step
         # above guards its shared write the same way.
+        # The lock file lives next to `output_path`, so its parent must exist
+        # before `climate_file_lock` can create it -- `_write_chunked_trench_day_table`
+        # only creates that directory after the lock is already acquired.
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         with climate_file_lock(output_path, owner="climate_tabularize_worker"):
             _write_chunked_trench_day_table(
                 dataset[climate_columns],
