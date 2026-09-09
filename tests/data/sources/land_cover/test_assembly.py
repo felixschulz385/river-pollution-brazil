@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -90,7 +91,7 @@ def test_assemble_land_cover_adm2_uses_bucketed_upstream_output(
     monkeypatch.setattr(assembly.rn_module, "RiverNetwork", _FakeRiverNetwork)
 
     result = assembly.assemble_land_cover(
-        object(),
+        SimpleNamespace(root_dir=tmp_path),
         variant="adm2",
         land_cover_path=str(land_cover_path),
         river_network_path=str(tmp_path / "river_network"),

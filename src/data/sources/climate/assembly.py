@@ -9,6 +9,7 @@ import pandas as pd
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
+from src.data.shared.paths import scratch_root
 from src.data.shared.slurm import resolve_n_jobs
 
 from .constants import (
@@ -452,6 +453,7 @@ def _assemble_sensor_upstream_duckdb(
     river_network_path,
     output_path,
     n_jobs,
+    root_dir=".",
 ):
     logger.info("Loading cleaned water-quality data from %s", water_quality_path)
     water_quality_df = pd.read_parquet(water_quality_path)
@@ -474,7 +476,9 @@ def _assemble_sensor_upstream_duckdb(
         station_trenches[STATION_CODE_COLUMN].nunique(),
     )
 
-    temp_dir = Path(tempfile.mkdtemp(prefix="climate_sensor_duckdb_"))
+    temp_dir = Path(
+        tempfile.mkdtemp(prefix="climate_sensor_duckdb_", dir=scratch_root(root_dir))
+    )
     parts_dir = temp_dir / "parts"
     parts_dir.mkdir(parents=True, exist_ok=True)
     max_window_size = max(SENSOR_WINDOW_LABELS.values())
@@ -703,6 +707,7 @@ def _assemble_adm2_upstream_duckdb(
     river_network_path,
     output_path,
     n_jobs,
+    root_dir=".",
 ):
     """Bin climate into 25 km upstream distance buckets per ADM2 unit/year/variable.
 
@@ -731,7 +736,9 @@ def _assemble_adm2_upstream_duckdb(
         BUCKET_INTERSECTS_ADM2_COLUMN,
     ]
 
-    temp_dir = Path(tempfile.mkdtemp(prefix="climate_adm2_duckdb_"))
+    temp_dir = Path(
+        tempfile.mkdtemp(prefix="climate_adm2_duckdb_", dir=scratch_root(root_dir))
+    )
     try:
         bucket_parts_dir = temp_dir / "adm2_buckets"
         bucket_part_paths = build_adm2_upstream_bucket_parts(
@@ -855,6 +862,7 @@ def assemble_climate(
             river_network_path=river_network_path,
             output_path=output_path,
             n_jobs=n_jobs,
+            root_dir=self.root_dir,
         )
 
     return _assemble_adm2_upstream_duckdb(
@@ -863,4 +871,5 @@ def assemble_climate(
         river_network_path=river_network_path,
         output_path=output_path,
         n_jobs=n_jobs,
+        root_dir=self.root_dir,
     )

@@ -85,20 +85,29 @@ def test_membership_parts_bin_every_reachable_trench(tmp_path):
     assert a2.loc[103, "distance_bucket"] == 25
 
 
-def test_streams_one_part_per_chunk_without_losing_units(tmp_path):
-    parts = build_adm2_upstream_bucket_parts(
-        network=_FakeRiverNetwork(),
-        rn_module=rn_module,
-        parts_dir=tmp_path / "parts",
-        n_jobs=2,
-        target_part_count=3,
-    )
+def test_streams_one_part_per_chunk_without_losing_units(tmp_path, caplog):
+    with caplog.at_level("INFO"):
+        parts = build_adm2_upstream_bucket_parts(
+            network=_FakeRiverNetwork(),
+            rn_module=rn_module,
+            parts_dir=tmp_path / "parts",
+            n_jobs=2,
+            target_part_count=3,
+        )
     # 3 ADM2 units, target 3 parts -> one unit per streamed part file.
     assert len(parts) == 3
     assert all(Path(path).name.startswith("part-") for path in parts)
 
     frame = _read_parts(parts)
     assert sorted(frame["adm2_id"].unique()) == ["10001", "20002", "30003"]
+
+    # One INFO line per part file actually written.
+    part_log_lines = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Wrote ADM2 upstream bucket part ")
+    ]
+    assert len(part_log_lines) == 3
 
 
 def test_reduce_adm2_receives_membership_and_its_output_is_written(tmp_path):

@@ -7,7 +7,35 @@ that convention so sources don't each re-derive it independently.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+
+# Bulky, disposable working files (DuckDB spill, Parquet part files, ...) go
+# here rather than the system temp dir. On the cluster a job's cwd is the
+# project directory and ``scratch_nobackup`` there is the large, fast,
+# un-backed-up scratch area -- ``/tmp`` (where ``tempfile`` defaults) is small
+# and would OOM/ENOSPC on these jobs.
+SCRATCH_DIR_NAME = "scratch_nobackup"
+SCRATCH_DIR_ENV_VAR = "RIVER_POLLUTION_SCRATCH_DIR"
+
+
+def scratch_root(root_dir: str | Path = ".") -> Path:
+    """Return (creating it if needed) the base directory for scratch working files.
+
+    Defaults to ``<root_dir>/scratch_nobackup``; override with the
+    ``RIVER_POLLUTION_SCRATCH_DIR`` environment variable (e.g. to point at a
+    node-local ``$TMPDIR``). Pass the resulting path as ``dir=`` to
+    ``tempfile.mkdtemp`` / ``tempfile.TemporaryDirectory``.
+
+    Always returns an absolute path: callers hand it to DuckDB
+    (``PRAGMA temp_directory``) and to ``read_parquet`` globs, which resolve
+    against the process CWD, and long-running jobs may ``os.chdir`` mid-run.
+    """
+    override = os.environ.get(SCRATCH_DIR_ENV_VAR)
+    base = Path(override).expanduser() if override else Path(root_dir) / SCRATCH_DIR_NAME
+    base.mkdir(parents=True, exist_ok=True)
+    return base.resolve()
 
 
 def source_root(root_dir: str | Path, source: str) -> Path:

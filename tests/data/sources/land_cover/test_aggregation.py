@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pandas as pd
 from scipy.sparse import csr_matrix
@@ -53,7 +55,7 @@ def test_aggregate_along_rivers_sums_class_counts_and_shares_per_bucket(
     output_path = tmp_path / "adm2_upstream.parquet"
 
     result = aggregation.aggregate_along_rivers(
-        object(),
+        SimpleNamespace(root_dir=tmp_path),
         land_cover_path=land_cover_path,
         river_network_path=str(tmp_path / "river_network"),
         n_jobs=1,
@@ -112,7 +114,7 @@ def test_aggregate_along_rivers_returns_empty_frame_when_no_trenches_match(
     land_cover.to_parquet(land_cover_path, index=False)
 
     result = aggregation.aggregate_along_rivers(
-        object(),
+        SimpleNamespace(root_dir=tmp_path),
         land_cover_path=land_cover_path,
         river_network_path=str(tmp_path / "river_network"),
         n_jobs=1,

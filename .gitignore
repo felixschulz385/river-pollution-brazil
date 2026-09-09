@@ -55,4 +55,5 @@ data/*/**
 api_creds
 setup/miniforge3/*
 **/scratch
+scratch_nobackup/
 src/data/output/manual_*/

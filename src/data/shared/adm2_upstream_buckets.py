@@ -166,7 +166,8 @@ def build_adm2_upstream_bucket_parts(
     instead (return ``None``/empty to skip a unit).
 
     A unit whose resolution or `reduce_adm2` call raises is logged and skipped
-    rather than aborting the whole (multi-thousand-unit) run.
+    rather than aborting the whole (multi-thousand-unit) run. Each part file is
+    logged at INFO as it is written (index, contributing unit count, row count).
 
     Returns the sorted list of part paths actually written; empty if nothing
     produced rows. `network.trenches` / `network.drainage_areas` are normalized
@@ -281,7 +282,7 @@ def build_adm2_upstream_bucket_parts(
             ]
         ]
 
-    def process_chunk(chunk_index, chunk_groups):
+    def process_chunk(chunk_index, n_chunks, chunk_groups):
         frames = []
         for adm2_id, adm2_trenches in chunk_groups:
             try:
@@ -306,7 +307,16 @@ def build_adm2_upstream_bucket_parts(
         if not frames:
             return None
         part_path = parts_dir / f"part-{chunk_index:05d}.parquet"
-        pd.concat(frames, ignore_index=True).to_parquet(part_path, index=False)
+        part_frame = pd.concat(frames, ignore_index=True)
+        part_frame.to_parquet(part_path, index=False)
+        logger.info(
+            "Wrote ADM2 upstream bucket part %d/%d: %d unit(s), %d row(s) -> %s",
+            chunk_index + 1,
+            n_chunks,
+            len(frames),
+            len(part_frame),
+            part_path.name,
+        )
         return part_path
 
     chunks = list(_chunk_bounds(len(adm2_groups), target_part_count))
@@ -317,7 +327,7 @@ def build_adm2_upstream_bucket_parts(
         n_jobs,
     )
     part_paths = Parallel(n_jobs=n_jobs, backend="threading")(
-        delayed(process_chunk)(chunk_index, adm2_groups[start:end])
+        delayed(process_chunk)(chunk_index, len(chunks), adm2_groups[start:end])
         for chunk_index, (start, end) in enumerate(
             tqdm(chunks, desc=progress_desc)
         )

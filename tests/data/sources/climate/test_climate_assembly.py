@@ -106,6 +106,7 @@ def test_assemble_adm2_upstream_bins_by_distance_like_land_cover(
         river_network_path=str(tmp_path / "river_network"),
         output_path=output_path,
         n_jobs=1,
+        root_dir=tmp_path,
     )
     result_df = pd.read_parquet(output_path)
 

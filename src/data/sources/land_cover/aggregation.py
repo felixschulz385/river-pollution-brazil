@@ -30,6 +30,7 @@ from .schema import (
     validate_land_cover_output_columns,
 )
 from src.data.shared.adm2_upstream_buckets import build_adm2_upstream_bucket_parts
+from src.data.shared.paths import scratch_root
 from src.data.shared.sensor_upstream import BUCKET_INTERSECTS_ADM2_COLUMN
 
 
@@ -56,6 +57,7 @@ def aggregate_along_rivers(
     """
     if n_jobs is None:
         n_jobs = resolve_n_jobs()
+    root_dir = getattr(self, "root_dir", ".")
 
     logger.info("Loading land cover data from %s", land_cover_path)
     land_cover_path = Path(land_cover_path)
@@ -156,7 +158,9 @@ def aggregate_along_rivers(
             return None
         return pd.DataFrame(rows, columns=ordered_columns)
 
-    with tempfile.TemporaryDirectory(prefix="land_cover_adm2_buckets_") as temp_dir:
+    with tempfile.TemporaryDirectory(
+        prefix="land_cover_adm2_buckets_", dir=scratch_root(root_dir)
+    ) as temp_dir:
         part_paths = build_adm2_upstream_bucket_parts(
             network=network,
             rn_module=rn_module,
