@@ -41,31 +41,24 @@ from .schema import (
     ANNUAL_MIN_VARIABLES,
     SENSOR_WINDOW_LABELS,
 )
-from src.data.sources.land_cover.aggregation import (
-    _apply_shifted_origin,
-    _assign_distance_bucket,
-)
 from src.data.sources.land_cover.schema import build_trench_length_lookup as _build_trench_length_lookup
 from src.data.sources.river_network import RiverNetwork
 import src.data.sources.river_network as rn_module
+from src.data.shared.adm2_upstream_buckets import build_adm2_upstream_bucket_parts
 from src.data.shared.sensor_upstream import (
     BUCKET_INTERSECTS_ADM2_COLUMN,
     assign_distance_buckets,
     bucket_label,
-    build_group_index_lookup,
     build_system_trench_lookup,
     build_trench_system_position_lookup,
     combine_station_upstream_distances,
     normalize_network_frame,
     prepare_entity_links,
     prepare_observation_targets,
-    prepare_trench_adm2_matches,
-    resolve_multi_seed_reachable_distances,
     resolve_upstream_trench_distances,
     shift_upstream_distances,
     validate_network_index_tables,
 )
-from src.data.shared.spatial_tabular import deduplicate_drainage_polygons
 
 
 logger = logging.getLogger(__name__)
@@ -703,106 +696,6 @@ def _assemble_sensor_upstream_duckdb(
     return output_path
 
 
-def _build_adm2_upstream_buckets(
-    *,
-    network,
-    n_jobs,
-):
-    """Bin each ADM2 unit's upstream trenches into discrete 25 km distance buckets.
-
-    Mirrors `land_cover.aggregation.aggregate_along_rivers`'s ADM2 binning exactly
-    (same shifted-origin + bucket-width scheme) so climate and land-cover ADM2
-    outputs share one upstream-distance representation; any distance weighting
-    across buckets happens downstream, at assembly time.
-    """
-    if not network.trench_reachability_matrices:
-        raise ValueError("River network must have trench reachability data computed.")
-    if network.trenches is None:
-        raise ValueError("River network must include trench data.")
-    if network.drainage_areas is None:
-        raise ValueError("River network must include drainage polygon data.")
-
-    trench_adm2_matches = prepare_trench_adm2_matches(
-        network,
-        rn_module=rn_module,
-        trench_id_column=TRENCH_ID_COLUMN,
-    )
-    drainage_polygons = deduplicate_drainage_polygons(
-        network.drainage_areas.reset_index(drop=True).copy()
-    ).reset_index(drop=True)
-    trench_lookup = drainage_polygons[[TRENCH_ID_COLUMN]].merge(
-        trench_adm2_matches[[TRENCH_ID_COLUMN, "adm2", rn_module.SYSTEM_ID_KEY]].drop_duplicates(),
-        on=TRENCH_ID_COLUMN,
-        how="left",
-        validate="one_to_many",
-    ).dropna(subset=[rn_module.SYSTEM_ID_KEY])
-
-    adm2_units = trench_lookup["adm2"].dropna().unique()
-    validate_network_index_tables(
-        network,
-        location_column=TRENCH_ID_COLUMN,
-        system_column=rn_module.SYSTEM_ID_KEY,
-        position_column=rn_module.TRENCH_INDEX_COLUMN,
-    )
-    system_location_arrays, system_positions = build_group_index_lookup(
-        network.trenches,
-        location_column=TRENCH_ID_COLUMN,
-        system_column=rn_module.SYSTEM_ID_KEY,
-        position_column=rn_module.TRENCH_INDEX_COLUMN,
-    )
-    trench_lengths = _build_trench_length_lookup(network.trenches)
-
-    def process_adm2(adm2_id):
-        adm2_trenches = trench_lookup.loc[
-            trench_lookup["adm2"] == adm2_id,
-            [TRENCH_ID_COLUMN, rn_module.SYSTEM_ID_KEY],
-        ].drop_duplicates()
-        if adm2_trenches.empty:
-            return None
-        intersecting_trench_ids = set(adm2_trenches[TRENCH_ID_COLUMN])
-
-        trench_distance_lookup = resolve_multi_seed_reachable_distances(
-            network,
-            adm2_trenches,
-            location_column=TRENCH_ID_COLUMN,
-            distance_column=UPSTREAM_DISTANCE_COLUMN,
-            system_column=rn_module.SYSTEM_ID_KEY,
-            position_column=rn_module.TRENCH_INDEX_COLUMN,
-            system_location_arrays=system_location_arrays,
-            system_positions=system_positions,
-        )
-        if trench_distance_lookup.empty:
-            return None
-        trench_distance_lookup = trench_distance_lookup.set_index(TRENCH_ID_COLUMN)[
-            UPSTREAM_DISTANCE_COLUMN
-        ]
-        trench_distance_lookup = _apply_shifted_origin(trench_distance_lookup, trench_lengths)
-
-        buckets = trench_distance_lookup.reset_index()[[TRENCH_ID_COLUMN]]
-        buckets[ADM2_ID_COLUMN] = adm2_id
-        buckets[DISTANCE_BUCKET_COLUMN] = _assign_distance_bucket(
-            trench_distance_lookup[ADJUSTED_DISTANCE_COLUMN].to_numpy()
-        )
-        buckets[BUCKET_INTERSECTS_ADM2_COLUMN] = buckets[TRENCH_ID_COLUMN].isin(
-            intersecting_trench_ids
-        )
-        return buckets[[ADM2_ID_COLUMN, TRENCH_ID_COLUMN, DISTANCE_BUCKET_COLUMN, BUCKET_INTERSECTS_ADM2_COLUMN]]
-
-    logger.info("Preparing ADM2 upstream buckets for %d ADM2 unit(s) with %s worker(s).", len(adm2_units), n_jobs)
-    results = Parallel(n_jobs=n_jobs, backend="threading")(
-        delayed(process_adm2)(adm2_id)
-        for adm2_id in tqdm(adm2_units, desc="Climate ADM2 buckets")
-    )
-    bucket_frames = [result for result in results if result is not None and not result.empty]
-    if not bucket_frames:
-        return pd.DataFrame(
-            columns=[ADM2_ID_COLUMN, TRENCH_ID_COLUMN, DISTANCE_BUCKET_COLUMN, BUCKET_INTERSECTS_ADM2_COLUMN]
-        )
-    buckets_df = pd.concat(bucket_frames, ignore_index=True)
-    logger.info("Prepared %d ADM2 upstream bucket row(s).", len(buckets_df))
-    return buckets_df
-
-
 def _assemble_adm2_upstream_duckdb(
     *,
     climate_path,
@@ -817,12 +710,17 @@ def _assemble_adm2_upstream_duckdb(
     ADM2 output (same bucket scheme, plus a `bucket_intersects_adm2` flag); any
     distance-kernel weighting across buckets happens downstream, at assembly time,
     via `src.data.assembly`.
+
+    The per-ADM2 upstream bucket membership is resolved by the shared
+    `build_adm2_upstream_bucket_parts` driver, which streams it to Parquet part
+    files instead of concatenating every unit's rows in memory; DuckDB then joins
+    those parts against the annual per-trench climate means straight off disk.
     """
     logger.info("Loading river network from %s", river_network_path)
     network = RiverNetwork()
     network.load(str(river_network_path))
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    buckets_df = _build_adm2_upstream_buckets(network=network, n_jobs=n_jobs)
+
     empty_columns = [
         ADM2_ID_COLUMN,
         YEAR_COLUMN,
@@ -832,67 +730,81 @@ def _assemble_adm2_upstream_duckdb(
         REACHABLE_TRENCH_COUNT_COLUMN,
         BUCKET_INTERSECTS_ADM2_COLUMN,
     ]
-    if buckets_df.empty:
-        pd.DataFrame(columns=empty_columns).to_parquet(output_path, index=False)
-        logger.info("Saved climate ADM2 assembly to %s", output_path)
-        return output_path
 
     temp_dir = Path(tempfile.mkdtemp(prefix="climate_adm2_duckdb_"))
-    connection = duckdb.connect(database=":memory:")
     try:
-        connection.execute(f"PRAGMA threads={int(max(1, n_jobs))}")
-        connection.execute(f"PRAGMA temp_directory={_sql_literal(str(temp_dir))}")
-        connection.register("adm2_upstream_buckets_df", buckets_df)
-
-        climate_sql_path = _sql_literal(str(climate_path))
-        annual_aggregate_sql = _annual_aggregate_sql(climate_columns, source_alias="c")
-        connection.execute(
-            f"""
-            CREATE TEMP TABLE climate_by_trench_year AS
-            SELECT
-                c.{TRENCH_ID_COLUMN} AS {TRENCH_ID_COLUMN},
-                EXTRACT(YEAR FROM c.{DATE_COLUMN})::BIGINT AS {YEAR_COLUMN},
-                {annual_aggregate_sql}
-            FROM read_parquet({climate_sql_path}) AS c
-            GROUP BY 1, 2
-            """
+        bucket_parts_dir = temp_dir / "adm2_buckets"
+        bucket_part_paths = build_adm2_upstream_bucket_parts(
+            network=network,
+            rn_module=rn_module,
+            parts_dir=bucket_parts_dir,
+            n_jobs=n_jobs,
+            trench_id_column=TRENCH_ID_COLUMN,
+            adm2_id_column=ADM2_ID_COLUMN,
+            distance_bucket_column=DISTANCE_BUCKET_COLUMN,
+            progress_desc="Climate ADM2 buckets",
         )
+        if not bucket_part_paths:
+            pd.DataFrame(columns=empty_columns).to_parquet(output_path, index=False)
+            logger.info("Saved climate ADM2 assembly to %s", output_path)
+            return output_path
 
-        long_branches_sql = " UNION ALL ".join(
-            f"""
-            SELECT
-                {TRENCH_ID_COLUMN}, {YEAR_COLUMN},
-                {_sql_literal(column)} AS {_sql_ident(CLIMATE_VARIABLE_COLUMN)},
-                {_sql_ident(column)} AS value
-            FROM climate_by_trench_year
-            """
-            for column in climate_columns
-        )
+        buckets_sql_path = _sql_literal(str(bucket_parts_dir / "part-*.parquet"))
+        connection = duckdb.connect(database=":memory:")
+        try:
+            connection.execute(f"PRAGMA threads={int(max(1, n_jobs))}")
+            connection.execute(f"PRAGMA temp_directory={_sql_literal(str(temp_dir))}")
 
-        output_sql_path = _sql_literal(str(output_path))
-        connection.execute(
-            f"""
-            COPY (
+            climate_sql_path = _sql_literal(str(climate_path))
+            annual_aggregate_sql = _annual_aggregate_sql(climate_columns, source_alias="c")
+            connection.execute(
+                f"""
+                CREATE TEMP TABLE climate_by_trench_year AS
                 SELECT
-                    b.{ADM2_ID_COLUMN},
-                    y.{YEAR_COLUMN},
-                    b.{DISTANCE_BUCKET_COLUMN},
-                    y.{CLIMATE_VARIABLE_COLUMN},
-                    AVG(y.value) AS mean_value,
-                    COUNT(*) AS {REACHABLE_TRENCH_COUNT_COLUMN},
-                    BOOL_OR(b.{BUCKET_INTERSECTS_ADM2_COLUMN}) AS {BUCKET_INTERSECTS_ADM2_COLUMN}
-                FROM ({long_branches_sql}) AS y
-                INNER JOIN adm2_upstream_buckets_df AS b
-                    ON y.{TRENCH_ID_COLUMN} = b.{TRENCH_ID_COLUMN}
-                GROUP BY 1, 2, 3, 4
-                ORDER BY 1, 2, 3, 4
-            ) TO {output_sql_path} (FORMAT PARQUET)
-            """
-        )
+                    c.{TRENCH_ID_COLUMN} AS {TRENCH_ID_COLUMN},
+                    EXTRACT(YEAR FROM c.{DATE_COLUMN})::BIGINT AS {YEAR_COLUMN},
+                    {annual_aggregate_sql}
+                FROM read_parquet({climate_sql_path}) AS c
+                GROUP BY 1, 2
+                """
+            )
+
+            long_branches_sql = " UNION ALL ".join(
+                f"""
+                SELECT
+                    {TRENCH_ID_COLUMN}, {YEAR_COLUMN},
+                    {_sql_literal(column)} AS {_sql_ident(CLIMATE_VARIABLE_COLUMN)},
+                    {_sql_ident(column)} AS value
+                FROM climate_by_trench_year
+                """
+                for column in climate_columns
+            )
+
+            output_sql_path = _sql_literal(str(output_path))
+            connection.execute(
+                f"""
+                COPY (
+                    SELECT
+                        b.{ADM2_ID_COLUMN},
+                        y.{YEAR_COLUMN},
+                        b.{DISTANCE_BUCKET_COLUMN},
+                        y.{CLIMATE_VARIABLE_COLUMN},
+                        AVG(y.value) AS mean_value,
+                        COUNT(*) AS {REACHABLE_TRENCH_COUNT_COLUMN},
+                        BOOL_OR(b.{BUCKET_INTERSECTS_ADM2_COLUMN}) AS {BUCKET_INTERSECTS_ADM2_COLUMN}
+                    FROM ({long_branches_sql}) AS y
+                    INNER JOIN read_parquet({buckets_sql_path}) AS b
+                        ON y.{TRENCH_ID_COLUMN} = b.{TRENCH_ID_COLUMN}
+                    GROUP BY 1, 2, 3, 4
+                    ORDER BY 1, 2, 3, 4
+                ) TO {output_sql_path} (FORMAT PARQUET)
+                """
+            )
+        finally:
+            close = getattr(connection, "close", None)
+            if callable(close):
+                close()
     finally:
-        close = getattr(connection, "close", None)
-        if callable(close):
-            close()
         shutil.rmtree(temp_dir, ignore_errors=True)
 
     logger.info("Saved climate ADM2 assembly to %s", output_path)
