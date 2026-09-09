@@ -172,7 +172,6 @@ def aggregate_along_rivers(
             bucket_width_km=SENSOR_DISTANCE_BUCKET_WIDTH_KM,
             max_bucket_start_km=SENSOR_DISTANCE_BUCKET_STARTS_KM[-1],
             reduce_adm2=reduce_adm2,
-            progress_desc="ADM2 units",
         )
         if not part_paths:
             logger.warning("No results produced")

@@ -27,7 +27,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
-from tqdm import tqdm
 
 from src.data.shared.sensor_upstream import (
     BUCKET_INTERSECTS_ADM2_COLUMN,
@@ -153,7 +152,6 @@ def build_adm2_upstream_bucket_parts(
     max_bucket_start_km=DEFAULT_MAX_BUCKET_START_KM,
     reduce_adm2=None,
     target_part_count=DEFAULT_TARGET_PART_COUNT,
-    progress_desc="ADM2 upstream buckets",
 ):
     """Bin every ADM2 unit's upstream trenches into distance buckets, streamed.
 
@@ -328,9 +326,7 @@ def build_adm2_upstream_bucket_parts(
     )
     part_paths = Parallel(n_jobs=n_jobs, backend="threading")(
         delayed(process_chunk)(chunk_index, len(chunks), adm2_groups[start:end])
-        for chunk_index, (start, end) in enumerate(
-            tqdm(chunks, desc=progress_desc)
-        )
+        for chunk_index, (start, end) in enumerate(chunks)
     )
     written = sorted(str(path) for path in part_paths if path is not None)
     logger.info(

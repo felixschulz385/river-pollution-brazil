@@ -2,12 +2,12 @@ import logging
 from pathlib import Path
 import shutil
 import tempfile
+import threading
 
 import duckdb
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
-from tqdm import tqdm
 
 from src.data.shared.paths import scratch_root
 from src.data.shared.slurm import resolve_n_jobs
@@ -380,11 +380,17 @@ def _build_station_upstream_bucket_lookup(station_trenches, network, n_jobs):
     target_trench_ids = (
         station_trenches[TRENCH_ID_COLUMN].drop_duplicates().astype(np.int64).tolist()
     )
+    target_trench_count = len(target_trench_ids)
     logger.info(
         "Resolving shifted upstream distances for %d target trench(es) with %s thread(s).",
-        len(target_trench_ids),
+        target_trench_count,
         n_jobs,
     )
+    # Log progress roughly every 5% instead of a tqdm bar, so batch/log output
+    # stays readable (mirrors the ADM2 upstream-bucket driver).
+    progress_lock = threading.Lock()
+    progress_state = {"resolved": 0}
+    log_every = max(1, target_trench_count // 20)
 
     def resolve_target_trench(trench_id):
         upstream_distances = _resolve_upstream_trench_distances(
@@ -394,20 +400,29 @@ def _build_station_upstream_bucket_lookup(station_trenches, network, n_jobs):
             system_valid_positions,
             trench_system_position_lookup,
         )
-        return (
+        result = (
             int(trench_id),
             _shift_upstream_distances(upstream_distances, trench_lengths),
         )
+        with progress_lock:
+            progress_state["resolved"] += 1
+            resolved = progress_state["resolved"]
+        if resolved % log_every == 0 or resolved == target_trench_count:
+            logger.info(
+                "Resolved shifted upstream distances for %d/%d target trench(es).",
+                resolved,
+                target_trench_count,
+            )
+        return result
 
     if n_jobs == 1:
         upstream_distance_items = [
-            resolve_target_trench(trench_id)
-            for trench_id in tqdm(target_trench_ids, desc="Upstream trenches")
+            resolve_target_trench(trench_id) for trench_id in target_trench_ids
         ]
     else:
         upstream_distance_items = Parallel(n_jobs=n_jobs, backend="threading")(
             delayed(resolve_target_trench)(trench_id)
-            for trench_id in tqdm(target_trench_ids, desc="Upstream trenches")
+            for trench_id in target_trench_ids
         )
     upstream_distance_cache = dict(upstream_distance_items)
 
@@ -749,7 +764,6 @@ def _assemble_adm2_upstream_duckdb(
             trench_id_column=TRENCH_ID_COLUMN,
             adm2_id_column=ADM2_ID_COLUMN,
             distance_bucket_column=DISTANCE_BUCKET_COLUMN,
-            progress_desc="Climate ADM2 buckets",
         )
         if not bucket_part_paths:
             pd.DataFrame(columns=empty_columns).to_parquet(output_path, index=False)
@@ -761,9 +775,18 @@ def _assemble_adm2_upstream_duckdb(
         try:
             connection.execute(f"PRAGMA threads={int(max(1, n_jobs))}")
             connection.execute(f"PRAGMA temp_directory={_sql_literal(str(temp_dir))}")
+            # This stage is two long, silent SQL statements over the full
+            # trench-day climate file; the INFO lines below bracket them, and
+            # DuckDB's progress bar fills the gap on an interactive terminal.
+            # Not forced on for non-TTY output, so log files stay clean.
+            connection.execute("SET enable_progress_bar=true")
 
             climate_sql_path = _sql_literal(str(climate_path))
             annual_aggregate_sql = _annual_aggregate_sql(climate_columns, source_alias="c")
+            logger.info(
+                "Aggregating trench-day climate to annual per-trench means from %s",
+                climate_path,
+            )
             connection.execute(
                 f"""
                 CREATE TEMP TABLE climate_by_trench_year AS
@@ -788,6 +811,10 @@ def _assemble_adm2_upstream_duckdb(
             )
 
             output_sql_path = _sql_literal(str(output_path))
+            logger.info(
+                "Joining upstream buckets to annual climate and writing ADM2 output to %s",
+                output_path,
+            )
             connection.execute(
                 f"""
                 COPY (
