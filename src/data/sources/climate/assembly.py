@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -45,7 +46,7 @@ from .schema import (
 from src.data.sources.land_cover.schema import build_trench_length_lookup as _build_trench_length_lookup
 from src.data.sources.river_network import RiverNetwork
 import src.data.sources.river_network as rn_module
-from src.data.shared.adm2_upstream_buckets import build_adm2_upstream_bucket_parts
+from src.data.shared.adm2_upstream_buckets import build_adm2_upstream_bucket_table
 from src.data.shared.sensor_upstream import (
     BUCKET_INTERSECTS_ADM2_COLUMN,
     assign_distance_buckets,
@@ -66,6 +67,51 @@ logger = logging.getLogger(__name__)
 
 SENSOR_ASSEMBLY_MAX_MONTHS_PER_BATCH = 12
 SENSOR_ASSEMBLY_MIN_TARGETS_PER_BATCH = 2000
+
+# A sensor batch is sized by target count / month span, but DuckDB's peak memory
+# in `_assemble_sensor_upstream_duckdb` is driven by the *station upstream-bucket
+# link* count instead (join fan-out, window partitions, the 13-way UNION ALL) --
+# in later years a 2000-target batch can carry >2M links and OOM the query even
+# with a 128 GB allocation (observed failure at ~2.26M links). When a batch
+# exceeds this many links its stations are split into link-budgeted sub-batches,
+# each written as its own part file. Override with the
+# CLIMATE_SENSOR_MAX_LINKS_PER_QUERY env var for cluster tuning.
+SENSOR_ASSEMBLY_MAX_UPSTREAM_LINKS_PER_QUERY = 500_000
+
+
+def _sensor_max_links_per_query() -> int:
+    raw = os.environ.get("CLIMATE_SENSOR_MAX_LINKS_PER_QUERY")
+    if raw:
+        try:
+            parsed = int(raw)
+            if parsed > 0:
+                return parsed
+        except ValueError:
+            logger.warning(
+                "Ignoring non-integer CLIMATE_SENSOR_MAX_LINKS_PER_QUERY=%r.", raw
+            )
+    return SENSOR_ASSEMBLY_MAX_UPSTREAM_LINKS_PER_QUERY
+
+
+def _split_station_codes_by_link_budget(link_counts, max_links):
+    """Yield lists of station codes whose summed link counts stay under `max_links`.
+
+    `link_counts` is a Series indexed by station code (upstream-bucket link count
+    per station). A station whose own count exceeds `max_links` still gets its
+    own single-station group -- buckets within a station are not split further.
+    """
+    group = []
+    group_links = 0
+    for station_code, count in link_counts.items():
+        count = int(count)
+        if group and group_links + count > max_links:
+            yield group
+            group = []
+            group_links = 0
+        group.append(station_code)
+        group_links += count
+    if group:
+        yield group
 
 
 def _sql_literal(value: str) -> str:
@@ -264,7 +310,31 @@ def _bucket_label(lower_bound_km):
 
 
 def _assign_sensor_distance_buckets(distances):
+    # `SENSOR_DISTANCE_BUCKETS` starts at 0, so a negative adjusted distance --
+    # the seed trench's own body, behind the shifted origin -- gets no bucket and
+    # is dropped by the caller. This is deliberate parity with the land_cover
+    # `master` sensor scheme, and is the opposite of the ADM2 driver
+    # (`shared.adm2_upstream_buckets.assign_adm2_distance_bucket`), which keeps
+    # negative buckets on purpose because an ADM2 unit's touching trenches have a
+    # meaningful body while a sensor is a single point on its trench.
     return assign_distance_buckets(distances, SENSOR_DISTANCE_BUCKETS)
+
+
+def _sensor_daily_aggregate_fn(column):
+    """DuckDB aggregate for one climate column, mirroring `_annual_aggregate_sql`.
+
+    `2t_daily_min` / `2t_daily_max` reduce with MIN / MAX (across upstream
+    trenches, and again across the trailing-day window); every other column --
+    including the accumulation variables tp/sro/ssro/pev -- reduces with AVG to a
+    mean daily rate. The ADM2 panel's full-calendar-year coverage gate for
+    MIN/MAX is not reproduced here: it is an annual-completeness check with no
+    natural per-rolling-window analogue.
+    """
+    if column in ANNUAL_MIN_VARIABLES:
+        return "MIN"
+    if column in ANNUAL_MAX_VARIABLES:
+        return "MAX"
+    return "AVG"
 
 
 def _empty_sensor_long_columns():
@@ -389,21 +459,37 @@ def _build_station_upstream_bucket_lookup(station_trenches, network, n_jobs):
     # Log progress roughly every 5% instead of a tqdm bar, so batch/log output
     # stays readable (mirrors the ADM2 upstream-bucket driver).
     progress_lock = threading.Lock()
-    progress_state = {"resolved": 0}
+    progress_state = {"resolved": 0, "failed": 0}
     log_every = max(1, target_trench_count // 20)
 
     def resolve_target_trench(trench_id):
-        upstream_distances = _resolve_upstream_trench_distances(
-            int(trench_id),
-            network,
-            system_trench_id_arrays,
-            system_valid_positions,
-            trench_system_position_lookup,
-        )
-        result = (
-            int(trench_id),
-            _shift_upstream_distances(upstream_distances, trench_lengths),
-        )
+        try:
+            upstream_distances = _resolve_upstream_trench_distances(
+                int(trench_id),
+                network,
+                system_trench_id_arrays,
+                system_valid_positions,
+                trench_system_position_lookup,
+            )
+            shifted = _shift_upstream_distances(upstream_distances, trench_lengths)
+        except Exception:
+            # Skip-and-log one trench rather than aborting the whole (millions of
+            # trenches) resolve, matching the ADM2 upstream-bucket driver's
+            # per-unit resilience. An empty frame drops out in the per-station
+            # `combine_station_upstream_distances` concat. A *systematic* failure
+            # (e.g. an incomplete trench-length table) is caught after the loop.
+            logger.warning(
+                "Skipping target trench %r: failed to resolve upstream distances.",
+                trench_id,
+                exc_info=True,
+            )
+            shifted = _shift_upstream_distances(
+                pd.DataFrame(columns=[TRENCH_ID_COLUMN, UPSTREAM_DISTANCE_COLUMN]),
+                trench_lengths,
+            )
+            with progress_lock:
+                progress_state["failed"] += 1
+        result = (int(trench_id), shifted)
         with progress_lock:
             progress_state["resolved"] += 1
             resolved = progress_state["resolved"]
@@ -423,6 +509,21 @@ def _build_station_upstream_bucket_lookup(station_trenches, network, n_jobs):
         upstream_distance_items = Parallel(n_jobs=n_jobs, backend="threading")(
             delayed(resolve_target_trench)(trench_id)
             for trench_id in target_trench_ids
+        )
+
+    failed = progress_state["failed"]
+    if failed and failed == target_trench_count:
+        raise RuntimeError(
+            f"Failed to resolve upstream distances for all {target_trench_count} "
+            "target trench(es); aborting rather than emitting an empty sensor "
+            "lookup. This usually means a systematic input problem (e.g. an "
+            "incomplete trench-length table)."
+        )
+    if failed:
+        logger.warning(
+            "Resolved upstream distances with %d/%d target trench(es) skipped after errors.",
+            failed,
+            target_trench_count,
         )
     upstream_distance_cache = dict(upstream_distance_items)
 
@@ -479,9 +580,11 @@ def _assemble_sensor_upstream_duckdb(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if targets.empty:
-        empty_df = pd.DataFrame(columns=_empty_sensor_long_columns())
-        empty_df.to_parquet(output_path, index=False)
-        return empty_df
+        pd.DataFrame(columns=_empty_sensor_long_columns()).to_parquet(
+            output_path, index=False
+        )
+        logger.info("Saved climate sensor assembly to %s", output_path)
+        return output_path
 
     network = _load_sensor_river_network(river_network_path)
     upstream_lookup = _build_station_upstream_bucket_lookup(station_trenches, network, n_jobs)
@@ -510,20 +613,36 @@ def _assemble_sensor_upstream_duckdb(
         connection.execute(f"PRAGMA threads={int(max(1, n_jobs))}")
         connection.execute(f"PRAGMA temp_directory={_sql_literal(str(temp_dir))}")
         connection.execute("PRAGMA preserve_insertion_order=false")
+        connection.execute("SET enable_progress_bar=true")
 
-        # Every column (including the accumulation variables tp/sro/ssro/pev)
-        # aggregates to a mean daily rate here, matching `_annual_aggregate_sql`'s
-        # `ANNUAL_MEAN_VARIABLES` classification for the ADM2 panel -- see the
-        # comment there for why a mean (not a cumulative sum) was chosen for
-        # accumulation variables too.
+        # Per-column aggregate mirrors the ADM2 panel's `_annual_aggregate_sql`
+        # (`_sensor_daily_aggregate_fn`): MIN/MAX for 2t_daily_min/2t_daily_max,
+        # AVG (mean daily rate) for everything else including the accumulation
+        # variables tp/sro/ssro/pev. The `_mean_day` / `_mean_<window>` names are
+        # kept for all columns even when they hold a MIN/MAX, matching how the
+        # ADM2 output keeps one `mean_value` column regardless of the rule.
+        #
+        # `per_trench_day_aggregate_sql` collapses the raw climate scan to one row
+        # per (trench, day) *before* the fan-out join to `upstream_lookup`, so the
+        # outer `COUNT(*)` is exactly the reachable-trench count and the outer
+        # AVG/MIN/MAX are not skewed by any duplicate (trench, day) rows in the
+        # input. On clean input (one row per trench-day) the inner group-by is a
+        # no-op.
+        per_trench_day_aggregate_sql = ",\n                    ".join(
+            f"{_sensor_daily_aggregate_fn(column)}(c.{_sql_ident(column)}) "
+            f"AS {_sql_ident(column)}"
+            for column in climate_columns
+        )
         aggregate_columns_sql = ",\n            ".join(
             [
-                f"AVG(c.{_sql_ident(column)}) AS {_sql_ident(f'{column}_mean_day')}"
+                f"{_sensor_daily_aggregate_fn(column)}(cd.{_sql_ident(column)}) "
+                f"AS {_sql_ident(f'{column}_mean_day')}"
                 for column in climate_columns
             ]
         )
         window_columns = []
         for column in climate_columns:
+            window_fn = _sensor_daily_aggregate_fn(column)
             window_columns.append(_sql_ident(f"{column}_mean_day"))
             for window_label, window_size in SENSOR_WINDOW_LABELS.items():
                 # RANGE (not ROWS) so the window spans `window_size` actual
@@ -533,7 +652,7 @@ def _assemble_sensor_upstream_duckdb(
                 # ROWS BETWEEN counts physical rows, so a single missing day
                 # would silently make "7d" reach back 8 calendar days.
                 window_columns.append(
-                    f"AVG({_sql_ident(f'{column}_mean_day')}) OVER ("
+                    f"{window_fn}({_sql_ident(f'{column}_mean_day')}) OVER ("
                     f"PARTITION BY {_sql_ident(STATION_CODE_COLUMN)}, {_sql_ident(DISTANCE_BUCKET_COLUMN)} "
                     f"ORDER BY {_sql_ident(DATE_COLUMN)} "
                     f"RANGE BETWEEN INTERVAL {window_size - 1} DAYS PRECEDING AND CURRENT ROW"
@@ -574,51 +693,19 @@ def _assemble_sensor_upstream_duckdb(
         connection.register("climate_variables_df", climate_variables_df)
 
         part_paths = []
+        max_links_per_query = _sensor_max_links_per_query()
 
-        for batch_index, (batch_label, batch_targets, batch_start, batch_end) in enumerate(batch_specs):
-            batch_station_codes = batch_targets[STATION_CODE_COLUMN].drop_duplicates()
-            batch_upstream_lookup = upstream_lookup.loc[
-                upstream_lookup[STATION_CODE_COLUMN].isin(batch_station_codes)
-            ].copy()
-            if batch_upstream_lookup.empty:
-                logger.info(
-                    "Skipping empty sensor target batch %s (%d/%d).",
-                    batch_label,
-                    batch_index + 1,
-                    len(batch_specs),
-                )
-                continue
-
-            batch_lookup_source_trenches = (
-                batch_upstream_lookup["source_trench_id"].drop_duplicates().astype(np.int64)
+        def _emit_sensor_part(part_path, part_targets, part_lookup, climate_sql_path,
+                              climate_start, batch_end):
+            """Run the daily -> windowed -> long pipeline for one station slice."""
+            part_source_trenches = (
+                part_lookup["source_trench_id"].drop_duplicates().astype(np.int64)
             )
-            climate_start = batch_start - pd.Timedelta(days=lookback_days)
-            climate_batch_paths = _partitioned_trench_day_paths(
-                climate_path,
-                start_date=climate_start,
-                end_date=batch_end,
-            )
-            climate_sql_path = _sql_string_list([str(path) for path in climate_batch_paths])
-            part_path = parts_dir / f"part-{batch_index:04d}-{batch_label}.parquet"
-
-            logger.info(
-                "Processing sensor climate batch %s (%d/%d): %d targets, %d station upstream-bucket links, %d source trenches, %d climate partition(s), dates %s to %s",
-                batch_label,
-                batch_index + 1,
-                len(batch_specs),
-                len(batch_targets),
-                len(batch_upstream_lookup),
-                len(batch_lookup_source_trenches),
-                len(climate_batch_paths),
-                climate_start.date(),
-                batch_end.date(),
-            )
-
-            connection.register("sensor_targets_batch_df", batch_targets)
-            connection.register("upstream_lookup_batch_df", batch_upstream_lookup)
+            connection.register("sensor_targets_batch_df", part_targets)
+            connection.register("upstream_lookup_batch_df", part_lookup)
             connection.register(
                 "source_trench_ids_batch_df",
-                pd.DataFrame({TRENCH_ID_COLUMN: batch_lookup_source_trenches}),
+                pd.DataFrame({TRENCH_ID_COLUMN: part_source_trenches}),
             )
 
             connection.execute("DROP TABLE IF EXISTS climate_bucket_daily")
@@ -628,17 +715,29 @@ def _assemble_sensor_upstream_duckdb(
                 CREATE TEMP TABLE climate_bucket_daily AS
                 SELECT
                     u.{STATION_CODE_COLUMN},
-                    CAST(c.{DATE_COLUMN} AS DATE) AS {DATE_COLUMN},
+                    cd.{DATE_COLUMN},
                     u.{DISTANCE_BUCKET_COLUMN},
-                    COUNT(DISTINCT c.{TRENCH_ID_COLUMN}) AS {REACHABLE_TRENCH_COUNT_COLUMN},
+                    -- One `cd` row per (trench, day) already, and `upstream_lookup`
+                    -- one row per (station, trench, bucket), so per
+                    -- (station, day, bucket) each reachable trench contributes
+                    -- exactly one row: COUNT(*) is the reachable-trench count.
+                    COUNT(*) AS {REACHABLE_TRENCH_COUNT_COLUMN},
                     {aggregate_columns_sql}
-                FROM read_parquet({climate_sql_path}) AS c
-                INNER JOIN source_trench_ids_batch_df AS s
-                    ON c.{TRENCH_ID_COLUMN} = s.{TRENCH_ID_COLUMN}
+                FROM (
+                    SELECT
+                        c.{TRENCH_ID_COLUMN} AS {TRENCH_ID_COLUMN},
+                        CAST(c.{DATE_COLUMN} AS DATE) AS {DATE_COLUMN},
+                        {per_trench_day_aggregate_sql}
+                    FROM read_parquet({climate_sql_path}) AS c
+                    INNER JOIN source_trench_ids_batch_df AS s
+                        ON c.{TRENCH_ID_COLUMN} = s.{TRENCH_ID_COLUMN}
+                    WHERE CAST(c.{DATE_COLUMN} AS DATE)
+                        BETWEEN DATE {_sql_literal(str(climate_start.date()))}
+                        AND DATE {_sql_literal(str(batch_end.date()))}
+                    GROUP BY 1, 2
+                ) AS cd
                 INNER JOIN upstream_lookup_batch_df AS u
-                    ON c.{TRENCH_ID_COLUMN} = u.source_trench_id
-                WHERE CAST(c.{DATE_COLUMN} AS DATE) BETWEEN DATE {_sql_literal(str(climate_start.date()))}
-                    AND DATE {_sql_literal(str(batch_end.date()))}
+                    ON cd.{TRENCH_ID_COLUMN} = u.source_trench_id
                 GROUP BY 1, 2, 3
                 """
             )
@@ -655,8 +754,6 @@ def _assemble_sensor_upstream_duckdb(
                 FROM climate_bucket_daily
                 """
             )
-
-            part_sql_path = _sql_literal(str(part_path))
 
             connection.execute(
                 f"""
@@ -683,16 +780,115 @@ def _assemble_sensor_upstream_duckdb(
                        AND g.{DATE_COLUMN} = w.{DATE_COLUMN}
                        AND g.{DISTANCE_BUCKET_COLUMN} = w.{DISTANCE_BUCKET_COLUMN}
                        AND g.{CLIMATE_VARIABLE_COLUMN} = w.{CLIMATE_VARIABLE_COLUMN}
-                    ORDER BY 1, 2, 3, 4
-                ) TO {part_sql_path} (FORMAT PARQUET)
+                ) TO {_sql_literal(str(part_path))} (FORMAT PARQUET)
                 """
             )
             part_paths.append(part_path)
 
+        for batch_index, (batch_label, batch_targets, batch_start, batch_end) in enumerate(batch_specs):
+            batch_station_codes = batch_targets[STATION_CODE_COLUMN].drop_duplicates()
+            batch_upstream_lookup = upstream_lookup.loc[
+                upstream_lookup[STATION_CODE_COLUMN].isin(batch_station_codes)
+            ].copy()
+            if batch_upstream_lookup.empty:
+                logger.info(
+                    "Skipping empty sensor target batch %s (%d/%d).",
+                    batch_label,
+                    batch_index + 1,
+                    len(batch_specs),
+                )
+                continue
+
+            climate_start = batch_start - pd.Timedelta(days=lookback_days)
+            climate_batch_paths = _partitioned_trench_day_paths(
+                climate_path,
+                start_date=climate_start,
+                end_date=batch_end,
+            )
+            climate_sql_path = _sql_string_list([str(path) for path in climate_batch_paths])
+
+            logger.info(
+                "Processing sensor climate batch %s (%d/%d): %d targets, %d station upstream-bucket links, %d source trenches, %d climate partition(s), dates %s to %s",
+                batch_label,
+                batch_index + 1,
+                len(batch_specs),
+                len(batch_targets),
+                len(batch_upstream_lookup),
+                batch_upstream_lookup["source_trench_id"].nunique(),
+                len(climate_batch_paths),
+                climate_start.date(),
+                batch_end.date(),
+            )
+
+            if len(batch_upstream_lookup) <= max_links_per_query:
+                _emit_sensor_part(
+                    parts_dir / f"part-{batch_index:04d}-{batch_label}.parquet",
+                    batch_targets,
+                    batch_upstream_lookup,
+                    climate_sql_path,
+                    climate_start,
+                    batch_end,
+                )
+                continue
+
+            # DuckDB peak memory here scales with the link count, not the target
+            # count -- split this batch's stations into link-budgeted sub-batches
+            # so each query stays small enough to finish (and spill) safely.
+            # Reindex over *every* target station (not just those present in
+            # `batch_upstream_lookup`): a station with no upstream buckets -- e.g.
+            # a headwater station whose only reachable trench is its own body --
+            # still needs its dense all-zero grid rows, so it must be assigned to
+            # a sub-batch just like the single-query path would include it.
+            link_counts = (
+                batch_upstream_lookup.groupby(STATION_CODE_COLUMN, sort=False)
+                .size()
+                .reindex(batch_station_codes.to_numpy(), fill_value=0)
+                .sort_values(ascending=False)
+            )
+            station_groups = list(
+                _split_station_codes_by_link_budget(link_counts, max_links_per_query)
+            )
+            logger.info(
+                "Batch %s has %d links (> %d); splitting %d station(s) into %d sub-batch(es).",
+                batch_label,
+                len(batch_upstream_lookup),
+                max_links_per_query,
+                int(link_counts.size),
+                len(station_groups),
+            )
+            for sub_index, station_group in enumerate(station_groups):
+                group_set = set(station_group)
+                sub_targets = batch_targets.loc[
+                    batch_targets[STATION_CODE_COLUMN].isin(group_set)
+                ].copy()
+                sub_lookup = batch_upstream_lookup.loc[
+                    batch_upstream_lookup[STATION_CODE_COLUMN].isin(group_set)
+                ].copy()
+                logger.info(
+                    "  sub-batch %s.%02d/%02d: %d station(s), %d links, %d source trenches",
+                    batch_label,
+                    sub_index + 1,
+                    len(station_groups),
+                    len(station_group),
+                    len(sub_lookup),
+                    sub_lookup["source_trench_id"].nunique(),
+                )
+                _emit_sensor_part(
+                    parts_dir
+                    / f"part-{batch_index:04d}-{sub_index:02d}-{batch_label}.parquet",
+                    sub_targets,
+                    sub_lookup,
+                    climate_sql_path,
+                    climate_start,
+                    batch_end,
+                )
+
         if not part_paths:
-            empty_df = pd.DataFrame(columns=_empty_sensor_long_columns())
-            empty_df.to_parquet(output_path, index=False)
-            return empty_df
+            pd.DataFrame(columns=_empty_sensor_long_columns()).to_parquet(
+                output_path, index=False
+            )
+            logger.info("Saved climate sensor assembly to %s", output_path)
+            return output_path
 
         output_sql_path = _sql_literal(str(output_path))
         part_glob_sql = _sql_literal(str(parts_dir / "part-*.parquet"))
@@ -732,9 +928,8 @@ def _assemble_adm2_upstream_duckdb(
     via `src.data.assembly`.
 
     The per-ADM2 upstream bucket membership is resolved by the shared
-    `build_adm2_upstream_bucket_parts` driver, which streams it to Parquet part
-    files instead of concatenating every unit's rows in memory; DuckDB then joins
-    those parts against the annual per-trench climate means straight off disk.
+    `build_adm2_upstream_bucket_table` driver and registered as a DuckDB view,
+    which is then joined against the annual per-trench climate means.
     """
     logger.info("Loading river network from %s", river_network_path)
     network = RiverNetwork()
@@ -755,31 +950,33 @@ def _assemble_adm2_upstream_duckdb(
         tempfile.mkdtemp(prefix="climate_adm2_duckdb_", dir=scratch_root(root_dir))
     )
     try:
-        bucket_parts_dir = temp_dir / "adm2_buckets"
-        bucket_part_paths = build_adm2_upstream_bucket_parts(
+        bucket_table = build_adm2_upstream_bucket_table(
             network=network,
             rn_module=rn_module,
-            parts_dir=bucket_parts_dir,
             n_jobs=n_jobs,
             trench_id_column=TRENCH_ID_COLUMN,
             adm2_id_column=ADM2_ID_COLUMN,
             distance_bucket_column=DISTANCE_BUCKET_COLUMN,
         )
-        if not bucket_part_paths:
+        if bucket_table.empty:
             pd.DataFrame(columns=empty_columns).to_parquet(output_path, index=False)
             logger.info("Saved climate ADM2 assembly to %s", output_path)
             return output_path
 
-        buckets_sql_path = _sql_literal(str(bucket_parts_dir / "part-*.parquet"))
         connection = duckdb.connect(database=":memory:")
         try:
             connection.execute(f"PRAGMA threads={int(max(1, n_jobs))}")
             connection.execute(f"PRAGMA temp_directory={_sql_literal(str(temp_dir))}")
+            # Final SELECT carries its own ORDER BY, so insertion order buys
+            # nothing here -- dropping it lets the big GROUP BY spill (matches the
+            # sensor path).
+            connection.execute("PRAGMA preserve_insertion_order=false")
             # This stage is two long, silent SQL statements over the full
             # trench-day climate file; the INFO lines below bracket them, and
             # DuckDB's progress bar fills the gap on an interactive terminal.
             # Not forced on for non-TTY output, so log files stay clean.
             connection.execute("SET enable_progress_bar=true")
+            connection.register("adm2_bucket_table", bucket_table)
 
             climate_sql_path = _sql_literal(str(climate_path))
             annual_aggregate_sql = _annual_aggregate_sql(climate_columns, source_alias="c")
@@ -827,7 +1024,7 @@ def _assemble_adm2_upstream_duckdb(
                         COUNT(*) AS {REACHABLE_TRENCH_COUNT_COLUMN},
                         BOOL_OR(b.{BUCKET_INTERSECTS_ADM2_COLUMN}) AS {BUCKET_INTERSECTS_ADM2_COLUMN}
                     FROM ({long_branches_sql}) AS y
-                    INNER JOIN read_parquet({buckets_sql_path}) AS b
+                    INNER JOIN adm2_bucket_table AS b
                         ON y.{TRENCH_ID_COLUMN} = b.{TRENCH_ID_COLUMN}
                     GROUP BY 1, 2, 3, 4
                     ORDER BY 1, 2, 3, 4

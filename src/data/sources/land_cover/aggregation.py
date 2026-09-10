@@ -1,5 +1,4 @@
 import logging
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -29,8 +28,7 @@ from .schema import (
     land_cover_feature_stem,
     validate_land_cover_output_columns,
 )
-from src.data.shared.adm2_upstream_buckets import build_adm2_upstream_bucket_parts
-from src.data.shared.paths import scratch_root
+from src.data.shared.adm2_upstream_buckets import build_adm2_upstream_bucket_table
 from src.data.shared.sensor_upstream import BUCKET_INTERSECTS_ADM2_COLUMN
 
 
@@ -49,15 +47,12 @@ def aggregate_along_rivers(
     """Aggregate land cover variables upstream of each ADM2 unit.
 
     The per-ADM2 upstream distance-bucket binning is delegated to the shared
-    `build_adm2_upstream_bucket_parts` driver (same code path as climate's ADM2
+    `build_adm2_upstream_bucket_table` driver (same code path as climate's ADM2
     panel); this module only supplies the land-cover-specific reduction -- summed
     class counts and shares per (year, bucket) -- via its `reduce_adm2` callback.
-    The driver streams each chunk of ADM2 units to a Parquet part file, so peak
-    memory no longer grows with the number of ADM2 units.
     """
     if n_jobs is None:
         n_jobs = resolve_n_jobs()
-    root_dir = getattr(self, "root_dir", ".")
 
     logger.info("Loading land cover data from %s", land_cover_path)
     land_cover_path = Path(land_cover_path)
@@ -158,28 +153,20 @@ def aggregate_along_rivers(
             return None
         return pd.DataFrame(rows, columns=ordered_columns)
 
-    with tempfile.TemporaryDirectory(
-        prefix="land_cover_adm2_buckets_", dir=scratch_root(root_dir)
-    ) as temp_dir:
-        part_paths = build_adm2_upstream_bucket_parts(
-            network=network,
-            rn_module=rn_module,
-            parts_dir=Path(temp_dir) / "parts",
-            n_jobs=n_jobs,
-            trench_id_column=TRENCH_ID_COLUMN,
-            adm2_id_column="adm2_id",
-            distance_bucket_column=DISTANCE_BUCKET_COLUMN,
-            bucket_width_km=SENSOR_DISTANCE_BUCKET_WIDTH_KM,
-            max_bucket_start_km=SENSOR_DISTANCE_BUCKET_STARTS_KM[-1],
-            reduce_adm2=reduce_adm2,
-        )
-        if not part_paths:
-            logger.warning("No results produced")
-            return pd.DataFrame()
-        result_df = pd.concat(
-            (pd.read_parquet(part_path) for part_path in part_paths),
-            ignore_index=True,
-        )
+    result_df = build_adm2_upstream_bucket_table(
+        network=network,
+        rn_module=rn_module,
+        n_jobs=n_jobs,
+        trench_id_column=TRENCH_ID_COLUMN,
+        adm2_id_column="adm2_id",
+        distance_bucket_column=DISTANCE_BUCKET_COLUMN,
+        bucket_width_km=SENSOR_DISTANCE_BUCKET_WIDTH_KM,
+        max_bucket_start_km=SENSOR_DISTANCE_BUCKET_STARTS_KM[-1],
+        reduce_adm2=reduce_adm2,
+    )
+    if result_df.empty:
+        logger.warning("No results produced")
+        return pd.DataFrame()
 
     result_df = result_df.loc[:, ordered_columns]
     result_df = result_df.sort_values(

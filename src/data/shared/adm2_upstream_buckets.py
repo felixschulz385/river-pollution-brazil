@@ -11,18 +11,21 @@ seed -> reachable distance -> shifted origin -> bucket-label pipeline, plus the
 `(adm2_id, trench_id, distance_bucket, bucket_intersects_adm2)` membership table
 it produces, lives here.
 
-`build_adm2_upstream_bucket_parts` writes the result as a handful of Parquet part
-files under a caller-owned directory instead of returning one concatenated frame.
-Units are processed in chunks so peak memory stays flat in the number of ADM2
-units (was: every unit's rows held at once before a single `pd.concat`, which
-OOM-killed the climate ADM2 job at 128 GB).
+`build_adm2_upstream_bucket_table` returns the whole membership table as one
+concatenated DataFrame. Units are resolved in parallel work chunks and the
+per-chunk frames are concatenated once at the end; the observed full table is a
+few tens of millions of narrow rows, small enough to hold in memory and hand to
+DuckDB directly. (An earlier revision streamed each chunk to a Parquet part and
+had the consumer glob them back -- climate registered the glob with DuckDB,
+land_cover `pd.concat`-ed it straight back into a frame -- which added a disk
+round-trip for no measured memory benefit.)
 """
 
 from __future__ import annotations
 
 import logging
 import math
-from pathlib import Path
+import threading
 
 import numpy as np
 import pandas as pd
@@ -52,11 +55,10 @@ TRENCH_LENGTH_COLUMN = "trench_length_km"
 DEFAULT_BUCKET_WIDTH_KM = 25.0
 DEFAULT_MAX_BUCKET_START_KM = 500.0
 
-# Aim for roughly this many part files regardless of ADM2 unit count: enough
-# chunks that a worker never holds more than ~(units / this) frames at once, few
-# enough that the downstream `read_parquet(glob)` isn't opening thousands of
-# tiny files.
-DEFAULT_TARGET_PART_COUNT = 256
+# ADM2 units are split into this many parallel work chunks (one joblib task
+# each). Purely a parallelism-granularity knob -- the per-chunk frames are
+# concatenated at the end regardless of how many chunks there are.
+DEFAULT_CHUNK_COUNT = 256
 
 
 def trench_length_lookup(rivers, *, trench_id_column="trench_id"):
@@ -131,19 +133,18 @@ def assign_adm2_distance_bucket(
     return buckets.astype(int)
 
 
-def _chunk_bounds(n_items, target_parts):
+def _chunk_bounds(n_items, chunk_count):
     if n_items <= 0:
         return
-    chunk_size = max(1, math.ceil(n_items / max(1, target_parts)))
+    chunk_size = max(1, math.ceil(n_items / max(1, chunk_count)))
     for start in range(0, n_items, chunk_size):
         yield start, min(start + chunk_size, n_items)
 
 
-def build_adm2_upstream_bucket_parts(
+def build_adm2_upstream_bucket_table(
     *,
     network,
     rn_module,
-    parts_dir,
     n_jobs,
     trench_id_column="trench_id",
     adm2_id_column="adm2_id",
@@ -151,29 +152,23 @@ def build_adm2_upstream_bucket_parts(
     bucket_width_km=DEFAULT_BUCKET_WIDTH_KM,
     max_bucket_start_km=DEFAULT_MAX_BUCKET_START_KM,
     reduce_adm2=None,
-    target_part_count=DEFAULT_TARGET_PART_COUNT,
+    chunk_count=DEFAULT_CHUNK_COUNT,
 ):
-    """Bin every ADM2 unit's upstream trenches into distance buckets, streamed.
+    """Bin every ADM2 unit's upstream trenches into distance buckets.
 
-    Writes one Parquet part per chunk of ADM2 units into `parts_dir` (created if
-    absent) rather than returning a concatenated frame. Each part row is
+    Returns one concatenated DataFrame. Each row is
     ``[adm2_id_column, trench_id_column, distance_bucket_column,
     bucket_intersects_adm2, upstream_distance, adjusted_distance]`` unless
     `reduce_adm2(adm2_id, bucket_frame)` is given, in which case that callback's
-    returned frame -- the source-specific per-ADM2 aggregation -- is written
-    instead (return ``None``/empty to skip a unit).
+    returned frame -- the source-specific per-ADM2 aggregation -- is used instead
+    (return ``None``/empty to skip a unit).
 
     A unit whose resolution or `reduce_adm2` call raises is logged and skipped
-    rather than aborting the whole (multi-thousand-unit) run. Each part file is
-    logged at INFO as it is written (index, contributing unit count, row count).
-
-    Returns the sorted list of part paths actually written; empty if nothing
-    produced rows. `network.trenches` / `network.drainage_areas` are normalized
-    in place, matching the previous per-source behaviour.
+    rather than aborting the whole (multi-thousand-unit) run; each work chunk is
+    logged at INFO once its units are resolved. Returns an empty DataFrame if
+    nothing produced rows. `network.trenches` / `network.drainage_areas` are
+    normalized in place, matching the previous per-source behaviour.
     """
-    parts_dir = Path(parts_dir)
-    parts_dir.mkdir(parents=True, exist_ok=True)
-
     if not network.trench_reachability_matrices:
         raise ValueError("River network must have trench reachability data computed.")
     if network.trenches is None:
@@ -280,6 +275,9 @@ def build_adm2_upstream_bucket_parts(
             ]
         ]
 
+    failure_lock = threading.Lock()
+    failure_state = {"failed": 0}
+
     def process_chunk(chunk_index, n_chunks, chunk_groups):
         frames = []
         for adm2_id, adm2_trenches in chunk_groups:
@@ -293,43 +291,67 @@ def build_adm2_upstream_bucket_parts(
                     else reduce_adm2(adm2_id, membership)
                 )
             except Exception:
+                # Tolerate isolated unit failures; a systematic one (majority of
+                # units) is re-raised after the run.
                 logger.warning(
                     "Skipping ADM2 unit %r: failed to resolve upstream buckets.",
                     adm2_id,
                     exc_info=True,
                 )
+                with failure_lock:
+                    failure_state["failed"] += 1
                 continue
             if part is None or len(part) == 0:
                 continue
             frames.append(part)
         if not frames:
             return None
-        part_path = parts_dir / f"part-{chunk_index:05d}.parquet"
-        part_frame = pd.concat(frames, ignore_index=True)
-        part_frame.to_parquet(part_path, index=False)
+        chunk_frame = pd.concat(frames, ignore_index=True)
         logger.info(
-            "Wrote ADM2 upstream bucket part %d/%d: %d unit(s), %d row(s) -> %s",
+            "Resolved ADM2 upstream bucket chunk %d/%d: %d unit(s), %d row(s).",
             chunk_index + 1,
             n_chunks,
             len(frames),
-            len(part_frame),
-            part_path.name,
+            len(chunk_frame),
         )
-        return part_path
+        return chunk_frame
 
-    chunks = list(_chunk_bounds(len(adm2_groups), target_part_count))
+    chunks = list(_chunk_bounds(len(adm2_groups), chunk_count))
     logger.info(
-        "Preparing ADM2 upstream buckets for %d ADM2 unit(s) in %d chunk(s) with %s worker(s).",
+        "Resolving ADM2 upstream buckets for %d ADM2 unit(s) in %d chunk(s) with %s worker(s).",
         len(adm2_groups),
         len(chunks),
         n_jobs,
     )
-    part_paths = Parallel(n_jobs=n_jobs, backend="threading")(
+    chunk_frames = Parallel(n_jobs=n_jobs, backend="threading")(
         delayed(process_chunk)(chunk_index, len(chunks), adm2_groups[start:end])
         for chunk_index, (start, end) in enumerate(chunks)
     )
-    written = sorted(str(path) for path in part_paths if path is not None)
+
+    failed = failure_state["failed"]
+    unit_count = len(adm2_groups)
+    if failed and failed == unit_count:
+        raise RuntimeError(
+            f"Failed to resolve upstream buckets for all {unit_count} ADM2 "
+            "unit(s); aborting rather than emitting an empty table. This usually "
+            "means a systematic input problem (e.g. an incomplete trench-length "
+            "table)."
+        )
+    if failed:
+        logger.warning(
+            "Resolved ADM2 upstream buckets with %d/%d unit(s) skipped after errors.",
+            failed,
+            unit_count,
+        )
+
+    chunk_frames = [frame for frame in chunk_frames if frame is not None]
+    if not chunk_frames:
+        logger.info("Built ADM2 upstream bucket table: 0 row(s).")
+        return pd.DataFrame()
+    table = pd.concat(chunk_frames, ignore_index=True)
     logger.info(
-        "Wrote %d ADM2 upstream bucket part file(s) to %s.", len(written), parts_dir
+        "Built ADM2 upstream bucket table: %d row(s) from %d chunk(s).",
+        len(table),
+        len(chunk_frames),
     )
-    return [Path(path) for path in written]
+    return table
