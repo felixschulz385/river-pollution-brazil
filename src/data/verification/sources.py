@@ -694,6 +694,7 @@ def _climate_check_outputs(root_dir) -> list[OutputArtifactCheck]:
         DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH,
     )
     from src.data.sources.climate.fetch.verify import ERA5L_VALUE_RANGES
+    from src.data.sources.climate.preprocess.era5_land import ERA5L_VAR_CONFIG
 
     def build_checks(frame, value_column):
         checks = [_non_empty_check(frame)]
@@ -707,12 +708,19 @@ def _climate_check_outputs(root_dir) -> list[OutputArtifactCheck]:
             )
             return checks
         for variable, (lo, hi) in ERA5L_VALUE_RANGES.items():
+            # ERA5L_VALUE_RANGES is expressed in raw-GRIB units (K, m); these
+            # output tables hold the converted units (degC, mm/day) that
+            # preprocess/era5_land.py writes to the shared zarr store, so the
+            # bounds need the same affine transform applied there -- see
+            # _era5l_stored_bounds's docstring for the fetched-store analogue.
+            agg = ERA5L_VAR_CONFIG[variable]["aggregation"]
+            bound_lo, bound_hi = _era5l_affine_bounds(lo, hi, agg["scale_factor"], agg["offset"])
             subset = frame.loc[frame[CLIMATE_VARIABLE_COLUMN] == variable]
             name = f"value_range:{variable}:{value_column}"
             if subset.empty:
                 checks.append(CheckResult(name=name, ok=False, message=f"No rows for variable '{variable}'."))
                 continue
-            checks.append(check_value_range(subset, value_column, lo=lo, hi=hi, name=name))
+            checks.append(check_value_range(subset, value_column, lo=bound_lo, hi=bound_hi, name=name))
         return checks
 
     # Both output tables are long-format: the variable code lives as a row
@@ -738,6 +746,12 @@ def _climate_check_outputs(root_dir) -> list[OutputArtifactCheck]:
 _CLIMATE_RAW_SAMPLE_TIME_STEPS = 30
 
 
+def _era5l_affine_bounds(lo: float, hi: float, scale: float, offset: float) -> tuple[float, float]:
+    """Re-express a raw-GRIB-unit range as ``raw * scale + offset``, sorted."""
+    a, b = lo * scale + offset, hi * scale + offset
+    return (a, b) if a <= b else (b, a)
+
+
 def _era5l_stored_bounds(data_array, lo: float, hi: float) -> tuple[float, float]:
     """Translate a raw-GRIB-unit range into the unit the shared zarr store holds.
 
@@ -751,8 +765,7 @@ def _era5l_stored_bounds(data_array, lo: float, hi: float) -> tuple[float, float
     """
     scale = float(data_array.attrs.get("scale_factor_applied", 1.0))
     offset = float(data_array.attrs.get("offset_applied", 0.0))
-    a, b = lo * scale + offset, hi * scale + offset
-    return (a, b) if a <= b else (b, a)
+    return _era5l_affine_bounds(lo, hi, scale, offset)
 
 
 def _climate_check_fetched(root_dir) -> list[OutputArtifactCheck]:
