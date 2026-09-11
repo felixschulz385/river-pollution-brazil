@@ -715,6 +715,7 @@ def _climate_check_outputs(root_dir) -> list[OutputArtifactCheck]:
             # _era5l_stored_bounds's docstring for the fetched-store analogue.
             agg = ERA5L_VAR_CONFIG[variable]["aggregation"]
             bound_lo, bound_hi = _era5l_affine_bounds(lo, hi, agg["scale_factor"], agg["offset"])
+            bound_lo, bound_hi = _era5l_widen_bounds(bound_lo, bound_hi)
             subset = frame.loc[frame[CLIMATE_VARIABLE_COLUMN] == variable]
             name = f"value_range:{variable}:{value_column}"
             if subset.empty:
@@ -750,6 +751,18 @@ def _era5l_affine_bounds(lo: float, hi: float, scale: float, offset: float) -> t
     """Re-express a raw-GRIB-unit range as ``raw * scale + offset``, sorted."""
     a, b = lo * scale + offset, hi * scale + offset
     return (a, b) if a <= b else (b, a)
+
+
+def _era5l_widen_bounds(lo: float, hi: float) -> tuple[float, float]:
+    """Widen a converted-unit range to absorb float32 affine-transform noise.
+
+    Preprocessing's ``raw * scale_factor + offset`` cast leaves sub-epsilon
+    noise at the edges (e.g. swvl min at ~-1e-20, tp min at ~-1e-05); allow
+    slack proportional to the bound magnitude so that alone doesn't fail an
+    otherwise-clean variable.
+    """
+    tol = 1e-6 * max(1.0, abs(lo), abs(hi))
+    return lo - tol, hi + tol
 
 
 def _era5l_stored_bounds(data_array, lo: float, hi: float) -> tuple[float, float]:
@@ -815,11 +828,8 @@ def _climate_check_fetched(root_dir) -> list[OutputArtifactCheck]:
             observed_min = float(data_array.min())
             observed_max = float(data_array.max())
             bound_lo, bound_hi = _era5l_stored_bounds(data_array, lo, hi)
-            # Preprocessing's float32 affine transform leaves sub-epsilon noise
-            # (e.g. swvl min at ~-1e-20); allow slack proportional to the bound
-            # magnitude so that alone doesn't fail an otherwise-clean variable.
-            tol = 1e-6 * max(1.0, abs(bound_lo), abs(bound_hi))
-            ok = observed_min >= bound_lo - tol and observed_max <= bound_hi + tol
+            bound_lo, bound_hi = _era5l_widen_bounds(bound_lo, bound_hi)
+            ok = observed_min >= bound_lo and observed_max <= bound_hi
             units = data_array.attrs.get("units", "?")
             checks.append(
                 CheckResult(
