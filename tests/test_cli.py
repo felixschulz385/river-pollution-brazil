@@ -91,13 +91,20 @@ def test_preprocess_passes_through_silently_once_prerequisites_are_satisfied(tmp
 
     from src.data.sources.biomes.constants import archive_path
     from src.data.sources.gadm.constants import DEFAULT_ADM0_LAYER, DEFAULT_ADM2_LAYER, DEFAULT_SIMPLIFIED_GADM_PATH
-    from src.data.sources.sensor_data.fetch.database import STATIONS_TABLE, write_geodataframe_table
+    from src.data.sources.sensor_data.constants import get_raw_dir
+    from src.data.sources.sensor_data.schema import RAW_STATIONS_PARQUET
 
     stations = pd.DataFrame({"station_code": ["11111111"]})
     stations_geo = gpd.GeoDataFrame(
         stations, geometry=gpd.points_from_xy([-45.0], [-10.0]), crs=4326
     )
-    write_geodataframe_table(str(tmp_path), STATIONS_TABLE, stations_geo)
+    # Fetch completeness (`_sensor_data_list_fetched`) and biomes.preprocess
+    # both read fetch's public hand-off -- the raw export parquet under
+    # `raw/` -- not the internal DuckDB working store, so write there
+    # directly rather than through `write_geodataframe_table`.
+    raw_dir = get_raw_dir(str(tmp_path))
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    stations_geo.to_parquet(raw_dir / RAW_STATIONS_PARQUET, index=False)
 
     biomes_archive = archive_path(tmp_path)
     biomes_archive.parent.mkdir(parents=True, exist_ok=True)

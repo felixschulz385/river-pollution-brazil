@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from src.data.sources.climate.constants import DISTANCE_BUCKET_COLUMN
 from src.data.sources.land_cover.composition import compute_kernel_weighted_composition
 from src.data.sources.land_cover.constants import (
     LAND_COVER_COMPOSITION_BUCKET_MAP,
@@ -178,6 +179,7 @@ def _load_source_frame(source, *, root_dir):
             bandwidth=(
                 source.bandwidth if source.bandwidth is not None else DEFAULT_ADM2_KERNEL_BANDWIDTH_KM
             ),
+            bucket_column=DISTANCE_BUCKET_COLUMN,
         )
     elif source.type == LONG_PIVOT_SOURCE_TYPE:
         frame = _pivot_long_source(frame, source)

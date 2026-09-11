@@ -88,7 +88,15 @@ def _synthetic_settings(tmp_path: Path) -> SensorAnalysisSettings:
             temperature = 18.0 + sensor_index + quarter
             precipitation = 90.0 + 3.0 * date_index + 5.0 * trench_id
             flow_day = 150.0 + 10.0 * sensor_index + 4.0 * quarter
-            flow_7d = 130.0 + 8.0 * sensor_index + 3.0 * quarter
+            # Deliberately not an exact linear rescaling of `flow_day` in
+            # `quarter` (a `+ k * quarter**2` term breaks the proportionality
+            # a pure `a + b * quarter` shape would have): with fixed effects
+            # on `(sensor_id, year)`, both variables' within-group variation
+            # comes only from `quarter`, so a purely linear pair collapses to
+            # exact scalar multiples of each other post-demeaning -- perfect
+            # collinearity that makes a forced post-LASSO regressor look
+            # rank-deficient, not a real modeling scenario.
+            flow_7d = 130.0 + 8.0 * sensor_index + 3.0 * quarter + 1.5 * quarter**2
             interaction_signal = c41_0_10 * temperature * 0.12
             ph = (
                 6.5

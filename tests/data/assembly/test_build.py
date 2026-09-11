@@ -176,12 +176,12 @@ def test_assemble_dataset_adm2_mode_weights_climate_buckets_at_assembly_time(tmp
     land_cover.to_parquet(land_cover_path, index=False)
 
     # Two buckets for the same ADM2/year/variable -- climate's binned ADM2
-    # output, long over (adm2_id, year, bucket, climate_variable).
+    # output, long over (adm2_id, year, distance_bucket, climate_variable).
     climate = pd.DataFrame(
         {
             "adm2_id": [1234567, 1234567],
             "year": [2019, 2019],
-            "bucket": [0, 25],
+            "distance_bucket": [0, 25],
             "climate_variable": ["2t", "2t"],
             "mean_value": [20.0, 30.0],
         }
