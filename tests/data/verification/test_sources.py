@@ -1053,6 +1053,62 @@ def test_assembly_check_outputs_passes_when_columns_present(tmp_path, monkeypatc
     assert artifacts[0].ok
 
 
+def test_assembly_check_outputs_tolerates_sparse_but_not_all_null_column(tmp_path, monkeypatch):
+    config_path = tmp_path / "assembly_datasets.yaml"
+    config_path.write_text(ASSEMBLY_CONFIG_YAML)
+    monkeypatch.setattr(
+        "src.data.assembly.constants.DEFAULT_CONFIG_PATH", str(config_path.relative_to(tmp_path))
+    )
+
+    output_dir = tmp_path / "data" / "assembly"
+    output_dir.mkdir(parents=True)
+    # "turbidity" is present for only 1 of 100 rows -- legitimate sparsity for
+    # a rarely-tested analyte should not fail the check on its own.
+    frame = pd.DataFrame(
+        {
+            "station_code": [f"S{i}" for i in range(100)],
+            "datetime": pd.to_datetime(["2020-01-01"] * 100),
+            "ph": [7.0] * 100,
+            "turbidity": [2.0] + [None] * 99,
+        }
+    )
+    frame.to_parquet(output_dir / "sensor_panel.parquet", index=False)
+
+    adapter = SOURCE_ADAPTERS["assembly"]
+    artifacts = adapter.check_outputs(tmp_path)
+
+    assert artifacts[0].ok
+    assert all(check.ok for check in artifacts[0].checks if check.name.startswith("has_data:"))
+
+
+def test_assembly_check_outputs_fails_entirely_null_column(tmp_path, monkeypatch):
+    config_path = tmp_path / "assembly_datasets.yaml"
+    config_path.write_text(ASSEMBLY_CONFIG_YAML)
+    monkeypatch.setattr(
+        "src.data.assembly.constants.DEFAULT_CONFIG_PATH", str(config_path.relative_to(tmp_path))
+    )
+
+    output_dir = tmp_path / "data" / "assembly"
+    output_dir.mkdir(parents=True)
+    # "turbidity" is present but entirely null -- a broken left join, not
+    # legitimate sparsity -- should still fail.
+    frame = pd.DataFrame(
+        {
+            "station_code": ["S1"],
+            "datetime": pd.to_datetime(["2020-01-01"]),
+            "ph": [7.0],
+            "turbidity": [None],
+        }
+    )
+    frame.to_parquet(output_dir / "sensor_panel.parquet", index=False)
+
+    adapter = SOURCE_ADAPTERS["assembly"]
+    artifacts = adapter.check_outputs(tmp_path)
+
+    assert not artifacts[0].ok
+    assert not any(check.ok for check in artifacts[0].checks if check.name == "has_data:turbidity")
+
+
 def test_assembly_check_fetched_is_a_noop(tmp_path):
     """assembly isn't a fetch source -- it joins the other 7 -- so it uses
     SourceAdapter's default no-op check_fetched rather than a real

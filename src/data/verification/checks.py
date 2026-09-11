@@ -62,6 +62,23 @@ def check_null_fraction(frame, column, *, max_null_fraction: float = 0.5, name: 
     )
 
 
+def check_column_has_data(frame, column, *, name: str | None = None) -> CheckResult:
+    """Fail only if `column` is entirely null.
+
+    A left join against a source missing rows for some keys produces an
+    all-NaN column with no error, which this catches. Unlike
+    `check_null_fraction`, it tolerates any amount of legitimate sparsity
+    (e.g. a rarely-tested water-quality analyte at 99%+ null) and only flags
+    a column that came back with zero real values.
+    """
+    name = name or f"has_data:{column}"
+    if column not in frame.columns or frame.empty:
+        return CheckResult(name=name, ok=False, message=f"Column '{column}' not present or frame is empty.")
+    null_fraction = float(frame[column].isna().mean())
+    ok = null_fraction < 1.0
+    return CheckResult(name=name, ok=ok, message=f"{null_fraction:.2%} null.")
+
+
 def check_value_range(frame, column, *, lo: float, hi: float, name: str | None = None) -> CheckResult:
     """Fail if any observed value in `column` falls outside `[lo, hi]`."""
     name = name or f"value_range:{column}"
@@ -216,6 +233,7 @@ def check_sampled_files(
 __all__ = [
     "CheckResult",
     "VerificationResult",
+    "check_column_has_data",
     "check_file_nonempty",
     "check_gpkg_layer_readable",
     "check_null_fraction",

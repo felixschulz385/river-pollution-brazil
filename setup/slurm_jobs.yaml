@@ -84,3 +84,15 @@ jobs:
     qos: 30min
     cpus_per_task: 4
     mem: 64G
+
+  # `python -m src.cli data assemble --dataset <sensor_panel|adm2_panel> --slurm`.
+  # One key covers both dataset ids -- `src.data.assembly.build` just merges
+  # already-aggregated per-station/per-ADM2 parquet files in pandas (no raw
+  # hydrology/raster work), so this is comparatively light; conservative
+  # defaults below, tune down once real run times/memory are observed.
+  assemble:
+    job_name: assemble
+    time: "0-02:00:00"
+    qos: 6hours
+    cpus_per_task: 4
+    mem: 64G

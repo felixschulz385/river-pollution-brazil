@@ -26,6 +26,7 @@ import pandas as pd
 
 from .checks import (
     CheckResult,
+    check_column_has_data,
     check_file_nonempty,
     check_gpkg_layer_readable,
     check_null_fraction,
@@ -1226,13 +1227,14 @@ def _assembly_check_outputs(root_dir) -> list[OutputArtifactCheck]:
         ]
         # A left join against a source missing rows for some keys produces an
         # all-NaN column with no error; catch a joined-in column coming back
-        # (almost) entirely null, which check_required_columns can't detect
-        # since the column is still present.
+        # entirely null, which check_required_columns can't detect since the
+        # column is still present. Many water-quality analytes are
+        # legitimately measured at only a handful of stations/dates across
+        # the whole dataset, so any nonzero coverage is accepted -- only a
+        # fully empty column indicates a real join problem.
         for column in wide_variable_columns:
             if column in frame.columns:
-                checks.append(
-                    check_null_fraction(frame, column, max_null_fraction=0.99, name=f"null_fraction:{column}")
-                )
+                checks.append(check_column_has_data(frame, column, name=f"has_data:{column}"))
         return checks
 
     return [
