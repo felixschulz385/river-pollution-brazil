@@ -53,6 +53,7 @@ import pandas as pd
 from scipy.sparse import csr_matrix
 
 from src.data.sources.gadm.constants import DEFAULT_SIMPLIFIED_GADM_PATH
+from src.data.sources.land_cover.constants import non_municipality_adm2_mask
 
 from .constants import (
     ADM2_COLUMN,
@@ -639,6 +640,18 @@ class RiverNetwork:
 
         logger.info("Building trench-to-ADM2 table from %s layer %s", gadm_path, layer)
         boundaries = gpd.read_file(gadm_path, layer=layer)
+
+        if "CC_2" in boundaries.columns:
+            # See land_cover.constants.GADM_ADM2_NON_MUNICIPALITY_CC2_CODES:
+            # two coastal lagoons ride along in GADM's Brazil ADM2 layer as
+            # if they were real municipalities. Drop them before any trench
+            # can match, so downstream ADM2 aggregations (land_cover,
+            # climate) never attribute upstream data to a non-municipality
+            # polygon.
+            excluded = non_municipality_adm2_mask(boundaries["CC_2"])
+            if excluded.any():
+                logger.info("Excluding %d non-municipality GADM ADM2 polygon(s) (e.g. lagoons).", int(excluded.sum()))
+                boundaries = boundaries.loc[~excluded]
 
         if adm2_column not in boundaries.columns:
             fallback_columns = ["GID_2", "CC_2"]

@@ -118,6 +118,34 @@ def test_build_trench_adm2_table_and_dominant_system_table(tmp_path: Path):
     assert dominant.set_index("adm2").loc["X", "system_id"] == "A"
 
 
+def test_build_trench_adm2_table_excludes_non_municipality_gadm_lagoons(tmp_path: Path):
+    """GADM's Brazil ADM2 layer includes Lagoa dos Patos/Lagoa Mirim as
+    fake-CC_2 "municipality" polygons (4300001/4300002); a trench that
+    geometrically intersects one must still not match it, or downstream ADM2
+    aggregation collapses both lagoons onto the same truncated placeholder
+    mun_id and blows up assembly's many-to-one merge."""
+    network = RiverNetwork()
+    base = Point(-47.9, -15.8)
+    network.trenches = gpd.GeoDataFrame(
+        {"trench_id": [301], "geometry": [LineString([(base.x, base.y), (base.x + 0.01, base.y)])]},
+        crs=4326,
+    )
+
+    gadm_path = tmp_path / "gadm.gpkg"
+    adm2_boundary = gpd.GeoDataFrame(
+        {
+            "CC_2": ["4314902", "4300001"],
+            "geometry": [base.buffer(1.0), base.buffer(1.0)],
+        },
+        crs=4326,
+    )
+    adm2_boundary.to_file(gadm_path, layer="ADM_ADM_2", driver="GPKG")
+
+    trench_adm2 = network.build_trench_adm2_table(gadm_path=str(gadm_path), layer="ADM_ADM_2")
+
+    assert set(trench_adm2["adm2"]) == {"4314902"}
+
+
 def test_save_load_round_trip_preserves_adm2_dominant_system_table(tmp_path: Path):
     network = _fixture_network()
     network.compute_subsystems()

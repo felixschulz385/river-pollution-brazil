@@ -4,7 +4,10 @@ from pathlib import Path
 import geopandas as gpd
 import pandas as pd
 
-from src.data.sources.land_cover.constants import derive_mun_id_from_adm2_id
+from src.data.sources.land_cover.constants import (
+    derive_mun_id_from_adm2_id,
+    non_municipality_adm2_mask,
+)
 
 from .constants import (
     BIOME_COLUMN,
@@ -69,6 +72,15 @@ def _load_adm2_boundaries(root_dir=".", gadm_path=None, layer=None, adm2_id_colu
     layer = layer or DEFAULT_ADM2_LAYER
     adm2_id_column = adm2_id_column or DEFAULT_ADM2_ID_COLUMN
     boundaries = gpd.read_file(gadm_path, layer=layer)
+    if "CC_2" in boundaries.columns:
+        # See land_cover.constants.GADM_ADM2_NON_MUNICIPALITY_CC2_CODES: two
+        # coastal lagoons ride along in GADM's Brazil ADM2 layer as if they
+        # were real municipalities. Drop them before deriving mun_id, or both
+        # truncate onto the same bogus mun_id and duplicate this table's key.
+        excluded = non_municipality_adm2_mask(boundaries["CC_2"])
+        if excluded.any():
+            logger.info("Excluding %d non-municipality GADM ADM2 polygon(s) (e.g. lagoons).", int(excluded.sum()))
+            boundaries = boundaries.loc[~excluded]
     boundaries["adm2_id"] = boundaries[adm2_id_column]
     return boundaries[["adm2_id", "geometry"]]
 

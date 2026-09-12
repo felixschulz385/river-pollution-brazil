@@ -145,3 +145,40 @@ def derive_mun_id_from_adm2_id(adm2_id):
     if pd.isna(adm2_id):
         raise ValueError(f"Cannot derive mun_id from a null adm2_id: {adm2_id!r}")
     return str(adm2_id)[:-ADM2_ID_TO_MUN_ID_TRUNCATION]
+
+
+# GADM's Brazil ADM2 layer (`gadm41_BRA_2`) includes two coastal lagoons --
+# Lagoa dos Patos and Lagoa Mirim, both in Rio Grande do Sul -- as ADM2-level
+# polygons alongside the real 5570 municipalities, each mislabeled
+# `TYPE_2="Município"` like every real entry (so that column can't
+# distinguish them). GADM assigns them fabricated, non-IBGE `CC_2` codes
+# ("4300001"/"4300002": UF prefix "43" + a fake sequential suffix) rather
+# than a real 7-digit municipality code. `derive_mun_id_from_adm2_id` truncates
+# a genuine code's trailing check digit to recover the 6-digit `mun_id`;
+# applied to these two fakes it collapses both onto the same bogus
+# `mun_id="430000"`, which then fails a strict merge/dedup keyed on `mun_id`
+# downstream (river_network's trench-to-ADM2 matching and biomes' ADM2
+# overlay both read this same GADM layer and must exclude them before any
+# `adm2_id`/`mun_id` derivation happens).
+GADM_ADM2_NON_MUNICIPALITY_CC2_CODES = frozenset({"4300001", "4300002"})
+
+
+def normalize_cc2_series(cc2_series):
+    """Normalize a GADM `CC_2` column to plain-digit strings.
+
+    Depending on the GeoPackage/driver, `CC_2` round-trips as either text
+    ("4300001") or a float-typed OGR field (4300001.0); a bare `.astype(str)`
+    on the latter produces "4300001.0", which would silently fail to match
+    against plain-string codes (e.g. `GADM_ADM2_NON_MUNICIPALITY_CC2_CODES`).
+    Round through a nullable integer first when the dtype is float so both
+    forms compare equal.
+    """
+    if pd.api.types.is_float_dtype(cc2_series):
+        return cc2_series.round().astype("Int64").astype(str)
+    return cc2_series.astype(str)
+
+
+def non_municipality_adm2_mask(cc2_series):
+    """Boolean mask selecting GADM Brazil ADM2 rows that are not real
+    municipalities -- see `GADM_ADM2_NON_MUNICIPALITY_CC2_CODES`."""
+    return normalize_cc2_series(cc2_series).isin(GADM_ADM2_NON_MUNICIPALITY_CC2_CODES)
