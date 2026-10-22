@@ -48,8 +48,6 @@ log/
 .pytest_tmp/*
 .pytest_tmp_grib/*
 **/secrets/
-output/documents/*/*/**
-output/presentations/
 output/analysis/
 data/*/**
 api_creds

@@ -31,7 +31,6 @@ The main directories are:
 - `output/notebooks/`: analysis notebooks, split into `pollution/` (sensor panel) and `health/` (ADM2 panel); see `output/notebooks/README.md`.
 - `setup/`: Docker and Slurm/HPC support files.
 - `tests/`: automated tests for the maintained Python components.
-- `submission/`: archived submission-related files.
 
 ## Current Entry Points
 
@@ -253,8 +252,11 @@ Each run writes a dedicated model subdirectory with:
 The repository includes project outputs beyond code:
 
 - figures under `output/figures/`
-- Quarto documents under `output/documents/`
-- a paper source at `output/documents/thesis_paper/paper.qmd`
+- research notes under `output/research/`
+
+The master's-thesis material (replication files in `submission/`, Quarto documents,
+presentations and thesis figures) was removed from the tree; it is preserved at the
+`thesis-archive` tag.
 
 ![Project workflow](/output/figures/data_workflow.png)
 
