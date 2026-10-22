@@ -35,9 +35,8 @@ repo root (the folder containing `data/`, `setup/`, `code/`).
   `cfgrib`, `odc-geo`, plus `aiohttp`/`requests` (listed in
   [`requirements.txt`](../../../requirements.txt), required by `xarray.open_zarr`
   for the ARCO `https://` store). On this machine, the validated environment is the
-  `311` conda env (`C:\Users\schulz0022\conda-envs\311`); activate it in
-  PowerShell with `setup/codex_311_env.ps1`, or point any Python 3.11 env with
-  the packages above at the same secrets file.
+  `311` conda env (`C:\Users\schulz0022\conda-envs\311`); otherwise point
+  any Python 3.11 env with the packages above at the same secrets file.
 
 ## Data sources
 

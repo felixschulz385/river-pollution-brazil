@@ -26,7 +26,6 @@ The main directories are:
 - `src/data/`: data ingestion, preprocessing, and assembly workflows.
 - `src/analysis/`: analysis pipelines, especially the sensor-data regression workflow.
 - `src/assemble/`: standalone R assembly scripts.
-- `src/experiments/`: notebooks and exploratory analysis.
 - `data/`: local data products used by the codebase.
 - `output/`: analysis outputs, figures, and documents.
 - `output/notebooks/`: analysis notebooks, split into `pollution/` (sensor panel) and `health/` (ADM2 panel); see `output/notebooks/README.md`.
@@ -317,7 +316,6 @@ plus `tests/analysis/sensor_data/` for the analysis layer.
 The codebase reflects a research project with multiple generations of tooling. In practice:
 
 - `src/cli.py`, `src/data/`, `src/analysis/`, and the corresponding tests are the best starting points for current work.
-- `src/experiments/` contains exploratory notebooks and is useful for context, diagnostics, and replication of intermediate development steps.
 
 ## Data Availability
 
