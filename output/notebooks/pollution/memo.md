@@ -64,8 +64,9 @@ imprecise nulls. There are modestly more significant results than chance would g
   - *Mercury:* no robust effect. The +14 pp in the 2026-10-21 run (p = 0.004) does not
     survive removing suspected µg/L entries: +5.7 pp, SE 4.4, bootstrap p = 0.34, 11
     basins (HPC check, 2026-10-26).
-  - *Where mercury is identified:* the mercury result rests on 15 stations in MG, SP, RJ
-    and SC, sampled mostly 1985–99. There are almost no mercury readings in the Amazon
+  - *Where mercury is identified:* the mercury coefficient rests on Mata Atlântica and
+    Cerrado stations in MG, SP, RJ and SC, sampled mostly 1985–99: 15 stations in 13
+    basins before the recode, about 14 in 11 basins after it. There are almost no mercury readings in the Amazon
     (4 in the ANA Amazon basin, none in the Madeira), so the arm says nothing about
     garimpo.
   - The size of the mined area has no positive effect, and leaving mining out of the main

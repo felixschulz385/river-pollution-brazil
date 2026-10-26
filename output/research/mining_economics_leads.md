@@ -747,7 +747,9 @@ demarcation timing holds up.
   Mineiro microdata (`dadosabertos.anm.gov.br/SCM/microdados/microdados-scm.zip`,
   181 MB, updated daily, 1934 onward) have the full history, joined to SIGMINE on
   `DSProcesso`. The firewall returns 403 to `curl`, including from transfer12, so it has
-  to be downloaded in a browser and rsynced.
+  to be downloaded in a browser and rsynced. The extract of 2026-10-25, with its
+  dictionary and entity-relationship diagram, is at
+  `data/mining/raw/anm_scm_microdados_2026-10-26/` on the HPC (checksums verified).
   - `ProcessoEvento.txt` (about 1.1 GB, `;`-separated, CP-1252): process, event ID,
     event date, note, and the Diário Oficial extract. `Evento.txt` describes about 2,900
     event codes:
@@ -826,5 +828,9 @@ river and health data:
   - *Unit coding:* 58 station-periods mix values of 0.0002 or below with values of 0.1
     or above, which looks like µg/L entries in a mg/L column. Setting those high values
     to missing gives +6.9 pp (SE 4.5, bootstrap p = 0.28).
-  - *Consequence:* the pollution memo's mercury claim, and the "measured water link"
-    framing in this note, need revising.
+  - *Consequence:* the "measured water link" framing in this note needed revising.
+  - *Done:* the rule is now in the pipeline (`drop_unit_errors`), and the pollution
+    notebooks were re-run on 2026-10-26 (commit `bd8b356`).
+    - Mercury: +5.7 pp (SE 4.35, bootstrap p = 0.34, 11 basins).
+    - Lead and cadmium: unchanged.
+    - Values set to missing: 209 (177 mercury, 24 lead, 7 arsenic, 1 cadmium).
