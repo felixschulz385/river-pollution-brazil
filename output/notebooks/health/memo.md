@@ -103,9 +103,20 @@ count ~ upstream ALR(pasture, agriculture, unclassified farming, urban, other)  
 
 Read together with the pollution arm, the broad land-cover changes that move river water
 quality do not translate into measurable health effects at municipality level. Mining is
-the possible exception, and only where it brings mercury: the Amazon infant-mortality
-result is consistent with the pollution arm's mercury violations. An individual-level or
-mercury-specific design would test it.
+the possible exception, but the Amazon infant-mortality result has no measured water link.
+
+- **No mercury data.** The pollution arm's mercury effect does not survive a unit-coding
+  correction, and it was identified outside the Amazon. The stations have almost no
+  mercury readings in the Amazon.
+- **Robust but no dose-response** (HPC checks, 2026-10-26):
+  - 11 of the 36 onsets fall in 2020, a national MapBiomas mapping step.
+  - Dropping the 2020 onsets and the Maranhão/coastal-Pará switchers leaves the effect at
+    +0.25 to +0.26 (bootstrap p ≤ 0.014).
+  - Keeping only switchers with a mined share of at least 0.01 pp gives +0.06 (p = 0.18).
+
+So the result is an association with a presence marker, not a mercury dose. It needs a
+garimpo-specific exposure (the MapBiomas mining module) before it is read as an effect of
+gold mining.
 
 ## Files
 
