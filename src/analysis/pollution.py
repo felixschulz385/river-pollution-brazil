@@ -92,6 +92,17 @@ CONAMA_FECAL_LIMITS = {"thermotolerant": 1000.0, "e_coli": 800.0}
 REPORTING_LIMIT_MIN_SHARE = 0.2
 REPORTING_LIMIT_PERIOD_YEARS = 5
 
+# Trace metals (limits in the ug/L range) are sometimes entered in ug/L in the
+# mg/L column. A value at least this many times the limit, in a station-period
+# whose lowest positive value is at or below the limit, is taken to be such an
+# entry and set to missing.
+UNIT_ERROR_FACTOR = 100
+UNIT_ERROR_MAX_LIMIT = 0.05
+UNIT_ERROR_ANALYTES = [
+    column for column, (kind, limit) in CONAMA_CLASS2_LIMITS.items()
+    if kind == "max" and limit <= UNIT_ERROR_MAX_LIMIT
+]
+
 # --- Regressors and controls --------------------------------------------------
 
 # Mining is estimated separately (only ~2.6% of stations switch mining
@@ -189,6 +200,22 @@ def apply_plausibility(frame):
     for column, (lower, upper) in PLAUSIBLE_RANGES.items():
         values = frame[column]
         frame[column] = values.where((values > lower) & (values <= upper))
+    return frame
+
+
+def drop_unit_errors(frame):
+    """Set suspected ug/L entries of trace metals to missing (in place). Expects a `period` column.
+
+    Within a station-period whose lowest positive value is at or below the CONAMA
+    limit, values at least `UNIT_ERROR_FACTOR` times the limit are implausible as
+    readings from the same lab and are treated as unit errors.
+    """
+    keys = [frame["station_code"], frame["period"]]
+    for column in UNIT_ERROR_ANALYTES:
+        limit = CONAMA_CLASS2_LIMITS[column][1]
+        values = frame[column]
+        lowest = values.where(values > 0).groupby(keys).transform("min")
+        frame[column] = values.mask((lowest <= limit) & (values >= UNIT_ERROR_FACTOR * limit))
     return frame
 
 
@@ -293,6 +320,7 @@ def build_pollution_panel(max_km=MAX_UPSTREAM_KM, distance_bands=False):
 
     combine_fecal_indicator(frame)
     apply_plausibility(frame)
+    drop_unit_errors(frame)
     frame = frame.join(conama_exceedances(frame))
     for column in CONTINUOUS_OUTCOMES:
         frame[f"y_{column}"] = transformed_outcome(frame, column)

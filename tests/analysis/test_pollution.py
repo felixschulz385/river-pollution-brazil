@@ -44,6 +44,28 @@ def test_reporting_limit_below_conama_limit_keeps_values():
     assert exceed["exceed_lead"].tolist() == [0.0, 0.0, 0.0, 1.0]
 
 
+def test_unit_errors_dropped_in_mixed_station_period():
+    # Mercury limit 0.0002: 0.2 next to 0.0001 readings is a ug/L entry; 0.0005 is a real violation.
+    frame = _frame(mercury=[0.0001, 0.0001, 0.0005, 0.2])
+    P.drop_unit_errors(frame)
+    assert frame["mercury"].isna().tolist() == [False, False, False, True]
+    exceed = P.conama_exceedances(frame)
+    assert exceed["exceed_mercury"].tolist()[:3] == [0.0, 0.0, 1.0]
+
+
+def test_unit_errors_keep_high_reporting_limit_periods_and_moderate_values():
+    # All-0.2 periods are left to the reporting-limit rule; lead 0.05 is 5x its limit, not a unit error.
+    frame = _frame(mercury=[0.2, 0.2, 0.2, 0.2], lead=[0.005, 0.005, 0.005, 0.05])
+    P.drop_unit_errors(frame)
+    assert frame["mercury"].notna().all()
+    assert frame["lead"].notna().all()
+
+
+def test_unit_error_rule_covers_trace_metals_only():
+    assert {"mercury", "cadmium", "lead", "arsenic"} <= set(P.UNIT_ERROR_ANALYTES)
+    assert "manganese" not in P.UNIT_ERROR_ANALYTES and "turbidity" not in P.UNIT_ERROR_ANALYTES
+
+
 def test_lower_and_range_limits():
     frame = _frame(dissolved_oxygen=[4.0, 6.0], ph=[5.5, 7.0])
     exceed = P.conama_exceedances(frame)
