@@ -1,9 +1,8 @@
 # Memo: upstream land cover and river water quality (pollution arm)
 
 *Status 2026-10-22, mercury result corrected 2026-10-26. Source:
-[`02_analysis.ipynb`](02_analysis.ipynb), run of 2026-10-21; model decisions in
-[`01_descriptives.ipynb`](01_descriptives.ipynb) §11. The notebook still shows the
-uncorrected mercury estimate until it is re-run.*
+[`02_analysis.ipynb`](02_analysis.ipynb), run of 2026-10-26; model decisions in
+[`01_descriptives.ipynb`](01_descriptives.ipynb) §11.*
 
 ## Question
 
@@ -41,7 +40,7 @@ y ~ ALR(pasture, agriculture, unclassified farming, urban, other)
   above the legal limit are excluded. For trace metals (limits ≤ 0.05 mg/L), values at
   least 100× the limit in a station-period whose lowest positive value is at or below
   the limit are treated as µg/L entries and set to missing (`drop_unit_errors`, added
-  2026-10-26; the notebook has not been re-run with it yet).
+  2026-10-26).
 - **Inference:** clustered by Otto level-3 sub-basin (207 basins), with restricted
   wild-cluster bootstrap p-values (9,999 draws).
 
@@ -84,7 +83,7 @@ imprecise nulls. There are modestly more significant results than chance would g
 - **Little identifying variation.** About 1% of the land-cover variance is identifying;
   expect wide intervals.
 - **Multiple testing.** Read individual significant results as suggestive.
-- **Metal violations.** These samples cover only 19–35 Otto-3 basins (12–20 in the
+- **Metal violations.** These samples cover only 19–34 Otto-3 basins (11–20 in the
   mining arm), so only the bootstrap p-values are reliable.
 - **PPML on levels.** It gives larger, positive nutrient effects (total phosphorus,
   nitrates), so nutrient results depend on the functional form.
