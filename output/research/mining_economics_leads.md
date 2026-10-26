@@ -313,6 +313,10 @@ Y_mt = β_up·(upstream IGD_m × post-2013_t) + β_loc·(local IGD_m × post-201
 - **Two shocks of opposite sign.** 2013 should raise and 2023 lower downstream harm.
 - **Ghost permits as heterogeneity.** Permit area that declares gold sales but shows
   little mining footprint (pre-2013) becomes a mechanism test, not the main exposure.
+  The Monitor da Mineração's MEND flag (mining expected but not detected) is a ready-made
+  version: 769 of 15,461 gold garimpo processes in the 2026 snapshot. It is
+  cross-sectional, so it can only define heterogeneity groups. The ANM grant dates
+  (event 513) supply the timing.
 - **Outcomes.** Mercury and lead violations at downstream stations, though there are
   none in the Amazon (see caveats), so turbidity and suspended solids are the feasible
   water outcomes there; infant deaths and
@@ -430,8 +434,9 @@ interact?
   Mining-related cases infected at a site but resident elsewhere measure outside crews;
   resident cases measure local participation. *Microdata are obtainable: He et al.
   (2026) received SIVEP records by municipality of infection through an
-  access-to-information (LAI) request. Check that residence and occupation fields come
-  with them.*
+  access-to-information (LAI) request. Saldanha has since deposited record-level SIVEP
+  2004–2024 on Zenodo (20706957), with occupation (`cod_ocup`, 5 = garimpagem),
+  residence and probable-infection municipality. It is now on the HPC.*
 - **Fishing dependence.** Registered artisanal fishers and closed-season payments to
   fishers (*seguro-defeso*), both public by municipality.
 - **Drought.** ERA5 precipitation and soil moisture, already in the pipeline.
@@ -639,7 +644,10 @@ demarcation timing holds up.
 **Order of work.**
 
 0. **Cheap checks first.**
-   - Whether CFEM identifies garimpo sales by permit (decides the ghost-permit test).
+   - Done: CFEM does not identify garimpo sales by permit. Only 289 of 15,461 gold garimpo
+     processes in the permit layer carry accumulated CFEM. The ghost-permit test has to use
+     the satellite side (mined area inside the permit, `transborda`) and sales from other
+     sources.
    - Done: timing of the 36 Amazon onsets relative to July 2013, and the 2020 cluster,
      which is a national MapBiomas step (see the summary and lead 1 threats). Gold areas
      could not be checked: no garimpo, gold-deposit or SIGMINE layer exists on the HPC.
@@ -668,14 +676,19 @@ demarcation timing holds up.
 
      Broad keyword queries were skipped. See `literature/gold_mining_health/screening.md`.
 1. **Build the shared data layer.** Start with the MapBiomas mining module (garimpo vs.
-   industrial, gold vs. other ores), then deposits inside protected areas, mining permits
-   and royalties. Replace the project's single mining class with garimpo-gold mining and
-   re-run the health mining arm as a first check.
-2. **Request malaria microdata access early.** It decides how far lead 2 can go.
-3. **Estimate lead 1.** Run the reduced form on mining onsets, then on downstream mercury
-   violations and infant deaths.
-4. **Add lead 3.** Shocks, substitute sites, and the displacement ratio.
-5. **Add lead 4.** Demarcation stages and anticipation shocks.
+   industrial, gold vs. other ores; export running), then deposits inside protected
+   areas and the permit layer. Replace the project's single mining class with
+   garimpo-gold mining, and re-run the health mining arm as the first check, with event
+   windows ending in 2019 or the 2020 onsets dropped. That decides whether there is an
+   Amazon health result to build on.
+2. **Malaria microdata: obtained** (SIVEP 2004–2024 from Zenodo, see the data
+   acquisition notes). Lead 2 can start once the mining layer is in.
+3. **Decide the water stage.** The options are station turbidity from 2008, satellite
+   river turbidity, or the reduced form only.
+4. **Estimate lead 1.** Run the reduced form on garimpo-gold onsets, then on the
+   downstream water outcome chosen in step 3, and on infant deaths.
+5. **Add lead 3.** Shocks, substitute sites, and the displacement ratio.
+6. **Add lead 4.** Demarcation stages and anticipation shocks.
 
 ## Data inventory
 
@@ -685,18 +698,85 @@ demarcation timing holds up.
 | Water quality incl. mercury, lead, cadmium violations | project (monitoring-station panel) | contamination outcome | in pipeline |
 | Hospitalizations, births, deaths by municipality | DATASUS (SIH, SINASC, SIM) | health outcomes | in pipeline |
 | Land cover incl. a single mining class | MapBiomas Collection 10 (class 30) | current mining exposure | in pipeline; national step in 2020 |
-| Mining module (garimpo vs. industrial, by ore) | MapBiomas | mining exposure by type | to add; not on the HPC; now the gate for the health arm and lead 1 |
-| Mining permits with type, ore, dates | National Mining Agency (SIGMINE) | laundering exposure (lead 1), anticipation (lead 4) | to add |
-| Royalty payments (CFEM) | National Mining Agency | declared output, laundering measure | to add; permit-level coverage for garimpo to check |
+| Mining module (garimpo vs. industrial, by ore) | MapBiomas Collection 11 mining substances (GEE asset) | mining exposure by type | exporting to Drive (see below); the gate for the health arm and lead 1 |
+| Mining permits with type, ore, dates | MapBiomas Monitor da Mineração (ANM processes + flags) | laundering exposure (lead 1), anticipation (lead 4) | on the HPC (snapshot 2026-10-26); grant dates need the ANM event history |
+| Royalty payments (CFEM) | National Mining Agency | declared output, laundering measure | by permit for only 289 of 15,461 gold garimpo processes; not usable for garimpo |
 | Gold geology and deposit points | Geological Survey of Brazil | IGD exposure (lead 1), deposit quality, controls | to add |
 | Congenital-anomaly flag on births | DATASUS (SINASC) | birth outcome comparable with Moreno-Louzada | to add |
 | APGAR at 1 and 5 minutes | DATASUS (SINASC) | low-APGAR outcome comparable with Romero & Saavedra | to add |
 | Fines, embargoes, seizures | IBAMA | enforcement shocks (lead 3) | to add |
 | Indigenous lands with stage and dates | FUNAI | lead 4 | to add |
 | Protected areas with creation dates | National register of conservation units | lead 4 | to add |
-| Malaria cases with occupation, infection site, residence | SIVEP-Malária | separating crews and residents (lead 2) | access to check |
+| Malaria cases with occupation, infection site, residence | SIVEP-Malária (Saldanha, Zenodo 20706957, CC-BY) | separating crews and residents (lead 2) | 2004–2024 on the HPC; 2025–26 preliminary in Zenodo 20706949 |
 | Registered fishers, closed-season payments | Fisheries registry, federal transparency portal | fishing dependence (lead 2) | to add |
 | Gold price | world market series | price shock | to add |
+
+**Data acquisition (status 2026-10-26).**
+
+- **Getting data onto the HPC.** sciCORE compute nodes have no internet, but the transfer
+  node `transfer12.scicore.unibas.ch` does. Anything with a direct URL is fetched there
+  with `curl`; manual downloads go from the laptop with `rsync` to transfer12.
+- **MapBiomas mining substances** (GEE asset
+  `projects/mapbiomas-public/assets/brazil/lulc/collection11/mapbiomas_brazil_collection11_mining_substances_v1`).
+  - *Bands:* `classification_1985` … `classification_2025` (41 bands), EPSG:4326 on the
+    MapBiomas grid.
+  - *Class codes ABCC:* A = 1 garimpo, 2 industrial; B = 1 exposed soil, 2 revegetation;
+    CC = substance (15 gold, 14 tin, 09 copper, 24 precious stones, 58 atypical, 59 no
+    substance).
+  - *Legend:* CSV in `data/land_cover/auxiliary/` (from MapBiomas's legend-code page).
+  - *Sample check:* around Itaituba, garimpo gold dominates in 2025 (1115 and 1215).
+- **Export route.** Platform downloads failed, and Google blocks the Earth Engine Python
+  login for this account, so the export runs from the Code Editor
+  (`scripts/gee_export_mapbiomas_mining.js`):
+  - uint16, 12,288-pixel tiles to Drive folder `mapbiomas_mining_c11`;
+  - a national area-by-class CSV, to check for the 2020 step.
+  
+  Next: rsync the tiles to the HPC, merge them to one GeoTIFF per year, and add a
+  mining-legend extraction to the land-cover pipeline.
+- **Permits.** The Monitor da Mineração process layer (270,877 ANM processes; 21,836
+  garimpo, 15,461 of them gold) is at
+  `data/mining/raw/mapbiomas_monitor_processos_2026-10-26/geoserver.zip` on the HPC.
+  - *Caveats:* it is a current snapshot, so expired processes are probably missing. `ano`
+    is the process-number year. The municipality, Indigenous-land and protected-area ID
+    fields are broken by the export (recompute them spatially).
+  - *Flags,* per MapBiomas's descriptions: `transborda` = mining overflowing the permit
+    polygon; `em_area_re` = in a restricted area. The inconsistency flags cover mining in
+    the wrong phase and mining that predates the authorization. The mapping of `mend` and
+    `permissao_` is unconfirmed.
+- **ANM event history** (grant dates; browser check 2026-10-26). The ANM's Cadastro
+  Mineiro microdata (`dadosabertos.anm.gov.br/SCM/microdados/microdados-scm.zip`,
+  181 MB, updated daily, 1934 onward) have the full history, joined to SIGMINE on
+  `DSProcesso`. The firewall returns 403 to `curl`, including from transfer12, so it has
+  to be downloaded in a browser and rsynced.
+  - `ProcessoEvento.txt` (about 1.1 GB, `;`-separated, CP-1252): process, event ID,
+    event date, note, and the Diário Oficial extract. `Evento.txt` describes about 2,900
+    event codes:
+    - PLG grant published = 513; PLG renewal = 523;
+    - PLG filed = 333; rejections = 334, 335, 337, 388; codes from 521 onward not yet
+      read.
+  - `ProcessoTitulo.txt`: title number, legal-document type (2 = PLG), situation
+    (outorgado, renovado, caduco, cancelado, cassado, …), publication and expiry dates.
+  - `Processo.txt`: active flag `BTAtivo`. About 71% of the first 88,000 rows are
+    inactive, so extinct processes are included, unlike the Monitor and SIGMINE active
+    layers.
+  - *Dictionary:* `metadados-microdados-scm.ods`; entity-relationship diagrams:
+    `mer-microdados-scm.pdf`.
+  - *Still unchecked:* the start year of the events table and whether it covers extinct
+    processes.
+  - *Polygons including inactive processes and garimpo reserves:* SIGMINE on dados.gov.br.
+- **Monitor da Mineração flags.** MapBiomas publishes no attribute dictionary or ATBD for
+  the process layer. What its factsheet does define:
+  - transbordo (mining beyond the permit limits);
+  - temporal inconsistency (mining before the authorization's validity);
+  - CFEM "quitado" (any CFEM payment in the last six months);
+  - restricted areas (including all strict-protection conservation units);
+  - MEND = "Mineração Esperada Não Detectada" (mining expected but not detected).
+
+  The rest are unconfirmed; the contact is contato@mapbiomas.org.
+- **SIVEP-Malária 2004–2024** (Saldanha, Zenodo 20706957) is at
+  `data/health/raw/sivep_malaria/` on the HPC. It has activity in the prior 15 days
+  (`cod_ocup`, 5 = garimpagem), municipality of residence, and probable municipality and
+  locality of infection. No access request is needed.
 
 ## Other leads considered
 
