@@ -698,7 +698,7 @@ demarcation timing holds up.
 | Water quality incl. mercury, lead, cadmium violations | project (monitoring-station panel) | contamination outcome | in pipeline |
 | Hospitalizations, births, deaths by municipality | DATASUS (SIH, SINASC, SIM) | health outcomes | in pipeline |
 | Land cover incl. a single mining class | MapBiomas Collection 10 (class 30) | current mining exposure | in pipeline; national step in 2020 |
-| Mining module (garimpo vs. industrial, by ore) | MapBiomas Collection 11 mining substances (GEE asset) | mining exposure by type | exporting to Drive (see below); the gate for the health arm and lead 1 |
+| Mining module (garimpo vs. industrial, by ore) | MapBiomas Collection 11 mining substances (GEE asset) | mining exposure by type | tiles on the HPC, not yet merged (see below); the gate for the health arm and lead 1 |
 | Mining permits with type, ore, dates | MapBiomas Monitor da Mineração (ANM processes + flags) | laundering exposure (lead 1), anticipation (lead 4) | on the HPC (snapshot 2026-10-26); grant dates need the ANM event history |
 | Royalty payments (CFEM) | National Mining Agency | declared output, laundering measure | by permit for only 289 of 15,461 gold garimpo processes; not usable for garimpo |
 | Gold geology and deposit points | Geological Survey of Brazil | IGD exposure (lead 1), deposit quality, controls | to add |
@@ -731,8 +731,21 @@ demarcation timing holds up.
   - uint16, 12,288-pixel tiles to Drive folder `mapbiomas_mining_c11`;
   - a national area-by-class CSV, to check for the 2020 step.
   
-  Next: rsync the tiles to the HPC, merge them to one GeoTIFF per year, and add a
-  mining-legend extraction to the land-cover pipeline.
+  *Tiles received 2026-10-26:* 61 non-empty tiles (41 bands, uint16, nodata 0, one
+  common origin), unpacked on the HPC in `data/land_cover/raw/mapbiomas11_mining_tiles/`
+  (Drive zip md5 `1796088b…`). The 2025 band reproduces the Console's Itaituba class
+  counts to within 0.2%. Around Itaituba, garimpo-gold pixels rise 15% from 2019 to 2020
+  (722,542 → 832,771) and keep rising to 2025 (1,169,507). The Earth Engine table export
+  (national CSV) stalled; the merge step computes the same table instead.
+  
+  *Pipeline (2026-10-26):* `scripts/prepare_mapbiomas_mining.py` merges the tiles into
+  one GeoTIFF per year (`data/land_cover/raw/mapbiomas11_mining/`, 0 = no mining). It
+  also writes the pipeline legend and the national area by class and year. The legend
+  (`src/data/sources/land_cover/mining.py`) groups codes into garimpo gold, garimpo with
+  unknown substance (58/59), other garimpo, industrial gold and other industrial, each
+  split into active and revegetating. The unchanged land-cover extract and ADM2
+  aggregation then run on it. `panels.adm2_upstream_mining` gives kernel-weighted
+  upstream shares per municipality-year.
 - **Permits.** The Monitor da Mineração process layer (270,877 ANM processes; 21,836
   garimpo, 15,461 of them gold) is at
   `data/mining/raw/mapbiomas_monitor_processos_2026-10-26/geoserver.zip` on the HPC.
