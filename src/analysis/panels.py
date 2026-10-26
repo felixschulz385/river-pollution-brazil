@@ -16,6 +16,7 @@ import yaml
 
 from src.data.sources.land_cover.composition import compute_kernel_weighted_composition
 from src.data.sources.land_cover.constants import LAND_COVER_COMPOSITION_BUCKET_MAP
+from src.data.sources.land_cover.mining import MINING_ADM2_UPSTREAM_PATH, compute_mining_composition
 
 from .sensor_data.catalog import _classify_pollutant_type
 from .settings import PROJECT_ROOT
@@ -28,6 +29,7 @@ HEALTH_PROCESSED_DIR = PROJECT_ROOT / "data" / "health" / "processed"
 LAND_COVER_AGGREGATE_DIR = PROJECT_ROOT / "data" / "land_cover" / "processed" / "aggregate"
 LAND_COVER_SENSOR_BUCKETED_PATH = LAND_COVER_AGGREGATE_DIR / "land_cover_sensor_upstream.parquet"
 LAND_COVER_ADM2_BUCKETED_PATH = LAND_COVER_AGGREGATE_DIR / "land_cover_adm2_upstream.parquet"
+MINING_ADM2_BUCKETED_PATH = PROJECT_ROOT / MINING_ADM2_UPSTREAM_PATH
 
 # Years covered by both the land-cover (MapBiomas) and climate (ERA5-Land)
 # upstream aggregates; outside this window the exposure/controls are missing.
@@ -146,6 +148,12 @@ def ring_land_cover(path, entity_column, min_km=0, max_km=np.inf, years=EXPOSURE
     weights are renormalized over the rings each entity has. ADM2 trench-body
     rings (negative buckets) are never included, as in assembly's upstream block.
     """
+    buckets, bucket_map = _read_rings(path, min_km, max_km, years)
+    return compute_kernel_weighted_composition(buckets, entity_columns=[entity_column, "year"], bucket_map=bucket_map)
+
+
+def _read_rings(path, min_km, max_km, years):
+    """Read the upstream rings in [min_km, max_km) and `years` of a bucketed file, with their bucket map."""
     bucket_map = {
         bucket: spec
         for bucket, spec in LAND_COVER_COMPOSITION_BUCKET_MAP.items()
@@ -161,12 +169,22 @@ def ring_land_cover(path, entity_column, min_km=0, max_km=np.inf, years=EXPOSURE
             ("year", "<=", last_year),
         ],
     )
-    return compute_kernel_weighted_composition(buckets, entity_columns=[entity_column, "year"], bucket_map=bucket_map)
+    return buckets, bucket_map
 
 
 def adm2_upstream_land_cover(min_km=0, max_km=np.inf, years=EXPOSURE_YEARS):
     """Municipality upstream land cover from the rings in [min_km, max_km) (see `ring_land_cover`)."""
     return ring_land_cover(LAND_COVER_ADM2_BUCKETED_PATH, "mun_id", min_km, max_km, years)
+
+
+def adm2_upstream_mining(min_km=0, max_km=np.inf, years=EXPOSURE_YEARS, path=MINING_ADM2_BUCKETED_PATH):
+    """Municipality upstream mining shares by type (MapBiomas mining substances) from the rings in [min_km, max_km).
+
+    Same rings and kernel as `ring_land_cover`; columns are
+    `land_cover.mining.mining_column_names` (e.g. `mining_garimpo_gold`).
+    """
+    buckets, bucket_map = _read_rings(path, min_km, max_km, years)
+    return compute_mining_composition(buckets, entity_columns=["mun_id", "year"], bucket_map=bucket_map)
 
 
 # --- Health outcomes ---------------------------------------------------------
