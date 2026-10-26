@@ -1,0 +1,78 @@
+[
+ {
+  "label": "PP2026",
+  "openalex": [
+   "W7110705051",
+   "W7117318865"
+  ],
+  "doi": "10.1016/j.jpubeco.2025.105559",
+  "title": "A tale of gold and blood"
+ },
+ {
+  "label": "DRS2023",
+  "openalex": [
+   "W2917996747",
+   "W3124792110",
+   "W4393538674"
+  ],
+  "doi": "10.1093/restud/rdad011",
+  "title": "Down the River: Glyphosate Use in Agriculture and Birth Outcomes of Surrounding Populations"
+ },
+ {
+  "label": "SaavedraRomero",
+  "openalex": [
+   "W3186241167"
+  ],
+  "doi": "",
+  "title": "Local incentives and national tax evasion: The response of illegal mining to a tax reform in Colombia"
+ },
+ {
+  "label": "ChimeliSoares",
+  "openalex": [
+   "W2135525621",
+   "W2996289148"
+  ],
+  "doi": "",
+  "title": "The use of violence in illegal markets: Evidence from mahogany trade in the Brazilian Amazon"
+ },
+ {
+  "label": "Idrobo",
+  "openalex": [
+   "W2006592197"
+  ],
+  "doi": "",
+  "title": "Illegal gold mining and violence in Colombia"
+ },
+ {
+  "label": "Cortinhas2024",
+  "openalex": [
+   "W4404312966"
+  ],
+  "doi": "",
+  "title": "Uncontrolled illegal mining and garimpo in the Brazilian Amazon"
+ },
+ {
+  "label": "vdGB2019",
+  "openalex": [
+   "W2807968021"
+  ],
+  "doi": "",
+  "title": "Mines: The local wealth and health effects of mineral mining in developing countries"
+ },
+ {
+  "label": "Swenson2011",
+  "openalex": [
+   "W2065721292"
+  ],
+  "doi": "",
+  "title": "Gold mining in the Peruvian Amazon: global prices, deforestation, and mercury imports"
+ },
+ {
+  "label": "CastroPeterka",
+  "openalex": [
+   "W4360999595"
+  ],
+  "doi": "",
+  "title": "Malaria is increasing in Indigenous and artisanal mining areas in the Brazilian Amazon"
+ }
+]
