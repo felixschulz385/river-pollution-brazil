@@ -290,7 +290,9 @@ notification year.
 
 ### `data/malaria/processed/malaria_adm2.parquet`
 
-One row per (`mun_id`, `year`) with any record; absent rows have zero cases.
+One row per (`mun_id`, `year`) with any record (13,792 rows, 1,419
+municipalities); absent rows have zero cases, so zero-fill before using it as
+a panel.
 The same cases are counted from three sites:
 
 - by infection municipality (Brazil-infected only): `inf_cases`,
@@ -317,4 +319,13 @@ Garimpo cases by `year`, residence municipality `res_mun_id`, infection
 municipality `inf_mun_id` (missing when infected abroad) and `inf_country`
 ("Brasil" or the country of infection), with `cases` ≥ 1. Includes cases
 infected where they live, so it can serve as a destination-choice table.
+
+Semantics:
+
+- Only patients with a valid Brazilian residence are included. Garimpo cases
+  of foreign residents, mostly Venezuelans infected in Venezuela (5,391 in
+  2004–24), have no residence code and are left out, as they are from the
+  `res_` counts.
+- Brazil-infected cases without a valid infection code are left out (14 in
+  2004–24), so per-year `cases` can fall slightly short of `res_garimpo`.
 
