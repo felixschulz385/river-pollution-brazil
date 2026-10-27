@@ -47,6 +47,8 @@ class StagePrerequisites:
 # - biomes.preprocess() reads the "stations" table populated by
 #   sensor_data.fetch() (not sensor_data.preprocess()), and separately reads
 #   gadm's simplified boundary directly for ADM2 mapping.
+# - geology.preprocess() reads gadm's simplified boundary for ADM2 mapping
+#   (through biomes' boundary loader, but not biomes' own data).
 # - river_network.preprocess() (RiverNetwork.generate()) now always
 #   annotates drainage areas and builds the trench-ADM2 table from gadm's
 #   simplified output -- there is no longer a partial/un-annotated output.
@@ -62,6 +64,7 @@ PIPELINE_DEPENDENCIES: dict[tuple[str, str], StagePrerequisites] = {
     ("biomes", "preprocess"): StagePrerequisites(
         requires_fetched=("sensor_data",), requires_preprocessed=("gadm",)
     ),
+    ("geology", "preprocess"): StagePrerequisites(requires_preprocessed=("gadm",)),
 }
 
 # Pseudo-source name for the global `data assemble` step, reused as a graph

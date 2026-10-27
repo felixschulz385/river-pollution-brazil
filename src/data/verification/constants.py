@@ -14,6 +14,7 @@ SOURCES = (
     "sensor_data",
     "climate",
     "biomes",
+    "geology",
     "population",
     "health",
     "assembly",

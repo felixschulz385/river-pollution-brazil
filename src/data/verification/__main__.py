@@ -63,7 +63,7 @@ def _fetched_display(report) -> str:
 # other than the generic "preprocess" (e.g. biomes joins/aggregates biome
 # polygons with ADM2 boundaries and sensor stations rather than doing raw
 # extraction) -- everything else falls back to "preprocess".
-_SINGLE_STAGE_LABELS = {"biomes": "aggregate"}
+_SINGLE_STAGE_LABELS = {"biomes": "aggregate", "geology": "aggregate"}
 
 
 def _latest_stage(name, report) -> str:

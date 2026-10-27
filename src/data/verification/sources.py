@@ -958,6 +958,66 @@ def _biomes_fingerprint_paths(root_dir) -> list[Path]:
 
 
 # --------------------------------------------------------------------------
+# geology
+# --------------------------------------------------------------------------
+
+_GEOLOGY_LAYERS = ("occurrences", "gold_provinces", "gold_districts")
+
+
+def _geology_list_fetched(root_dir, force: bool = False) -> FetchListing:
+    from src.data.sources.geology.constants import gpkg_path
+
+    path = gpkg_path(root_dir)
+    present = 1 if path.exists() else 0
+    return FetchListing(
+        present=present, expected=1, detail=f"SGB GeoPackage {'present' if present else 'missing'} at {path}."
+    )
+
+
+def _geology_check_outputs(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.geology.constants import (
+        ADM2_COLUMNS,
+        DEFAULT_ADM2_OUTPUT_PATH,
+        DISTRICT_SHARE_COLUMN,
+        GOLD_OCCURRENCE_COLUMN,
+        MUN_ID_COLUMN,
+        PROVINCE_SHARE_COLUMN,
+    )
+
+    def build_checks(frame):
+        checks = [
+            check_required_columns(frame, list(ADM2_COLUMNS)),
+            _non_empty_check(frame),
+            _uniqueness_check(frame, MUN_ID_COLUMN),
+        ]
+        for column in (DISTRICT_SHARE_COLUMN, PROVINCE_SHARE_COLUMN):
+            if column in frame.columns:
+                checks.append(check_value_range(frame, column, lo=0.0, hi=1.0))
+        if GOLD_OCCURRENCE_COLUMN in frame.columns:
+            checks.append(check_column_has_data(frame, GOLD_OCCURRENCE_COLUMN))
+        return checks
+
+    return [_artifact_check("geology_adm2", Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH, build_checks)]
+
+
+def _geology_check_fetched(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.geology.constants import gpkg_path
+
+    path = gpkg_path(root_dir)
+    if not path.exists():
+        return [_missing_artifact("sgb_gold_gpkg", path)]
+    checks = [check_file_nonempty(path, min_size_bytes=1024)]
+    checks += [check_gpkg_layer_readable(path, layer) for layer in _GEOLOGY_LAYERS]
+    return [OutputArtifactCheck(label="sgb_gold_gpkg", path=path, exists=True, checks=checks)]
+
+
+def _geology_fingerprint_paths(root_dir) -> list[Path]:
+    from src.data.sources.geology.constants import DEFAULT_ADM2_OUTPUT_PATH, gpkg_path
+
+    return [gpkg_path(root_dir), Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH]
+
+
+# --------------------------------------------------------------------------
 # population
 # --------------------------------------------------------------------------
 
@@ -1366,6 +1426,14 @@ SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
         fingerprint_paths=_biomes_fingerprint_paths,
         fetch_method="Download (IBGE shapefile, HTTP)",
         check_fetched=_biomes_check_fetched,
+    ),
+    "geology": SourceAdapter(
+        name="geology",
+        list_fetched=_geology_list_fetched,
+        check_outputs=_geology_check_outputs,
+        fingerprint_paths=_geology_fingerprint_paths,
+        fetch_method="Query (SGB geoportal, ArcGIS REST)",
+        check_fetched=_geology_check_fetched,
     ),
     "population": SourceAdapter(
         name="population",

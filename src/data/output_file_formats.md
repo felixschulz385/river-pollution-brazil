@@ -250,3 +250,30 @@ Semantics:
 - Stations that fall just outside every polygon (e.g. coastline
   simplification) are assigned the nearest biome instead of a missing value.
 
+## Geology Outputs
+
+### `data/geology/processed/geology_adm2.parquet`
+
+One row per `mun_id`, produced by `src.data.sources.geology` from the
+Geological Survey of Brazil's (SGB) Geobank mineral occurrences and its gold
+province and district polygons (`data/geology/raw/sgb_gold.gpkg`).
+
+Columns:
+
+- `area_km2`: municipality area (SIRGAS 2000 / Brazil Polyconic).
+- `gold_occurrences`: all gold occurrences, split by economic status into
+  `gold_occurrences_unexploited`, `_garimpo`, `_mine` and `_undetermined`.
+  `gold_occurrences_alluvial` counts those with an alluvial host (alluvium,
+  gravel, eluvium, colluvium, detrital sediment).
+- `gold_district_share`, `gold_province_share`: share of the municipality's
+  area inside any gold district or province.
+
+Semantics:
+
+- Only the never-exploited occurrences are predetermined geology. Garimpo and
+  mine occurrences, and the provinces, were largely recorded or drawn where
+  mining already was.
+- Occurrence positions are accurate to a few km. Points outside every
+  municipality are assigned to the nearest one within 5 km, else dropped.
+- Municipalities without occurrences have zero counts.
+
