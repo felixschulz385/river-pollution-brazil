@@ -112,3 +112,73 @@ datasets:
 
     with pytest.raises(ValueError, match="only applies to bucketed sources"):
         load_assembly_config(config_path)
+
+
+def _write_single_source_config(tmp_path, source_yaml):
+    config_path = tmp_path / "assembly_datasets.yaml"
+    config_path.write_text(
+        """
+datasets:
+  - id: adm2_panel
+    mode: adm2
+    index: [mun_id, year]
+    output_path: out.parquet
+    sources:
+"""
+        + source_yaml
+    )
+    return config_path
+
+
+def test_load_assembly_config_parses_reach_cap_and_fill(tmp_path):
+    config_path = _write_single_source_config(
+        tmp_path,
+        """      - name: c11
+        path: a.parquet
+        type: mining_bucketed
+        max_km: 50
+        join_keys: [mun_id, year]
+        variables: [mining_garimpo_gold]
+      - name: malaria
+        path: b.parquet
+        fill: {value: 0, years: [2004, 2024]}
+        join_keys: [mun_id, year]
+        variables: [inf_cases]
+""",
+    )
+
+    c11, malaria = load_assembly_config(config_path)["adm2_panel"].sources
+
+    assert c11.type == "mining_bucketed" and c11.max_km == 50
+    assert malaria.fill_value == 0 and malaria.fill_years == (2004, 2024)
+
+
+def test_load_assembly_config_rejects_reach_cap_on_unbucketed_or_local_source(tmp_path):
+    for extra in ("", "        type: land_cover_bucketed\n        scope: local\n"):
+        config_path = _write_single_source_config(
+            tmp_path,
+            f"""      - name: population
+        path: a.parquet
+{extra}        max_km: 50
+        join_keys: [mun_id, year]
+        variables: [population]
+""",
+        )
+
+        with pytest.raises(ValueError, match="sets max_km"):
+            load_assembly_config(config_path)
+
+
+def test_load_assembly_config_rejects_fill_without_value(tmp_path):
+    config_path = _write_single_source_config(
+        tmp_path,
+        """      - name: malaria
+        path: b.parquet
+        fill: {years: [2004, 2024]}
+        join_keys: [mun_id, year]
+        variables: [inf_cases]
+""",
+    )
+
+    with pytest.raises(ValueError, match="invalid fill"):
+        load_assembly_config(config_path)

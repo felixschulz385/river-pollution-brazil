@@ -9,9 +9,9 @@ import yaml
 from .constants import (
     ASSEMBLY_MODES,
     BUCKET_SCOPES,
-    CLIMATE_BUCKETED_SOURCE_TYPE,
+    BUCKETED_SOURCE_TYPES,
     DEFAULT_PIVOT_COLUMN_TEMPLATE,
-    LAND_COVER_BUCKETED_SOURCE_TYPE,
+    RING_BUCKETED_SOURCE_TYPES,
     SOURCE_TYPES,
     UPSTREAM_SCOPE,
     WIDE_SOURCE_TYPE,
@@ -63,6 +63,14 @@ class AssemblySource:
     # (e.g. biome_adm2's dominant-biome label) and must be excluded from the
     # numeric-dtype coercion `build._load_source_frame` applies to variables.
     categorical_variables: tuple[str, ...] = ()
+    # `land_cover_bucketed`/`mining_bucketed` upstream scope only: keep the
+    # rings that start below `max_km` (e.g. 50 -> the 0-25 and 25-50 km rings).
+    max_km: float | None = None
+    # Value given to this source's variables where the merge left them missing,
+    # in `fill_years` (inclusive) only, or every year if `fill_years` is unset:
+    # for count sources that list only non-zero rows (e.g. malaria cases).
+    fill_value: float | None = None
+    fill_years: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -103,13 +111,24 @@ def _parse_source(raw_source, *, dataset_id):
             f"Dataset '{dataset_id}' source '{raw_source.get('name', raw_source['path'])}' "
             f"has unknown scope '{scope}'; must be one of {list(BUCKET_SCOPES)}."
         )
-    if scope != UPSTREAM_SCOPE and source_type not in (
-        LAND_COVER_BUCKETED_SOURCE_TYPE,
-        CLIMATE_BUCKETED_SOURCE_TYPE,
-    ):
+    name = raw_source.get("name", raw_source["path"])
+    if scope != UPSTREAM_SCOPE and source_type not in BUCKETED_SOURCE_TYPES:
         raise ValueError(
-            f"Dataset '{dataset_id}' source '{raw_source.get('name', raw_source['path'])}' "
+            f"Dataset '{dataset_id}' source '{name}' "
             f"sets scope '{scope}', which only applies to bucketed sources."
+        )
+    max_km = raw_source.get("max_km")
+    if max_km is not None and (source_type not in RING_BUCKETED_SOURCE_TYPES or scope != UPSTREAM_SCOPE):
+        raise ValueError(
+            f"Dataset '{dataset_id}' source '{name}' sets max_km, which only applies "
+            f"to the upstream scope of {list(RING_BUCKETED_SOURCE_TYPES)} sources."
+        )
+    fill = raw_source.get("fill") or {}
+    unknown_fill_keys = set(fill) - {"value", "years"}
+    if unknown_fill_keys or (fill and "value" not in fill):
+        raise ValueError(
+            f"Dataset '{dataset_id}' source '{name}' has an invalid fill {fill!r}; "
+            "expected {value: <number>, years: [<first>, <last>]} (years optional)."
         )
     return AssemblySource(
         name=raw_source.get("name", raw_source["path"]),
@@ -127,6 +146,9 @@ def _parse_source(raw_source, *, dataset_id):
         bandwidth=raw_source.get("bandwidth"),
         scope=scope,
         categorical_variables=tuple(raw_source.get("categorical_variables", ())),
+        max_km=max_km,
+        fill_value=fill.get("value"),
+        fill_years=tuple(fill["years"]) if fill.get("years") else None,
     )
 
 

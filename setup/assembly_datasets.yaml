@@ -19,7 +19,14 @@
 # derivation `id_map` applies.
 # `scope: local` (bucketed ADM2 sources only) averages the rings of the trenches
 # touching the ADM2 instead of kernel-weighting the 0-500 km upstream rings, and
-# prefixes the outputs `local_`.
+# prefixes the outputs `local_`. `max_km` (upstream scope only) keeps the rings
+# starting below it, e.g. 50 -> 0-25 and 25-50 km.
+# `type: mining_bucketed` reads the same long bucket schema from the MapBiomas
+# Collection 11 mining-substances aggregate and yields `mining_*` group shares
+# (`src.data.sources.land_cover.mining.compute_mining_composition`).
+# `fill: {value, years}` sets the source's variables to `value` where the merge
+# left them missing, within `years` (inclusive) if given: for count tables that
+# list only municipality-years with a non-zero count.
 # `type: grouped_sum` marks sources long over some other non-join-key
 # dimension (e.g. population's `sex`/`age_group`); `variables` are summed
 # across that dimension, collapsing to one row per `join_keys` before the
@@ -492,8 +499,8 @@ datasets:
           - hosp_icd_20
           - hosp_icd_21
           - hosp_icd_99
-      # Morbidity channels are (near) zero from 2008 on (a preprocessing bug in
-      # the current-SIH morbidity-list mapping); usable for 1998-2007 only.
+      # Morbidity channels cover 1998-2024; legacy-2000 injuries list fewer
+      # causes than other years.
       - name: hospitalizations_morbidity_channel
         path: data/health/processed/health_hospitalizations_selected_morbidity_list.parquet
         type: long_pivot
@@ -551,3 +558,103 @@ datasets:
           - deaths_70_to_79
           - deaths_80_and_more
           - deaths_age_unknown
+      # MapBiomas Collection 11 mining substances (`land_cover --product
+      # mining`): upstream group shares within 50 and 200 km (inv-sqrt kernel,
+      # as the land-cover block) and the local, own-trench shares (the
+      # negative buckets of the trenches touching the municipality, equally
+      # weighted, as `local_lc_mining`). Shares of land area; missing where a
+      # municipality has no rings in the reach. Covers 1985-2025.
+      - name: c11_mining_adm2_upstream_50
+        path: data/land_cover/processed/aggregate/land_cover_mining_adm2_upstream.parquet
+        type: mining_bucketed
+        join_keys: [mun_id, year]
+        kernel: inv_sqrt_distance
+        max_km: 50
+        rename:
+          mining_garimpo_gold: c11_garimpo_gold_50
+          mining_garimpo_gold_active: c11_garimpo_gold_active_50
+          mining_garimpo_unknown: c11_garimpo_unknown_50
+          mining_garimpo_other: c11_garimpo_other_50
+          mining_industrial_gold: c11_industrial_gold_50
+          mining_industrial_other: c11_industrial_other_50
+        variables:
+          - c11_garimpo_gold_50
+          - c11_garimpo_gold_active_50
+          - c11_garimpo_unknown_50
+          - c11_garimpo_other_50
+          - c11_industrial_gold_50
+          - c11_industrial_other_50
+      - name: c11_mining_adm2_upstream_200
+        path: data/land_cover/processed/aggregate/land_cover_mining_adm2_upstream.parquet
+        type: mining_bucketed
+        join_keys: [mun_id, year]
+        kernel: inv_sqrt_distance
+        max_km: 200
+        rename:
+          mining_garimpo_gold: c11_garimpo_gold_200
+          mining_garimpo_gold_active: c11_garimpo_gold_active_200
+          mining_garimpo_unknown: c11_garimpo_unknown_200
+          mining_garimpo_other: c11_garimpo_other_200
+          mining_industrial_gold: c11_industrial_gold_200
+          mining_industrial_other: c11_industrial_other_200
+        variables:
+          - c11_garimpo_gold_200
+          - c11_garimpo_gold_active_200
+          - c11_garimpo_unknown_200
+          - c11_garimpo_other_200
+          - c11_industrial_gold_200
+          - c11_industrial_other_200
+      - name: c11_mining_adm2_local
+        path: data/land_cover/processed/aggregate/land_cover_mining_adm2_upstream.parquet
+        type: mining_bucketed
+        scope: local
+        join_keys: [mun_id, year]
+        rename:
+          local_mining_garimpo_gold: local_c11_garimpo_gold
+          local_mining_garimpo_gold_active: local_c11_garimpo_gold_active
+          local_mining_garimpo_unknown: local_c11_garimpo_unknown
+          local_mining_garimpo_other: local_c11_garimpo_other
+          local_mining_industrial_gold: local_c11_industrial_gold
+          local_mining_industrial_other: local_c11_industrial_other
+        variables:
+          - local_c11_garimpo_gold
+          - local_c11_garimpo_gold_active
+          - local_c11_garimpo_unknown
+          - local_c11_garimpo_other
+          - local_c11_industrial_gold
+          - local_c11_industrial_other
+      # SGB gold geology per municipality (static): occurrence counts by
+      # economic status, alluvial occurrences, and gold district/province shares.
+      - name: geology_adm2
+        path: data/geology/processed/geology_adm2.parquet
+        join_keys: [mun_id]
+        variables:
+          - area_km2
+          - gold_occurrences
+          - gold_occurrences_unexploited
+          - gold_occurrences_garimpo
+          - gold_occurrences_mine
+          - gold_occurrences_undetermined
+          - gold_occurrences_alluvial
+          - gold_district_share
+          - gold_province_share
+      # SIVEP-Malária positives by infection (`inf_`), residence (`res_`) and
+      # notification (`noti_`) municipality. The table lists only
+      # municipality-years with a record, so the rest of 2004-2024 is 0;
+      # outside SIVEP's years the counts stay missing.
+      - name: malaria_adm2
+        path: data/malaria/processed/malaria_adm2.parquet
+        join_keys: [mun_id, year]
+        fill: {value: 0, years: [2004, 2024]}
+        variables:
+          - inf_cases
+          - inf_garimpo
+          - inf_garimpo_local
+          - inf_garimpo_incoming
+          - inf_garimpo_incoming_other_state
+          - res_cases
+          - res_garimpo
+          - res_garimpo_elsewhere
+          - res_garimpo_abroad
+          - noti_exams
+          - noti_positives

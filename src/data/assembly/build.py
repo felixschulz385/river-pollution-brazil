@@ -13,6 +13,7 @@ from src.data.sources.land_cover.constants import (
     LAND_COVER_COMPOSITION_BUCKET_MAP,
     derive_mun_id_from_adm2_id,
 )
+from src.data.sources.land_cover.mining import compute_mining_composition
 from src.data.shared.sensor_upstream import (
     BUCKET_INTERSECTS_ADM2_COLUMN,
     DEFAULT_ADM2_DISTANCE_KERNEL,
@@ -25,10 +26,11 @@ from .constants import (
     DATE_COLUMN,
     DATETIME_COLUMN,
     GROUPED_SUM_SOURCE_TYPE,
-    LAND_COVER_BUCKETED_SOURCE_TYPE,
     LOCAL_COLUMN_PREFIX,
     LOCAL_SCOPE,
     LONG_PIVOT_SOURCE_TYPE,
+    MINING_BUCKETED_SOURCE_TYPE,
+    RING_BUCKETED_SOURCE_TYPES,
     SENSOR_MODE,
     YEAR_COLUMN,
 )
@@ -198,6 +200,8 @@ def _load_source_frame(source, *, root_dir):
         read_filters = [(column, "==", value) for column, value in source.filter.items()]
     elif source.scope == LOCAL_SCOPE:
         read_filters = [(BUCKET_INTERSECTS_ADM2_COLUMN, "==", True)]
+    elif source.max_km is not None:
+        read_filters = [("bucket", ">=", 0), ("bucket", "<", source.max_km)]
     frame = pd.read_parquet(source_path, filters=read_filters)
     index_names = [name for name in frame.index.names if name is not None]
     if index_names:
@@ -211,15 +215,24 @@ def _load_source_frame(source, *, root_dir):
         if len(duplicate_names) < len(index_names):
             frame = frame.reset_index()
 
-    if source.type == LAND_COVER_BUCKETED_SOURCE_TYPE:
+    if source.type in RING_BUCKETED_SOURCE_TYPES:
         kwargs = {"entity_columns": source.join_keys}
         if source.scope == LOCAL_SCOPE:
             kwargs.update(kernel="uniform", bandwidth=np.inf, bucket_map=_local_bucket_map(frame["bucket"]))
+        elif source.max_km is not None:
+            kwargs["bucket_map"] = {
+                bucket: spec
+                for bucket, spec in LAND_COVER_COMPOSITION_BUCKET_MAP.items()
+                if bucket < source.max_km
+            }
         if source.kernel is not None:
             kwargs["kernel"] = source.kernel
         if source.bandwidth is not None:
             kwargs["bandwidth"] = source.bandwidth
-        frame = compute_kernel_weighted_composition(frame, **kwargs)
+        if source.type == MINING_BUCKETED_SOURCE_TYPE:
+            frame = compute_mining_composition(frame, **kwargs)
+        else:
+            frame = compute_kernel_weighted_composition(frame, **kwargs)
     elif source.type == CLIMATE_BUCKETED_SOURCE_TYPE:
         kwargs = {
             "kernel": source.kernel or DEFAULT_ADM2_DISTANCE_KERNEL,
@@ -347,9 +360,23 @@ def assemble_dataset(dataset_config, *, root_dir="."):
         frames[1:],
         frames[0][0],
     )
+    for source in dataset_config.sources:
+        _fill_missing(merged, source)
     merged = merged.sort_values(list(dataset_config.index)).reset_index(drop=True)
     merged = _order_assembled_columns(merged, dataset_config)
     return merged
+
+
+def _fill_missing(frame, source):
+    """Fill a source's missing variables with its `fill_value`, within `fill_years` if set (in place)."""
+    if source.fill_value is None:
+        return
+    rows = pd.Series(True, index=frame.index)
+    if source.fill_years is not None:
+        first_year, last_year = source.fill_years
+        rows = frame[YEAR_COLUMN].between(first_year, last_year)
+    variables = list(source.variables)
+    frame.loc[rows, variables] = frame.loc[rows, variables].fillna(source.fill_value)
 
 
 def write_dataset(df, output_path):

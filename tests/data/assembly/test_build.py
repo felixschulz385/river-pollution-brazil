@@ -18,6 +18,7 @@ from src.data.assembly.constants import (
     LAND_COVER_BUCKETED_SOURCE_TYPE,
     LOCAL_SCOPE,
     LONG_PIVOT_SOURCE_TYPE,
+    MINING_BUCKETED_SOURCE_TYPE,
     SENSOR_MODE,
 )
 from src.data.assembly.schema import AssemblyDataset, AssemblySource
@@ -548,3 +549,88 @@ def test_assemble_dataset_adm2_mode_local_scope_averages_adm2_touching_buckets(t
     assert result.loc["111111", "lc_forest"] == pytest.approx(0.2, abs=1e-3)
     assert np.isnan(result.loc["222222", "lc_forest"])
     assert result["local_2t"].tolist() == pytest.approx([20.0, 12.0])
+
+
+def _mining_bucket_rows(mun_id, bucket, gold, flagged):
+    """One bucket of the C11 aggregate: 100 pixels, `gold` of them garimpo gold (all active)."""
+    counts = {-1: 100.0, 0: 100.0 - gold, 1: gold, 11: gold}
+    return [
+        {"mun_id": mun_id, "year": 2020, "bucket": bucket, "land_cover_class": class_id,
+         "cnt": counts.get(class_id, 0.0), "share": counts.get(class_id, 0.0) / 100.0,
+         "bucket_intersects_adm2": flagged}
+        for class_id in (-1, 0, 1, 2, 3, 4, 5, 11, 12, 21, 22, 31, 32, 41, 42, 51, 52)
+    ]
+
+
+def test_assemble_dataset_adm2_mode_mining_shares_by_reach_and_local_scope(tmp_path):
+    rows = (
+        _mining_bucket_rows("111111", -25, 10.0, True)
+        + _mining_bucket_rows("111111", 0, 2.0, False)
+        + _mining_bucket_rows("111111", 100, 50.0, False)
+    )
+    pd.DataFrame(rows).to_parquet(tmp_path / "mining.parquet", index=False)
+    mining = dict(path="mining.parquet", join_keys=("mun_id", "year"), type=MINING_BUCKETED_SOURCE_TYPE)
+    dataset_config = AssemblyDataset(
+        id="adm2_panel",
+        mode=ADM2_MODE,
+        index=("mun_id", "year"),
+        output_path=str(tmp_path / "out.parquet"),
+        sources=(
+            AssemblySource(name="local", variables=("local_mining_garimpo_gold",), scope=LOCAL_SCOPE, **mining),
+            AssemblySource(
+                name="upstream_50",
+                variables=("gold_50",),
+                max_km=50,
+                rename={"mining_garimpo_gold": "gold_50"},
+                **mining,
+            ),
+            AssemblySource(
+                name="upstream_200",
+                variables=("gold_200", "gold_active_200"),
+                max_km=200,
+                rename={"mining_garimpo_gold": "gold_200", "mining_garimpo_gold_active": "gold_active_200"},
+                **mining,
+            ),
+        ),
+    )
+
+    row = assemble_dataset(dataset_config, root_dir=tmp_path).iloc[0]
+
+    assert row["local_mining_garimpo_gold"] == pytest.approx(0.10)
+    # Only the 0-25 km ring is within 50 km.
+    assert row["gold_50"] == pytest.approx(0.02)
+    # Rings 0 and 100 at the inv-sqrt kernel's midpoints 12.5 and 112.5 km.
+    w0, w100 = 12.5**-0.5, 112.5**-0.5
+    assert row["gold_200"] == pytest.approx((0.02 * w0 + 0.50 * w100) / (w0 + w100))
+    assert row["gold_active_200"] == pytest.approx(row["gold_200"])
+
+
+def test_assemble_dataset_fills_missing_counts_within_the_fill_years(tmp_path):
+    pd.DataFrame({"mun_id": ["111111"] * 3 + ["222222"] * 3, "year": [2003, 2004, 2005] * 2,
+                  "population": [1.0] * 6}).to_parquet(tmp_path / "spine.parquet", index=False)
+    pd.DataFrame({"mun_id": ["111111"], "year": [2005], "cases": [7]}).astype({"mun_id": "string"}).to_parquet(
+        tmp_path / "cases.parquet", index=False
+    )
+    dataset_config = AssemblyDataset(
+        id="adm2_panel",
+        mode=ADM2_MODE,
+        index=("mun_id", "year"),
+        output_path=str(tmp_path / "out.parquet"),
+        sources=(
+            AssemblySource(name="spine", path="spine.parquet", join_keys=("mun_id", "year"), variables=("population",)),
+            AssemblySource(
+                name="cases",
+                path="cases.parquet",
+                join_keys=("mun_id", "year"),
+                variables=("cases",),
+                fill_value=0,
+                fill_years=(2004, 2005),
+            ),
+        ),
+    )
+
+    result = assemble_dataset(dataset_config, root_dir=tmp_path).set_index(["mun_id", "year"])["cases"]
+
+    assert np.isnan(result[("111111", 2003)]) and np.isnan(result[("222222", 2003)])
+    assert result[("111111", 2004)] == 0 and result[("111111", 2005)] == 7
+    assert result[("222222", 2004)] == 0 and result[("222222", 2005)] == 0

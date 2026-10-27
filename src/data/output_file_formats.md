@@ -176,6 +176,38 @@ Semantics:
 - Matrix lookup uses `system_id` and `trench_index` from
   `river_network_trenches.parquet`.
 
+### `data/land_cover/processed/extract/land_cover_mining.parquet`
+
+The MapBiomas Collection 11 mining-substances layer per (`trench_id`, `year`),
+1985–2025, built with `data preprocess --source land_cover --phase extract
+--product mining` (rasters in `data/land_cover/raw/mapbiomas11_mining`, legend
+`data/land_cover/auxiliary/mapbiomas_mining_legend.xlsx`). Same layout as
+`land_cover.parquet`, with pixel counts:
+
+- `land_cover_total`: all pixels of the drainage polygon; `land_cover_class_0`
+  the pixels without mining;
+- `land_cover_class_1` … `_5`: the mining groups of
+  `src.data.sources.land_cover.mining.MINING_GROUPS` (1 garimpo gold,
+  2 garimpo of unknown substance, 3 other garimpo, 4 industrial gold,
+  5 other industrial);
+- `land_cover_class_<group><phase>`: each group split into phase 1 (active,
+  exposed soil) and 2 (revegetation).
+
+Class 0 and the groups add up to the total, and the phases to their group.
+
+### `data/land_cover/processed/aggregate/land_cover_mining_adm2_upstream.parquet`
+
+The ADM2 aggregate of the mining extract (`--phase aggregate --product
+mining`), in the layout of `land_cover_adm2_upstream.parquet`:
+`land_cover_class` is -1 (bucket total), 0, the group ids and the
+group-phase ids. `src.analysis.panels.adm2_upstream_mining` and the
+`mining_bucketed` assembly sources collapse it into `mining_*` area shares.
+
+### `data/land_cover/processed/extract/mining_substances_area_by_class_year.csv`
+
+National mined pixels and area (km²) by raw ABCC class code and year, written
+by `scripts/prepare_mapbiomas_mining.py` when it merges the Earth Engine tiles.
+
 ## Population Outputs
 
 ### `data/population/raw/population_raw.parquet`
@@ -291,8 +323,8 @@ notification year.
 ### `data/malaria/processed/malaria_adm2.parquet`
 
 One row per (`mun_id`, `year`) with any record (13,792 rows, 1,419
-municipalities); absent rows have zero cases, so zero-fill before using it as
-a panel.
+municipalities); absent rows have zero cases. `adm2_panel` carries these
+columns zero-filled for 2004–2024 and missing outside those years.
 The same cases are counted from three sites:
 
 - by infection municipality (Brazil-infected only): `inf_cases`,
