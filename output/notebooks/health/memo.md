@@ -1,6 +1,7 @@
 # Memo: upstream land cover and health in downstream municipalities (health arm)
 
-*Status 2026-10-22. Source: [`02_analysis.ipynb`](02_analysis.ipynb), run of 2026-10-22;
+*Status 2026-10-27. Source: [`02_analysis.ipynb`](02_analysis.ipynb), run of 2026-10-22, and the
+mining checks in the leads note's Evidence section;
 model decisions in [`01_descriptives.ipynb`](01_descriptives.ipynb) §9.*
 
 ## Question
@@ -108,15 +109,30 @@ the possible exception, but the Amazon infant-mortality result has no measured w
 - **No mercury data.** The pollution arm's mercury effect does not survive a unit-coding
   correction, and it was identified outside the Amazon. The stations have almost no
   mercury readings in the Amazon.
-- **Robust but no dose-response** (HPC checks, 2026-10-26):
+- **Robust but no dose-response:**
   - 11 of the 36 onsets fall in 2020, a national MapBiomas mapping step.
   - Dropping the 2020 onsets and the Maranhão/coastal-Pará switchers leaves the effect at
     +0.25 to +0.26 (bootstrap p ≤ 0.014).
   - Keeping only switchers with a mined share of at least 0.01 pp gives +0.06 (p = 0.18).
+- **Not gold.**
+  - The MapBiomas mining-substances layer (Collection 11) separates garimpo gold from
+    other mining. Only 9 of the 216 switchers ever have garimpo gold within 50 km
+    upstream, so at least 29 of the 36 Amazon onsets have none.
+  - Dropping every municipality with gold upstream leaves the effect unchanged (+0.21 to
+    +0.22, bootstrap p ≤ 0.0005).
+- **The upstream garimpo-gold share gives no credible effect** (municipality and
+  state×year FE, 2000–2019, 50 and 200 km).
+  - Infant deaths rise by 1.5–3% per SD of gold share, but injury hospitalizations rise
+    as much. At 200 km they have the strongest bootstrap p-values (0.004–0.005).
+  - At 50 km the infant-death coefficient rests on one municipality, Centro do Guilherme
+    (MA). Without it the coefficient falls from 0.35 to 0.16 per pp (boot p 0.62).
+  - Adding 2020–24 cuts it to a third.
 
-So the result is an association with a presence marker, not a mercury dose. It needs a
-garimpo-specific exposure (the MapBiomas mining module) before it is read as an effect of
-gold mining.
+So the Amazon result is a robust association with non-gold mining frontiers, not a
+mercury dose, and mapped gold mining shows no credible downstream health effect. The
+comparable test of a price-driven effect, Moreno-Louzada's gold price × upstream deposits
+design with SINASC anomalies at birth, has not been run yet. Details and code locations
+are in `output/research/mining_economics_leads.md` (Evidence, E2 and E4).
 
 ## Files
 

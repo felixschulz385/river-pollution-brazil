@@ -1,7 +1,7 @@
 # Memo: upstream land cover and river water quality (pollution arm)
 
-*Status 2026-10-22, mercury result corrected 2026-10-26. Source:
-[`02_analysis.ipynb`](02_analysis.ipynb), run of 2026-10-26; model decisions in
+*Status 2026-10-26. Source: [`02_analysis.ipynb`](02_analysis.ipynb), run of
+2026-10-26; model decisions in
 [`01_descriptives.ipynb`](01_descriptives.ipynb) §11.*
 
 ## Question
@@ -39,8 +39,7 @@ y ~ ALR(pasture, agriculture, unclassified farming, urban, other)
   limits, in percentage points. Station-periods whose lab reporting limit sits at or
   above the legal limit are excluded. For trace metals (limits ≤ 0.05 mg/L), values at
   least 100× the limit in a station-period whose lowest positive value is at or below
-  the limit are treated as µg/L entries and set to missing (`drop_unit_errors`, added
-  2026-10-26).
+  the limit are treated as µg/L entries and set to missing (`drop_unit_errors`).
 - **Inference:** clustered by Otto level-3 sub-basin (207 basins), with restricted
   wild-cluster bootstrap p-values (9,999 draws).
 
@@ -61,9 +60,9 @@ imprecise nulls. There are modestly more significant results than chance would g
 - **Mining** (separate arm: 1,205 stations with mining within 50 km upstream, 158 of
   which switch).
   - *Lead:* mining appearing upstream raises lead violations by about 4 pp (p = 0.045).
-  - *Mercury:* no robust effect. The +14 pp in the 2026-10-21 run (p = 0.004) does not
-    survive removing suspected µg/L entries: +5.7 pp, SE 4.4, bootstrap p = 0.34, 11
-    basins (HPC check, 2026-10-26).
+  - *Mercury:* no robust effect. The +14 pp estimate before the unit-error rule
+    (p = 0.004) does not survive removing suspected µg/L entries: +5.7 pp, SE 4.4,
+    bootstrap p = 0.34, 11 basins.
   - *Where mercury is identified:* the mercury coefficient rests on Mata Atlântica and
     Cerrado stations in MG, SP, RJ and SC, sampled mostly 1985–99: 15 stations in 13
     basins before the recode, about 14 in 11 basins after it. There are almost no mercury readings in the Amazon
