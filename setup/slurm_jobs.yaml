@@ -55,6 +55,23 @@ jobs:
     cpus_per_task: 4
     mem: 64G
 
+  # `--product mining`: the Collection 11 mining-substances rasters (41 years,
+  # 30 m, mostly zero). The extract reads every year's full raster per trench
+  # batch and takes about 5 h on 4 cores; the ADM2 aggregate about 45 min.
+  land_cover.preprocess.extract.mining:
+    job_name: extract_land_cover_mining
+    time: "0-12:00:00"
+    qos: 1day
+    cpus_per_task: 4
+    mem: 128G
+
+  land_cover.preprocess.aggregate.mining:
+    job_name: aggregate_land_cover_mining
+    time: "0-06:00:00"
+    qos: 6hours
+    cpus_per_task: 4
+    mem: 64G
+
   # Formerly setup/slurm_scripts/assemble_sensor_data.sh. sensor_data has a
   # single preprocess step (cleaning + the GADM/river_network trench-join and
   # streamflow matching); the resource profile below covers the latter, the

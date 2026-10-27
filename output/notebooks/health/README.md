@@ -57,7 +57,7 @@ Resolved:
   planned gastrointestinal with 2 of its 6 values, silently dropped the other 14
   channels, and rewrote the manifest; preprocessing then zero-filled the unlisted
   batches. The complete batches of an earlier run were still on disk.
-  `scripts/repair_sih_morbidity_manifest.py` rebuilt the manifest from them (backup
+  A one-off repair script (commit 7aa1444) rebuilt the manifest from them (backup
   `manifest.jsonl.bak-20261021-162620`); the fetch now refuses to plan partial channels,
   and `_complete_panel` zero-fills only within fetched batches, so unfetched batches stay
   missing (this also turned ICD chapter 99 into NaN in years where it does not exist, and

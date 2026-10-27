@@ -6,9 +6,9 @@ pixel ABCC: A = 1 garimpo (artisanal), 2 industrial; B = 1 exposed soil,
 2 revegetation; CC = substance (15 gold, 58 atypical, 59 no substance, ...).
 Pixels without mining are 0.
 
-The land-cover pipeline extracts it unchanged (`preprocess --datadir
-MINING_DATADIR --legend-path MINING_LEGEND_PATH`) through the legend built
-here. It maps every code to a mining group (`Class`) and phase (`Subclass`), and
+The land-cover pipeline extracts and aggregates it as its `mining` product
+(`data preprocess --source land_cover --phase extract|aggregate --product
+mining`, paths below) through the legend built here. It maps every code to a mining group (`Class`) and phase (`Subclass`), and
 0 to class 0, so `land_cover_total` is the polygon's full pixel count and
 shares are shares of land area.
 """

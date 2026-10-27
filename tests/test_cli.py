@@ -121,3 +121,27 @@ def test_preprocess_passes_through_silently_once_prerequisites_are_satisfied(tmp
 
     assert "Cannot preprocess" not in result.stderr
     assert "prerequisites not satisfied" not in result.stderr
+
+
+def test_slurm_uses_the_product_specific_job_spec(monkeypatch):
+    from src import cli
+    from src.data.shared import slurm
+
+    rendered = {}
+    monkeypatch.setattr(slurm, "render_sbatch_script", lambda spec, argv, log_dir: rendered.update(spec=spec) or "")
+    monkeypatch.setattr(slurm, "submit_job", lambda script: "123")
+    monkeypatch.setattr(sys, "argv", ["src.cli", "data", "preprocess", "--slurm"])
+
+    assert cli._submit_slurm("land_cover.preprocess.extract", "land_cover_preprocess", product="mining") == 0
+    assert rendered["spec"]["job_name"] == "extract_land_cover_mining"
+
+    assert cli._submit_slurm("land_cover.preprocess.extract", "land_cover_preprocess", product="land_cover") == 0
+    assert rendered["spec"]["job_name"] == "extract_land_cover"
+
+
+def test_extract_flag_reads_both_spellings():
+    from src.cli import _extract_flag
+
+    assert _extract_flag(["--product", "mining"], "--product") == "mining"
+    assert _extract_flag(["--product=mining"], "--product") == "mining"
+    assert _extract_flag(["--root-dir", "."], "--product") is None

@@ -354,18 +354,11 @@ def _river_network_fingerprint_paths(root_dir) -> list[Path]:
 # land_cover
 # --------------------------------------------------------------------------
 
-# MapBiomas collection 10 (MAPBIOMAS_COLLECTION in land_cover/constants.py)
-# covers 1985-2024; no such range constant exists in that module today, so
-# it's declared here as the deterministic expected-years list.
-_LAND_COVER_EXPECTED_START_YEAR = 1985
-_LAND_COVER_EXPECTED_END_YEAR = 2024
-
-
 def _land_cover_list_fetched(root_dir, force: bool = False) -> FetchListing:
-    from src.data.sources.land_cover.constants import build_paths
+    from src.data.sources.land_cover.constants import MAPBIOMAS_YEARS, build_paths
     from src.data.sources.land_cover.preprocess import get_files
 
-    expected_years = set(range(_LAND_COVER_EXPECTED_START_YEAR, _LAND_COVER_EXPECTED_END_YEAR + 1))
+    expected_years = set(MAPBIOMAS_YEARS)
     paths = build_paths(root_dir)
     try:
         files = get_files(paths.datadir)
@@ -381,7 +374,7 @@ def _land_cover_list_fetched(root_dir, force: bool = False) -> FetchListing:
     missing_years = sorted(expected_years - present_years)
     detail = (
         f"{len(present_years)}/{len(expected_years)} years present "
-        f"({_LAND_COVER_EXPECTED_START_YEAR}-{_LAND_COVER_EXPECTED_END_YEAR})."
+        f"({min(expected_years)}-{max(expected_years)})."
     )
     if missing_years:
         detail += f" Missing: {missing_years}."
@@ -425,7 +418,132 @@ def _land_cover_check_outputs(root_dir) -> list[OutputArtifactCheck]:
     return [
         _artifact_check("land_cover_sensor_upstream", sensor_path, build_sensor_checks),
         _artifact_check("land_cover_adm2_upstream", adm2_upstream_path, build_adm2_upstream_checks),
+        *_land_cover_mining_check_outputs(root_dir),
     ]
+
+
+# The C11 mining-substances product (`land_cover --product mining`): every
+# pixel is class 0 or one mining group, and each group splits into an active
+# and a revegetation phase, so both identities must hold exactly in the
+# extract and in every (mun_id, year, bucket) of the ADM2 aggregate. Both
+# tables are streamed in record batches (the aggregate has ~36M rows).
+_MINING_COUNT_TOLERANCE = 1e-6
+
+
+def _mining_class_ids():
+    from src.data.sources.land_cover.mining import MINING_GROUPS, MINING_PHASES
+
+    return {group: [group * 10 + phase for phase in MINING_PHASES] for group in MINING_GROUPS}
+
+
+def _identity_check(name, max_gap, what):
+    ok = max_gap <= _MINING_COUNT_TOLERANCE
+    message = f"{what} add up." if ok else f"{what} differ by up to {max_gap:g} pixels."
+    return CheckResult(name=name, ok=ok, message=message)
+
+
+def _mining_extract_checks(path: Path) -> list[CheckResult]:
+    import numpy as np
+    import pyarrow.parquet as pq
+
+    from src.data.sources.land_cover.constants import LAND_COVER_TOTAL_COLUMN
+
+    phases = _mining_class_ids()
+    column = "land_cover_class_{}".format
+    required = ["trench_id", "year", LAND_COVER_TOTAL_COLUMN, column(0)]
+    required += [column(class_id) for group, ids in phases.items() for class_id in (group, *ids)]
+    parquet = pq.ParquetFile(path)
+    missing = sorted(set(required) - set(parquet.schema_arrow.names))
+    if missing:
+        return [CheckResult(name="required_columns", ok=False, message=f"Missing columns: {missing}.")]
+
+    rows, group_gap, phase_gap, negative = 0, 0.0, 0.0, 0
+    for batch in parquet.iter_batches(columns=required[2:], batch_size=1_000_000):
+        frame = batch.to_pandas()
+        rows += len(frame)
+        groups = frame[[column(0), *(column(group) for group in phases)]].sum(axis=1)
+        group_gap = max(group_gap, float(np.abs(groups - frame[LAND_COVER_TOTAL_COLUMN]).max()))
+        for group, ids in phases.items():
+            split = frame[[column(class_id) for class_id in ids]].sum(axis=1)
+            phase_gap = max(phase_gap, float(np.abs(split - frame[column(group)]).max()))
+        negative += int((frame < 0).to_numpy().sum())
+    return [
+        CheckResult(name="required_columns", ok=True, message="All required columns present."),
+        CheckResult(name="non_empty", ok=rows > 0, message=f"{rows} rows."),
+        _identity_check("groups_add_up", group_gap, "Class 0 and the mining groups and the trench total"),
+        _identity_check("phases_add_up", phase_gap, "Active and revegetation phases and their group"),
+        CheckResult(
+            name="non_negative_counts",
+            ok=negative == 0,
+            message="All counts non-negative." if negative == 0 else f"{negative} negative counts.",
+        ),
+    ]
+
+
+def _mining_adm2_upstream_checks(path: Path) -> list[CheckResult]:
+    import pyarrow.parquet as pq
+
+    from src.data.sources.land_cover.mining import NO_MINING_CLASS, TOTAL_CLASS_STEM
+
+    phases = _mining_class_ids()
+    phase_group = {class_id: group for group, ids in phases.items() for class_id in ids}
+    keys = ["mun_id", "year", "bucket"]
+    required = [*keys, "land_cover_class", "cnt", "share"]
+    parquet = pq.ParquetFile(path)
+    missing = sorted(set(required) - set(parquet.schema_arrow.names))
+    if missing:
+        return [CheckResult(name="required_columns", ok=False, message=f"Missing columns: {missing}.")]
+
+    # Signed sums that are zero when the identities hold. Rows of one
+    # (mun_id, year, bucket) can straddle two batches, so the per-batch sums
+    # are summed again over all batches at the end.
+    group_weight = {TOTAL_CLASS_STEM: -1.0, NO_MINING_CLASS: 1.0, **{group: 1.0 for group in phases}}
+    group_parts, phase_parts = [], []
+    rows, share_min, share_max = 0, float("inf"), float("-inf")
+    for batch in parquet.iter_batches(columns=required, batch_size=2_000_000):
+        frame = batch.to_pandas()
+        rows += len(frame)
+        share = frame["share"].dropna()
+        if len(share):
+            share_min, share_max = min(share_min, float(share.min())), max(share_max, float(share.max()))
+        classes = frame["land_cover_class"]
+        signed = frame["cnt"] * classes.map(group_weight).fillna(0.0)
+        group_parts.append(signed.groupby([frame[key] for key in keys]).sum())
+        in_phase = classes.isin(list(phase_group)) | classes.isin(list(phases))
+        part = frame[in_phase]
+        group = part["land_cover_class"].map(phase_group).fillna(part["land_cover_class"])
+        signed = part["cnt"].where(part["land_cover_class"].isin(list(phase_group)), -part["cnt"])
+        phase_parts.append(signed.groupby([*(part[key] for key in keys), group]).sum())
+    group_gap = float(pd.concat(group_parts).groupby(level=[0, 1, 2]).sum().abs().max()) if rows else 0.0
+    phase_gap = float(pd.concat(phase_parts).groupby(level=[0, 1, 2, 3]).sum().abs().max()) if rows else 0.0
+    shares_ok = rows == 0 or (share_min >= -1e-6 and share_max <= 1.0 + 1e-6)
+    return [
+        CheckResult(name="required_columns", ok=True, message="All required columns present."),
+        CheckResult(name="non_empty", ok=rows > 0, message=f"{rows} rows."),
+        _identity_check("groups_add_up", group_gap, "Class 0 and the mining groups and the bucket total"),
+        _identity_check("phases_add_up", phase_gap, "Active and revegetation phases and their group"),
+        CheckResult(
+            name="value_range:share",
+            ok=shares_ok,
+            message=f"share within [{share_min:.4g}, {share_max:.4g}]." if rows else "No shares.",
+        ),
+    ]
+
+
+def _land_cover_mining_check_outputs(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.land_cover.mining import MINING_ADM2_UPSTREAM_PATH, MINING_EXTRACT_PATH
+
+    artifacts = []
+    for label, relative_path, build_checks in (
+        ("land_cover_mining", MINING_EXTRACT_PATH, _mining_extract_checks),
+        ("land_cover_mining_adm2_upstream", MINING_ADM2_UPSTREAM_PATH, _mining_adm2_upstream_checks),
+    ):
+        path = Path(root_dir) / relative_path
+        if not path.exists():
+            artifacts.append(_missing_artifact(label, path))
+            continue
+        artifacts.append(OutputArtifactCheck(label=label, path=path, exists=True, checks=build_checks(path)))
+    return artifacts
 
 
 def _land_cover_check_fetched(root_dir) -> list[OutputArtifactCheck]:
@@ -464,6 +582,8 @@ def _land_cover_fingerprint_paths(root_dir) -> list[Path]:
         build_paths,
     )
 
+    from src.data.sources.land_cover.mining import MINING_ADM2_UPSTREAM_PATH, MINING_EXTRACT_PATH
+
     paths = build_paths(root_dir)
     try:
         raw_files = sorted(paths.datadir.glob("*.tif"))
@@ -473,6 +593,8 @@ def _land_cover_fingerprint_paths(root_dir) -> list[Path]:
         *raw_files,
         Path(root_dir) / DEFAULT_SENSOR_UPSTREAM_OUTPUT_PATH,
         Path(root_dir) / DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH,
+        Path(root_dir) / MINING_EXTRACT_PATH,
+        Path(root_dir) / MINING_ADM2_UPSTREAM_PATH,
     ]
 
 
@@ -1478,7 +1600,7 @@ SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
         list_fetched=_land_cover_list_fetched,
         check_outputs=_land_cover_check_outputs,
         fingerprint_paths=_land_cover_fingerprint_paths,
-        fetch_method="Manual placement (MapBiomas GeoTIFF tiles)",
+        fetch_method="Download (MapBiomas GCS GeoTIFF)",
         check_fetched=_land_cover_check_fetched,
     ),
     "sensor_data": SourceAdapter(

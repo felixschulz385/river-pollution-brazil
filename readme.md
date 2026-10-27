@@ -138,7 +138,10 @@ python3 -m src.cli data preprocess --source land_cover --phase extract --river-n
 python3 -m src.cli data preprocess --source land_cover --phase aggregate --river-network-path data/river_network/processed
 ```
 
-In the current code, `fetch` is only a placeholder and expects raw MapBiomas files to be obtained manually and placed in the configured data directory.
+`fetch` downloads the MapBiomas Collection 10 annual coverage GeoTIFFs
+(1985–2024) from MapBiomas's public storage into
+`data/land_cover/raw/lc_mapbiomas10_30`, skipping years already present. It
+needs internet access, so run it on the transfer node.
 
 The aggregate stage builds two output variants, and runs both by default
 (`--variant all`); pass `--variant sensor` or `--variant adm2` for just one:
@@ -150,6 +153,27 @@ Current derived land-cover outputs include:
 
 - `data/land_cover/processed/aggregate/land_cover_sensor_upstream.parquet`
 - `data/land_cover/processed/aggregate/land_cover_adm2_upstream.parquet`
+
+`--product mining` builds the MapBiomas Collection 11 mining-substances layer
+(mining by garimpo/industrial, substance and phase) through the same two
+phases, ADM2 only:
+
+```bash
+python3 -m src.cli data preprocess --source land_cover --phase extract   --product mining --slurm
+python3 -m src.cli data preprocess --source land_cover --phase aggregate --product mining --slurm
+```
+
+Its rasters are not downloadable directly. They are staged in two manual steps:
+
+1. `scripts/gee_export_mapbiomas_mining.js`, pasted into the Earth Engine Code
+   Editor, exports the asset as tiles (and a national area table) to Google
+   Drive; copy the tiles to `data/land_cover/raw/mapbiomas11_mining_tiles`.
+2. `python scripts/prepare_mapbiomas_mining.py` merges the tiles into one
+   GeoTIFF per year in `data/land_cover/raw/mapbiomas11_mining`, writes the
+   pipeline legend and the national area by class and year.
+
+Outputs: `data/land_cover/processed/extract/land_cover_mining.parquet` and
+`data/land_cover/processed/aggregate/land_cover_mining_adm2_upstream.parquet`.
 
 ### Population
 

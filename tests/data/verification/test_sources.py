@@ -218,8 +218,75 @@ def test_land_cover_check_outputs_missing(tmp_path):
 
     artifacts = adapter.check_outputs(tmp_path)
 
-    assert len(artifacts) == 2
+    assert [artifact.label for artifact in artifacts] == [
+        "land_cover_sensor_upstream",
+        "land_cover_adm2_upstream",
+        "land_cover_mining",
+        "land_cover_mining_adm2_upstream",
+    ]
     assert all(not artifact.exists for artifact in artifacts)
+
+
+def _mining_extract(gold_active=3, gold_reveg=1):
+    """One trench-year of the C11 extract: 100 pixels, 6 mined (4 garimpo gold, 2 industrial other)."""
+    row = {"trench_id": 1, "year": 2020, "land_cover_total": 100, "land_cover_class_0": 94}
+    for group in range(1, 6):
+        row[f"land_cover_class_{group}"] = 0
+        row[f"land_cover_class_{group}1"] = 0
+        row[f"land_cover_class_{group}2"] = 0
+    row.update(land_cover_class_1=4, land_cover_class_11=gold_active, land_cover_class_12=gold_reveg)
+    row.update(land_cover_class_5=2, land_cover_class_51=2)
+    return pd.DataFrame([row])
+
+
+def _mining_adm2(total=100.0):
+    counts = {-1: total, 0: 94.0, 1: 4.0, 11: 3.0, 12: 1.0, 5: 2.0, 51: 2.0}
+    rows = []
+    for class_id in (-1, 0, 1, 2, 3, 4, 5, 11, 12, 21, 22, 31, 32, 41, 42, 51, 52):
+        cnt = counts.get(class_id, 0.0)
+        rows.append({"mun_id": "150553", "year": 2020, "bucket": 0, "land_cover_class": class_id,
+                     "n": 3, "cnt": cnt, "share": cnt / total, "bucket_intersects_adm2": False})
+    return pd.DataFrame(rows)
+
+
+def _write_mining_outputs(root, extract, adm2):
+    extract_path = root / "data" / "land_cover" / "processed" / "extract" / "land_cover_mining.parquet"
+    adm2_path = root / "data" / "land_cover" / "processed" / "aggregate" / "land_cover_mining_adm2_upstream.parquet"
+    for path, frame in ((extract_path, extract), (adm2_path, adm2)):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        frame.to_parquet(path, index=False)
+
+
+def _mining_artifacts(root):
+    artifacts = SOURCE_ADAPTERS["land_cover"].check_outputs(root)
+    return {artifact.label: artifact for artifact in artifacts if "mining" in artifact.label}
+
+
+def test_land_cover_mining_outputs_pass_when_groups_and_phases_add_up(tmp_path):
+    _write_mining_outputs(tmp_path, _mining_extract(), _mining_adm2())
+
+    artifacts = _mining_artifacts(tmp_path)
+
+    assert all(artifact.exists and artifact.ok for artifact in artifacts.values())
+
+
+def test_land_cover_mining_extract_flags_phases_that_do_not_add_up(tmp_path):
+    _write_mining_outputs(tmp_path, _mining_extract(gold_reveg=2), _mining_adm2())
+
+    checks = {check.name: check for check in _mining_artifacts(tmp_path)["land_cover_mining"].checks}
+
+    assert checks["groups_add_up"].ok
+    assert not checks["phases_add_up"].ok
+
+
+def test_land_cover_mining_adm2_flags_groups_that_do_not_add_up_and_shares_above_one(tmp_path):
+    _write_mining_outputs(tmp_path, _mining_extract(), _mining_adm2(total=90.0))
+
+    checks = {check.name: check for check in _mining_artifacts(tmp_path)["land_cover_mining_adm2_upstream"].checks}
+
+    assert not checks["groups_add_up"].ok
+    assert not checks["value_range:share"].ok
+    assert checks["phases_add_up"].ok
 
 
 def test_land_cover_check_outputs_flags_out_of_range_share(tmp_path):

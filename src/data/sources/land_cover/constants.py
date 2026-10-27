@@ -16,6 +16,18 @@ from src.data.sources.sensor_data.constants import (
 
 MAPBIOMAS_COLLECTION = "collection_10"
 MAPBIOMAS_FILENAME_TEMPLATE = "brazil_coverage_{year}.tif"
+MAPBIOMAS_COVERAGE_URL_TEMPLATE = (
+    "https://storage.googleapis.com/mapbiomas-public/initiatives/brasil/"
+    f"{MAPBIOMAS_COLLECTION}/lulc/coverage/{MAPBIOMAS_FILENAME_TEMPLATE}"
+)
+MAPBIOMAS_YEARS = tuple(range(1985, 2025))
+
+# Products the extract and aggregate phases can build. `land_cover` is the
+# Collection 10 coverage; `mining` is the Collection 11 mining-substances layer
+# (`mining.py`), which has no sensor variant.
+LAND_COVER_PRODUCT = "land_cover"
+MINING_PRODUCT = "mining"
+PRODUCTS = (LAND_COVER_PRODUCT, MINING_PRODUCT)
 
 
 @dataclass(frozen=True)

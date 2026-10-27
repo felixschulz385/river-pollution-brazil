@@ -170,12 +170,34 @@ def _slurm_job_key(source: str | None, verb: str, phase: str | None) -> str:
     return f"{key}.{phase}" if phase else key
 
 
-def _submit_slurm(job_key: str, log_dir_name: str) -> int:
+def _extract_flag(remainder: list[str], flag: str) -> str | None:
+    """Value of `flag` among a source's forwarded flags (`--flag value` or `--flag=value`)."""
+    for index, token in enumerate(remainder):
+        if token == flag and index + 1 < len(remainder):
+            return remainder[index + 1]
+        if token.startswith(f"{flag}="):
+            return token.split("=", 1)[1]
+    return None
+
+
+def _submit_slurm(job_key: str, log_dir_name: str, product: str | None = None) -> int:
+    """Submit the current invocation under `job_key`'s resource spec.
+
+    With a `--product` (e.g. land_cover's `mining`), the spec
+    `<job_key>.<product>` is used when it exists, else `job_key`.
+    """
     from src.data.shared.slurm import SlurmJobSpecError, load_job_spec, render_sbatch_script, submit_job
 
     command_argv = [arg for arg in sys.argv[1:] if arg != "--slurm"]
+    spec = None
+    if product is not None:
+        try:
+            spec = load_job_spec(f"{job_key}.{product}")
+            job_key = f"{job_key}.{product}"
+        except SlurmJobSpecError:
+            spec = None
     try:
-        spec = load_job_spec(job_key)
+        spec = spec or load_job_spec(job_key)
     except SlurmJobSpecError as exc:
         logger.error("%s", exc)
         return 1
@@ -220,12 +242,7 @@ def _extract_root_dir(remainder: list[str]) -> str:
     `land_cover/__main__.py`), defaulting to "." like every source module
     already does, so the dependency check looks at the same root the actual
     run will use."""
-    for index, token in enumerate(remainder):
-        if token == "--root-dir" and index + 1 < len(remainder):
-            return remainder[index + 1]
-        if token.startswith("--root-dir="):
-            return token.split("=", 1)[1]
-    return "."
+    return _extract_flag(remainder, "--root-dir") or "."
 
 
 def _enforce_dependencies(source: str, verb: str, root_dir: str, *, chain: bool) -> bool:
@@ -278,7 +295,11 @@ def _run_source_verb(args: argparse.Namespace) -> int:
             return 1
 
     if args.slurm:
-        return _submit_slurm(_slurm_job_key(source, verb, phase), log_dir_name=f"{source}_{verb}")
+        return _submit_slurm(
+            _slurm_job_key(source, verb, phase),
+            log_dir_name=f"{source}_{verb}",
+            product=_extract_flag(args.remainder, "--product"),
+        )
 
     _dispatch_module(source, action, args.remainder)
     logger.info("Completed %s %s (%s) successfully", source, verb, action)
