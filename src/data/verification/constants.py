@@ -15,6 +15,7 @@ SOURCES = (
     "climate",
     "biomes",
     "geology",
+    "malaria",
     "population",
     "health",
     "assembly",

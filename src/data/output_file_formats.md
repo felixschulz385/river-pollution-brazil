@@ -277,3 +277,44 @@ Semantics:
   municipality are assigned to the nearest one within 5 km, else dropped.
 - Municipalities without occurrences have zero counts.
 
+## Malaria Outputs
+
+Produced by `src.data.sources.malaria` from the record-level SIVEP-Malária
+notifications 2004–2024 (Zenodo 20706957, `data/malaria/raw/`). A case is a
+positive exam (`res_exam` filled and not "Negativo") that is not a
+cure-verification slide (`id_lvc` or `tipo_lam` = LVC). A garimpo case has
+`cod_ocup` = "Garimpagem" (activity in the prior 15 days; "Mineracao" is not
+included). Municipality codes are 6-digit IBGE; SIVEP's 5399xx placeholders
+and codes without an IBGE match are treated as missing. `year` is the
+notification year.
+
+### `data/malaria/processed/malaria_adm2.parquet`
+
+One row per (`mun_id`, `year`) with any record; absent rows have zero cases.
+The same cases are counted from three sites:
+
+- by infection municipality (Brazil-infected only): `inf_cases`,
+  `inf_garimpo`, and its split into `inf_garimpo_local` (living in the
+  infection municipality) and `inf_garimpo_incoming` (living in another
+  Brazilian municipality), with `inf_garimpo_incoming_other_state`;
+- by residence municipality: `res_cases`, `res_garimpo`,
+  `res_garimpo_elsewhere` (infected in another Brazilian municipality) and
+  `res_garimpo_abroad`;
+- by notification municipality: `noti_exams` (all exams, LVC dropped) and
+  `noti_positives`. Negatives carry almost no infection or residence site from
+  2007, so testing can only be measured here.
+
+Semantics:
+
+- Local + incoming is less than `inf_garimpo` by the cases without a valid
+  residence (under 0.1%).
+- "Local" cannot be verified without a patient identifier: for local cases
+  residence, infection and notification site usually coincide.
+
+### `data/malaria/processed/malaria_garimpo_flows.parquet`
+
+Garimpo cases by `year`, residence municipality `res_mun_id`, infection
+municipality `inf_mun_id` (missing when infected abroad) and `inf_country`
+("Brasil" or the country of infection), with `cases` ≥ 1. Includes cases
+infected where they live, so it can serve as a destination-choice table.
+

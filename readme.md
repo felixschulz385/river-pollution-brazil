@@ -53,7 +53,7 @@ python3 -m src.cli data assemble   --dataset <id>       # join preprocessed sour
 
 `--source` and `--phase` must precede any source-specific flags. `--source`
 is one of `health`, `climate`, `sensor_data`, `land_cover`, `population`,
-`river_network`, `biomes`, `geology`. `--phase` only applies to sources whose
+`river_network`, `biomes`, `geology`, `malaria`. `--phase` only applies to sources whose
 preprocessing has two stages (`climate`, `land_cover`): `extract` (raw →
 per-source processed output) and `aggregate` (roll-up into sensor/ADM2
 upstream panels). `sensor_data` has a single preprocess step that does both

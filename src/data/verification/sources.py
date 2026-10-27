@@ -1018,6 +1018,84 @@ def _geology_fingerprint_paths(root_dir) -> list[Path]:
 
 
 # --------------------------------------------------------------------------
+# malaria
+# --------------------------------------------------------------------------
+
+def _malaria_list_fetched(root_dir, force: bool = False) -> FetchListing:
+    from src.data.sources.malaria.constants import YEARS, year_path
+
+    present = sum(year_path(root_dir, year).exists() for year in YEARS)
+    return FetchListing(
+        present=present, expected=len(YEARS), detail=f"{present}/{len(YEARS)} yearly SIVEP parquet files present."
+    )
+
+
+def _malaria_check_outputs(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.malaria.constants import (
+        ADM2_COLUMNS,
+        DEFAULT_ADM2_OUTPUT_PATH,
+        DEFAULT_FLOWS_OUTPUT_PATH,
+        FLOW_CASES_COLUMN,
+        FLOW_COLUMNS,
+        MUN_ID_COLUMN,
+        YEAR_COLUMN,
+    )
+
+    def adm2_checks(frame):
+        checks = [check_required_columns(frame, list(ADM2_COLUMNS)), _non_empty_check(frame)]
+        if {MUN_ID_COLUMN, YEAR_COLUMN} <= set(frame.columns):
+            duplicates = int(frame.duplicated([MUN_ID_COLUMN, YEAR_COLUMN]).sum())
+            checks.append(
+                CheckResult(
+                    name="unique:mun_id,year",
+                    ok=duplicates == 0,
+                    message="All (mun_id, year) keys unique." if duplicates == 0 else f"{duplicates} duplicate keys.",
+                )
+            )
+        return checks
+
+    def flow_checks(frame):
+        checks = [check_required_columns(frame, list(FLOW_COLUMNS)), _non_empty_check(frame)]
+        if FLOW_CASES_COLUMN in frame.columns:
+            checks.append(check_value_range(frame, FLOW_CASES_COLUMN, lo=1, hi=float("inf")))
+        return checks
+
+    return [
+        _artifact_check("malaria_adm2", Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH, adm2_checks),
+        _artifact_check("malaria_garimpo_flows", Path(root_dir) / DEFAULT_FLOWS_OUTPUT_PATH, flow_checks),
+    ]
+
+
+def _malaria_check_fetched(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.malaria.constants import YEARS, year_path
+
+    artifacts = []
+    for year in YEARS:
+        path = year_path(root_dir, year)
+        if not path.exists():
+            artifacts.append(_missing_artifact(f"sivep_{year}", path))
+            continue
+        checks = [check_file_nonempty(path, min_size_bytes=1024)]
+        artifacts.append(OutputArtifactCheck(label=f"sivep_{year}", path=path, exists=True, checks=checks))
+    return artifacts
+
+
+def _malaria_fingerprint_paths(root_dir) -> list[Path]:
+    from src.data.sources.malaria.constants import (
+        DEFAULT_ADM2_OUTPUT_PATH,
+        DEFAULT_FLOWS_OUTPUT_PATH,
+        YEARS,
+        year_path,
+    )
+
+    return [
+        *(year_path(root_dir, year) for year in YEARS),
+        Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH,
+        Path(root_dir) / DEFAULT_FLOWS_OUTPUT_PATH,
+    ]
+
+
+# --------------------------------------------------------------------------
 # population
 # --------------------------------------------------------------------------
 
@@ -1432,8 +1510,16 @@ SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
         list_fetched=_geology_list_fetched,
         check_outputs=_geology_check_outputs,
         fingerprint_paths=_geology_fingerprint_paths,
-        fetch_method="Query (SGB geoportal, ArcGIS REST)",
+        fetch_method="Query (SGB ArcGIS REST)",
         check_fetched=_geology_check_fetched,
+    ),
+    "malaria": SourceAdapter(
+        name="malaria",
+        list_fetched=_malaria_list_fetched,
+        check_outputs=_malaria_check_outputs,
+        fingerprint_paths=_malaria_fingerprint_paths,
+        fetch_method="Download (Zenodo SIVEP parquet)",
+        check_fetched=_malaria_check_fetched,
     ),
     "population": SourceAdapter(
         name="population",
