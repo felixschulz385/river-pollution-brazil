@@ -19,7 +19,9 @@ live in `setup/slurm_jobs.yaml`, keyed by `<source>.<verb>[.<phase>]`.
 The remaining scripts in this directory are unrelated to `src.cli data`:
 `run_sensor_analysis.sh`, `merge_sensor_analysis.sh`, and
 `submit_sensor_analysis_shards.sh` belong to the `analysis sensor-data`
-module; `vscode-server.sh` starts a dev server. `compute_extraction_matrices.sh`,
+module; `execute_notebook.sh` executes analysis notebooks in place
+(`sbatch setup/slurm_scripts/execute_notebook.sh <notebook.ipynb> [...]`);
+`vscode-server.sh` starts a dev server. `compute_extraction_matrices.sh`,
 `compute_reachability_graph.sh`, `extract_drainage_polygons.sh`, and
 `fix_drainage_polygons.sh` are orphaned/non-functional legacy scripts, kept
 pending a decision on whether to retire them.

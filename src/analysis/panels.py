@@ -187,6 +187,26 @@ def adm2_upstream_mining(min_km=0, max_km=np.inf, years=EXPOSURE_YEARS, path=MIN
     return compute_mining_composition(buckets, entity_columns=["mun_id", "year"], bucket_map=bucket_map)
 
 
+def adm2_local_mining(years=EXPOSURE_YEARS, path=MINING_ADM2_BUCKETED_PATH):
+    """Municipality local (own-trench) mining shares by type, as `local_mining_*` columns.
+
+    The rings of the trenches that touch the municipality
+    (`bucket_intersects_adm2`, the negative buckets), equally weighted: the
+    definition of the `local_` land-cover block and of `adm2_panel`'s
+    `local_c11_*` columns, which cover the panel's years only.
+    """
+    first_year, last_year = years
+    buckets = pd.read_parquet(
+        path,
+        filters=[("bucket_intersects_adm2", "==", True), ("year", ">=", first_year), ("year", "<=", last_year)],
+    )
+    bucket_map = {int(bucket): (f"local_{int(bucket)}", float(bucket)) for bucket in sorted(buckets["bucket"].unique())}
+    local = compute_mining_composition(
+        buckets, entity_columns=["mun_id", "year"], bucket_map=bucket_map, kernel="uniform", bandwidth=np.inf
+    )
+    return local.rename(columns={column: f"local_{column}" for column in local.columns if column.startswith("mining_")})
+
+
 # --- Health outcomes ---------------------------------------------------------
 # SIH hospitalizations and SINASC births are joined into `adm2_panel` by
 # assembly; these helpers name their column groups from the config.
