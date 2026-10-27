@@ -415,6 +415,61 @@ interact?
 - **Policy implication.** Removing crews does not restore residents' livelihoods, which
   predicts quick relapse after enforcement.
 
+**Formal sketch (2026-10-27).** Sites i are basins or municipalities on the directed river
+network, with deposit quality q_i and access cost c_i. X_it is garimpo-gold area.
+
+1. **Crews choose a site (logit).** A mass M of crews picks the site with the highest
+   value:
+
+   ```
+   V_it = (p_t − λ_t)·q_i − c_i − e_it·K − w_it·ℓ + ε
+   s_it = exp(V_it) / (exp(V_0t) + Σ_j exp(V_jt))
+   ```
+
+   - λ_t is the laundering cost: lowered by the 2013 good-faith rule, raised by the 2023
+     STF suspension (lead 1).
+   - e_it is the chance that equipment is destroyed, K its value.
+   - w_it·ℓ is the local labour a crew needs (guides, workers, boat operators).
+   - s_0 is the outside option of leaving mining or the region.
+
+   Enforcement at i moves crews to other sites in proportion to their shares, and a
+   fraction s_0/(1 − s_i) leaves mining. The displacement ratio
+   (1 − s_i − s_0)/(1 − s_i) is the parameter lead 3 estimates.
+2. **Residents choose an occupation.** Household h mines if w_it − κ_h > y^T_it, where
+   y^T_it = f_i(Fish_it, Forest_it, Rain_it) + transfers. κ_h is the household's cost of
+   mining (norms, risk, community rules). The resident mining share is
+   R_it = F(w_it − y^T_it).
+3. **A local labour market links the groups.** Crew labour demand D(s_it·M) and resident
+   supply R_it set w_it. The groups are strategic complements:
+   - crews raise the wage and pull residents in;
+   - a pool of residents willing to work lowers crews' costs (and, in a richer version,
+     e_it, because fewer people report crews).
+
+   This can produce tipping: a site that starts mining stays mining.
+4. **River feedback.** Upstream mining lowers fish stocks downstream:
+
+   ```
+   H_it    = Σ_{j upstream of i} k(d_ji) · X_jt
+   Fish_it = Fish_i0 − φ·H_it − δ·Drought_it
+   ```
+
+   Lower fish stocks reduce y^T and raise R, so mining spreads downstream. Contamination
+   flows only downstream, while q and crew information spread roughly the same way in
+   both directions. That difference identifies the livelihood channel.
+5. **Dynamics (relapse).**
+   - Fish stocks recover slowly.
+   - Skills and gear for the traditional economy wear out while a household mines.
+   - After a raid sets s_i to 0, R_i falls only partly where y^T is degraded, and the
+     remaining labour pool lowers the cost of crews returning.
+
+   This block can stay verbal unless the relapse test is strong.
+
+For an applied paper, the recommendation is a conceptual framework with blocks 1–4 and
+their closed-form comparative statics. The only structural piece is the crew logit,
+estimated on SIVEP origin–destination flows of garimpo cases: a conditional logit over
+infection municipalities for miners from each residence municipality. It gives distance
+costs, the enforcement response and the displacement ratio for lead 3 directly.
+
 **Predictions.**
 
 1. **Displacement.** Outside crews respond to laundering and enforcement shocks, and are
@@ -426,6 +481,17 @@ interact?
    droughts (e.g. the record-low rivers of 2023–24).
 4. **Relapse.** Mining returns faster after enforcement where the traditional economy has
    already degraded.
+5. **Separate drivers.** Price and laundering shocks move crews (non-resident garimpo
+   malaria cases); livelihood shocks (upstream mining, drought) move residents (resident
+   cases). Cross-responses give the sign of the complementarity in block 3.
+
+| Prediction | Model result | Test |
+|---|---|---|
+| 1 | Displacement ratio (1 − s_i − s_0)/(1 − s_i) | Crew response to enforcement at i and at substitute sites (lead 3) |
+| 2 | ∂X_i/∂X_upstream > ∂X_i/∂X_downstream at equal distance | Onset hazard at i on upstream vs. downstream onsets by river-distance bin |
+| 3 | ∂R/∂H larger where ∂y^T/∂Fish is larger | H × fisher share (registered fishers, seguro-defeso); H × drought (ERA5, 2023–24) |
+| 4 | Relapse hazard rises with degradation | Re-entry hazard after enforcement × prior loss of y^T |
+| 5 | Crews respond to p − λ and e; residents to H and drought | SIVEP non-resident vs. resident garimpo cases |
 
 **Data.**
 
@@ -437,11 +503,48 @@ interact?
   access-to-information (LAI) request. Saldanha has since deposited record-level SIVEP
   2004–2024 on Zenodo (20706957), with occupation (`cod_ocup`, 5 = garimpagem),
   residence and probable-infection municipality. It is now on the HPC.*
+  - *Codebook facts (2026-10-27):* there is no patient identifier (`id_pacie` is age),
+    so repeat patients cannot be linked. The residence-coding check has to compare
+    the demographics of "resident" and non-resident garimpo cases instead. Negative
+    exams are included (`res_exam` = 1), which gives a testing denominator.
+    Cure-verification slides (`id_lvc`, `tipo_lam` = LVC) must be dropped. Infection
+    abroad is coded in `pais_inf`.
 - **Fishing dependence.** Registered artisanal fishers and closed-season payments to
   fishers (*seguro-defeso*), both public by municipality.
 - **Drought.** ERA5 precipitation and soil moisture, already in the pipeline.
 - **River direction.** The asymmetry test uses the project's directed reachability and
   distance matrices directly.
+
+*Data by model block (2026-10-27).* Status in brackets; see the data inventory.
+
+- **Block 1 (crews):**
+  - crew presence: non-resident garimpo cases in SIVEP [on the HPC];
+  - p_t: gold price [to add];
+  - λ_t: policy dates [to verify], plus gold-buying points (DTVM/PCO) for variation
+    across sites [to add];
+  - q_i: SGB gold occurrences and districts [on the HPC, see data acquisition];
+  - e_it: IBAMA seizures and equipment destruction [to add];
+  - c_i: river distances [in the pipeline], roads and airstrips [to add];
+  - the destination logit: SIVEP residence → infection flows [on the HPC].
+- **Block 2 (residents):**
+  - R_it: resident garimpo cases [on the HPC] over population [in the pipeline];
+  - fish: upstream mining H_it [C11, aggregation running]; fishers and seguro-defeso
+    [to add];
+  - forest: MapBiomas C10 [in the pipeline];
+  - transfers: Bolsa Família [to add];
+  - heterogeneity in κ: FUNAI lands [to add] and the Census Indigenous and riverine
+    population shares [to add].
+- **Block 3 (wage):** no series exists for informal garimpo work. Census 2010/2022
+  garimpeiro occupation counts and formal mining employment in RAIS are proxies;
+  otherwise test only the sign of the complementarity, through cross-responses.
+- **Block 4 (river feedback):** directed matrices [in the pipeline]; drought [ERA5-Land
+  precipitation and soil water, in the pipeline; ANA river stage optional]; geology
+  control [SGB]. The asymmetry test needs a downstream aggregation besides the current
+  upstream one, which is a computation and not new data.
+- **Block 5 (relapse):** IBAMA enforcement timing [to add]; optionally INPE DETER mining
+  alerts for re-entry within a year.
+
+A first reduced-form pass on predictions 2 and 5 needs only what is on the HPC now.
 
 **Threats.**
 
@@ -449,6 +552,11 @@ interact?
   test; control for geology.
 - **Malaria programmes.** Malaria cases also respond to control programmes; use shares
   and state×year fixed effects.
+- **Malaria coverage.** Case counts measure mining only where malaria is transmitted and
+  tested, so use the garimpo share of positive cases rather than counts.
+- **Residence coding.** A mining camp can be recorded as the residence, which would turn
+  crew members into "residents". Check how stable the recorded residence is for repeat
+  patients.
 - **Dredges.** Dredge mining on rivers leaves little land footprint and is missed by
   MapBiomas.
 
@@ -701,7 +809,7 @@ demarcation timing holds up.
 | Mining module (garimpo vs. industrial, by ore) | MapBiomas Collection 11 mining substances (GEE asset) | mining exposure by type | tiles on the HPC, not yet merged (see below); the gate for the health arm and lead 1 |
 | Mining permits with type, ore, dates | MapBiomas Monitor da Mineração (ANM processes + flags) | laundering exposure (lead 1), anticipation (lead 4) | on the HPC (snapshot 2026-10-26); grant dates need the ANM event history |
 | Royalty payments (CFEM) | National Mining Agency | declared output, laundering measure | by permit for only 289 of 15,461 gold garimpo processes; not usable for garimpo |
-| Gold geology and deposit points | Geological Survey of Brazil | IGD exposure (lead 1), deposit quality, controls | to add |
+| Gold geology and deposit points | Geological Survey of Brazil (Geobank occurrences; gold provinces and districts) | IGD exposure (lead 1), deposit quality q_i and the geology control (lead 2) | on the HPC (2026-10-27, see below); stream-sediment gold assays not yet fetched |
 | Congenital-anomaly flag on births | DATASUS (SINASC) | birth outcome comparable with Moreno-Louzada | to add |
 | APGAR at 1 and 5 minutes | DATASUS (SINASC) | low-APGAR outcome comparable with Romero & Saavedra | to add |
 | Fines, embargoes, seizures | IBAMA | enforcement shocks (lead 3) | to add |
@@ -710,6 +818,12 @@ demarcation timing holds up.
 | Malaria cases with occupation, infection site, residence | SIVEP-Malária (Saldanha, Zenodo 20706957, CC-BY) | separating crews and residents (lead 2) | 2004–2024 on the HPC; 2025–26 preliminary in Zenodo 20706949 |
 | Registered fishers, closed-season payments | Fisheries registry, federal transparency portal | fishing dependence (lead 2) | to add |
 | Gold price | world market series | price shock | to add |
+| Gold-buying points (DTVM/PCO) | ANM, Central Bank | laundering exposure that varies by site (leads 1, 2) | to add |
+| Roads and airstrips | OSM/DNIT; published mappings of clandestine airstrips | access cost c_i (lead 2 logit) | to add |
+| Bolsa Família payments | federal transparency portal | residents' transfer income (lead 2) | to add |
+| Garimpeiro occupation; formal mining employment | Census 2010/2022; RAIS | wage proxy (lead 2) | to add |
+| River stage | ANA HidroWeb gauges | 2023–24 drought (lead 2) | optional |
+| Mining alerts | INPE DETER | re-entry within a year (lead 2 relapse) | optional |
 
 **Data acquisition (status 2026-10-26).**
 
@@ -792,6 +906,34 @@ demarcation timing holds up.
   `data/health/raw/sivep_malaria/` on the HPC. It has activity in the prior 15 days
   (`cod_ocup`, 5 = garimpagem), municipality of residence, and probable municipality and
   locality of infection. No access request is needed.
+- **SGB gold geology** (2026-10-27). The `geology` data source
+  (`src/data/sources/geology`) handles it.
+  - `data fetch --source geology` downloads the SGB geoportal layers (ArcGIS REST) into
+    `data/geology/raw/sgb_gold.gpkg`. It is on the HPC (md5 `7699eaea…`).
+  - `data preprocess --source geology` writes municipality gold-occurrence counts by
+    status and the gold district and province area shares to
+    `data/geology/processed/geology_adm2.parquet`. Not yet run.
+  - Upstream-reach measures are still to come.
+  - *Occurrences:* all 36,484 Geobank mineral occurrences, 4,478 of them gold. By
+    economic status the gold occurrences are 1,103 garimpo, 332 mine, 1,073 never
+    exploited and 1,970 undetermined; 686 are alluvial by host material.
+    - Positions are mostly digitized from 1:250,000 and 1:100,000 sheets, so they are
+      accurate to a few km.
+    - `DATA_CADASTRO` is the database entry date (2000–06), not the discovery date.
+  - *Provinces and districts:* 20 gold provinces and 94 gold districts (polygons),
+    apparently from the Informe de Recursos Minerais *Províncias e Distritos Auríferos
+    do Brasil* (Série Ouro 18, 2022).
+  - *Fit to MapBiomas garimpo (C11, 2020):*
+    - 96% of garimpo-gold area lies inside a gold province, 44% inside a district, and
+      92% within 10 km of a gold occurrence.
+    - Much of that fit is mechanical: occurrences were recorded at garimpos, and the
+      provinces were drawn around known mining. Using only the 1,073 never-exploited
+      occurrences, 16% of garimpo-gold area is within 10 km and 48% within 25 km.
+    - So the mined occurrences and the provinces describe where mining already is.
+      The predetermined q_i should use the never-exploited occurrences, the district
+      geology, or the SGB stream-sediment gold assays (`geoquimica_ouro`; 71,621 post-2012
+      samples, and 25,428 and 13,096 pre-2012 samples in the ppm and ppb layers, which
+      may overlap; the table also has Hg; not yet fetched).
 
 ## Other leads considered
 
