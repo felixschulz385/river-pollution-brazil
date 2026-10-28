@@ -803,6 +803,9 @@ The ADM2 panel carries:
 6. **Lead 4.** FUNAI stages, CNUC dates, anticipation around PL 191/2020.
 7. **Optional water outcome.** Station turbidity from 2008, or satellite river
    turbidity, as a pollution outcome of upstream garimpo ([E8](#e8-amazon-station-coverage-for-turbidity)).
+8. **Optional activity measure.** Test VIIRS night lights over C11 garimpo polygons, and
+   the C11 active-phase share, as year-to-year garimpo activity (see Sources and access,
+   "Night lights").
 
 ## Evidence
 
@@ -1190,6 +1193,7 @@ tables in `output/analysis/garimpo/price_supply/`.*
 | Garimpeiro occupation; formal mining employment | Census 2010/2022; RAIS | wage proxy | to add |
 | River stage | ANA HidroWeb gauges | drought | optional |
 | Mining alerts | INPE DETER | re-entry within a year | optional |
+| Night lights | VIIRS DNB annual composites (2012 on) | garimpo activity, lit dredges and camps | idea, untested; see Sources and access |
 
 ### Sources and access
 
@@ -1289,6 +1293,40 @@ tables in `output/analysis/garimpo/price_supply/`.*
   - *Documentation:* dictionary `metadados-microdados-scm.ods`; entity-relationship
     diagrams `mer-microdados-scm.pdf`.
   - *Polygons including inactive processes and garimpo reserves:* SIGMINE on dados.gov.br.
+- **Night lights (VIIRS), not fetched.** A possible activity measure: mined area says
+  where garimpo is; light says whether it is worked in a given year. The price and
+  policy designs need exactly that year-to-year activity ([E10](#e10-garimpo-supply-and-the-gold-price)).
+  - *Why it might work:*
+    - dredges and rafts run around the clock on generators with work lights;
+    - camps and the river towns that serve them (Itaituba, Creporizinho,
+      Jacareacanga) are lit;
+    - VIIRS detects lit fishing boats at sea, so a cluster of lit dredges is plausibly
+      visible.
+  - *Why it might not:*
+    - pit sites, sites under canopy and generator-only camps are likely below detection
+      in a 750 m pixel;
+    - cloud cover removes many Amazon nights, especially in the wet season;
+    - dry-season fires are bright and correlated with clearing and mining;
+    - the annual composites filter out short-lived and dim lights, which may be the
+      mining signal;
+    - pixels near a site mix the mine with the town that serves it.
+  - *Coverage:* VIIRS from 2012. DMSP (1992–2013) is coarse and saturates, and
+    harmonized DMSP–VIIRS series splice in 2013, where the price and policy variation
+    sits.
+  - *Access:* Google Earth Engine (annual VIIRS composites, or Black Marble), the
+    route already used for the C11 export. It must be downloaded from the session proxy
+    or transfer12, not from compute nodes.
+  - *Test first, as a measurement check (as E5 and E6):*
+    1. Annual radiance 2012–2024 inside and within 1–2 km of C11 garimpo polygons, and
+       in the river trenches.
+    2. Whether lit garimpo area tracks SIVEP garimpo cases and the C11 active-phase share
+       better than area alone.
+    3. Whether known dredge rivers (Tapajós, Madeira, Uraricoera) show lights.
+
+    About a day; drop it if lit area adds nothing over area.
+  - *Daytime alternative already in the panel:* C11 splits each mining class into an
+    active phase (exposed soil) and revegetation (`local_c11_garimpo_gold_active`,
+    `c11_garimpo_gold_active_<reach>`). It has not been used as an activity measure yet.
 
 ## Other leads considered
 
