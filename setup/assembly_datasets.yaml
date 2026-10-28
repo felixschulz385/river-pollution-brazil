@@ -663,6 +663,47 @@ datasets:
           - gold_occurrences_alluvial
           - gold_district_share
           - gold_province_share
+      # SGB occurrences upstream along the river network (static): counts
+      # within 50 km, 200 km and without limit, and Moreno-Louzada's Otto-4
+      # upstream/downstream binaries.
+      - name: geology_adm2_upstream
+        path: data/geology/processed/geology_adm2_upstream.parquet
+        join_keys: [mun_id]
+        variables:
+          - gold_upstream_50
+          - gold_upstream_200
+          - gold_upstream_all
+          - gold_unexploited_upstream_50
+          - gold_unexploited_upstream_200
+          - gold_unexploited_upstream_all
+          - gold_garimpo_upstream_50
+          - gold_garimpo_upstream_200
+          - gold_garimpo_upstream_all
+          - gold_mine_upstream_50
+          - gold_mine_upstream_200
+          - gold_mine_upstream_all
+          - gold_alluvial_upstream_50
+          - gold_alluvial_upstream_200
+          - gold_alluvial_upstream_all
+          - tin_upstream_50
+          - tin_upstream_200
+          - tin_upstream_all
+          - gold_upstream_otto4
+          - gold_downstream_otto4
+          - gold_unexploited_upstream_otto4
+          - gold_unexploited_downstream_otto4
+          - tin_upstream_otto4
+          - tin_downstream_otto4
+      # World Bank Pink Sheet gold price in USD and, with the BCB rate, in BRL
+      # (annual means of monthly prices, per troy ounce), joined by year.
+      - name: gold_price
+        path: data/commodity_prices/processed/gold_price_annual.parquet
+        join_keys: [year]
+        variables:
+          - gold_usd_oz
+          - gold_brl_oz
+          - log_gold_usd
+          - log_gold_brl
       # SIVEP-Malária positives by infection (`inf_`), residence (`res_`) and
       # notification (`noti_`) municipality. The table lists only
       # municipality-years with a record, so the rest of 2004-2024 is 0;

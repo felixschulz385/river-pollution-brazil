@@ -143,6 +143,22 @@ def otto_exposure(municipality_basins, occurrence_basins):
     return pd.DataFrame.from_dict(rows, orient="index")
 
 
+def trench_otto_basins(river_network_path):
+    """Otto level-`OTTO_LEVEL` code of each trench, as strings indexed by `trench_id`."""
+    otto = pd.read_parquet(Path(river_network_path) / "river_network_otto_basins.parquet",
+                           columns=[TRENCH_ID_COLUMN, OTTO_COLUMN])
+    return otto.dropna().set_index(TRENCH_ID_COLUMN)[OTTO_COLUMN].astype(str)
+
+
+def municipality_otto_basins(river_network_path, otto=None):
+    """Map each `mun_id` to the set of level-`OTTO_LEVEL` codes of the trenches it intersects."""
+    otto = trench_otto_basins(river_network_path) if otto is None else otto
+    matches = pd.read_parquet(Path(river_network_path) / "river_network_trench_adm2_matches.parquet")
+    matches[MUN_ID_COLUMN] = matches["adm2"].map(derive_mun_id_from_adm2_id)
+    matches[OTTO_COLUMN] = matches[TRENCH_ID_COLUMN].map(otto)
+    return matches.dropna(subset=[OTTO_COLUMN]).groupby(MUN_ID_COLUMN)[OTTO_COLUMN].agg(set).to_dict()
+
+
 def build_adm2_upstream_geology(root_dir=".", gpkg=None, river_network_path=None, n_jobs=None, output_path=None):
     """Write `geology_adm2_upstream.parquet`: upstream occurrence counts and Otto-4 binaries per municipality."""
     gpkg = Path(gpkg) if gpkg else gpkg_path(root_dir)
@@ -166,19 +182,15 @@ def build_adm2_upstream_geology(root_dir=".", gpkg=None, river_network_path=None
         network=network, rn_module=rn_module, n_jobs=n_jobs, reduce_adm2=reduce_adm2
     ).set_index(MUN_ID_COLUMN)
 
-    otto = pd.read_parquet(river_network_path / "river_network_otto_basins.parquet", columns=[TRENCH_ID_COLUMN, OTTO_COLUMN])
-    otto = otto.dropna().set_index(TRENCH_ID_COLUMN)[OTTO_COLUMN].astype(str)
-    matches = pd.read_parquet(river_network_path / "river_network_trench_adm2_matches.parquet")
-    matches[MUN_ID_COLUMN] = matches["adm2"].map(derive_mun_id_from_adm2_id)
-    matches[OTTO_COLUMN] = matches[TRENCH_ID_COLUMN].map(otto)
-    municipality_basins = matches.dropna(subset=[OTTO_COLUMN]).groupby(MUN_ID_COLUMN)[OTTO_COLUMN].agg(set).to_dict()
+    otto = trench_otto_basins(river_network_path)
+    municipality_basins = municipality_otto_basins(river_network_path, otto)
     occurrence_basins = trench_ids.map(otto)
     basins_by_group = {
         group: set(occurrence_basins[occurrences[group] & occurrence_basins.notna()]) for group in OTTO_GROUPS
     }
     exposure = otto_exposure(municipality_basins, basins_by_group)
 
-    municipalities = sorted(set(matches[MUN_ID_COLUMN]))
+    municipalities = sorted(set(upstream.index) | set(municipality_basins))
     result = upstream.reindex(municipalities).join(exposure.reindex(municipalities))
     result = result.fillna(0).astype("int64").rename_axis(MUN_ID_COLUMN).reset_index()[list(UPSTREAM_COLUMNS)]
 

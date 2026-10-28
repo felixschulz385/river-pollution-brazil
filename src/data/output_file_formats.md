@@ -386,6 +386,7 @@ Semantics:
   last digit). Deposits in the municipality's own sub-basins do not count, and
   nothing upstream across level-3 boundaries does.
 - Each trench is counted once per municipality, at its smallest distance.
+- `adm2_panel` carries every column, constant across years.
 
 ## Malaria Outputs
 
@@ -459,4 +460,5 @@ One row per (`year`, `month`) with both series: `gold_usd_oz`, `brl_per_usd`
 
 One row per `year` with all twelve months (1995 onward): the means of the
 monthly `gold_usd_oz`, `brl_per_usd` and `gold_brl_oz`, the logs of the
-annual means `log_gold_usd` and `log_gold_brl`, and `months`.
+annual means `log_gold_usd` and `log_gold_brl`, and `months`. `adm2_panel`
+joins `gold_usd_oz`, `gold_brl_oz`, `log_gold_usd` and `log_gold_brl` by year.
