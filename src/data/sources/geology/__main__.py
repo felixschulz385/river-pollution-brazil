@@ -1,6 +1,7 @@
 import argparse
 import logging
 
+from .constants import ADM2_PRODUCT, PRODUCTS, UPSTREAM_PRODUCT
 from .core import Geology
 
 
@@ -28,6 +29,15 @@ def configure_parser(parser, include_action=True):
     parser.add_argument("--gadm-layer", default=None)
     parser.add_argument("--adm2-id-column", default=None)
     parser.add_argument("--adm2-output", default=None)
+    parser.add_argument(
+        "--product",
+        default=ADM2_PRODUCT,
+        choices=PRODUCTS,
+        help="'adm2' (default): occurrences and gold province/district shares inside each municipality; "
+        "'upstream': occurrences upstream along the river network and the Otto-4 binaries (needs river_network).",
+    )
+    parser.add_argument("--river-network-path", default=None)
+    parser.add_argument("--n-jobs", type=int, default=None)
     return parser
 
 
@@ -36,6 +46,13 @@ def run(args):
     agent = Geology(root_dir=args.root_dir)
     if args.action == "fetch":
         agent.fetch()
+    elif args.product == UPSTREAM_PRODUCT:
+        agent.aggregate_upstream(
+            gpkg=args.gpkg,
+            river_network_path=args.river_network_path,
+            n_jobs=args.n_jobs,
+            output_path=args.adm2_output,
+        )
     else:
         agent.aggregate(
             gpkg=args.gpkg,

@@ -52,6 +52,49 @@ COUNT_COLUMNS = (GOLD_OCCURRENCE_COLUMN, *STATUS_COLUMNS.values(), ALLUVIAL_COLU
 ADM2_COLUMNS = (MUN_ID_COLUMN, AREA_COLUMN, *COUNT_COLUMNS, DISTRICT_SHARE_COLUMN, PROVINCE_SHARE_COLUMN)
 
 DEFAULT_ADM2_OUTPUT_PATH = str(processed_dir(".", "geology") / "geology_adm2.parquet")
+DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH = str(processed_dir(".", "geology") / "geology_adm2_upstream.parquet")
+
+# Products of the aggregate step: occurrences and province/district shares
+# inside each municipality, or occurrences upstream along the river network.
+ADM2_PRODUCT = "adm2"
+UPSTREAM_PRODUCT = "upstream"
+PRODUCTS = (ADM2_PRODUCT, UPSTREAM_PRODUCT)
+
+# Upstream counts: occurrence group -> (substance, `STATUS_ECONOMICO` value or
+# None for all, alluvial only). Tin is the other-minerals placebo: mined
+# without mercury.
+TIN_SUBSTANCE = "Estanho"
+UPSTREAM_GROUPS = {
+    "gold": (GOLD_SUBSTANCE, None, False),
+    "gold_unexploited": (GOLD_SUBSTANCE, "Não explotado", False),
+    "gold_garimpo": (GOLD_SUBSTANCE, "Garimpo", False),
+    "gold_mine": (GOLD_SUBSTANCE, "Mina", False),
+    "gold_alluvial": (GOLD_SUBSTANCE, None, True),
+    "tin": (TIN_SUBSTANCE, None, False),
+}
+# Upstream reaches (km along the river network from the upstream end of the
+# municipality's trenches, as the land-cover rings); None is unlimited.
+UPSTREAM_REACHES_KM = {"50": 50.0, "200": 200.0, "all": None}
+# Moreno-Louzada's exposure: deposits in Otto level-4 sub-basins upstream or
+# downstream (Pfafstetter coding, same level-3 basin) of any sub-basin the
+# municipality intersects. Binary, for these groups.
+OTTO_LEVEL = 4
+OTTO_GROUPS = ("gold", "gold_unexploited", "tin")
+
+
+def upstream_count_column(group, reach):
+    return f"{group}_upstream_{reach}"
+
+
+def otto_column(group, direction):
+    return f"{group}_{direction}_otto{OTTO_LEVEL}"
+
+
+UPSTREAM_COLUMNS = (
+    MUN_ID_COLUMN,
+    *(upstream_count_column(group, reach) for group in UPSTREAM_GROUPS for reach in UPSTREAM_REACHES_KM),
+    *(otto_column(group, direction) for group in OTTO_GROUPS for direction in ("upstream", "downstream")),
+)
 
 
 def geology_dir(root_dir: str | Path = ".") -> Path:

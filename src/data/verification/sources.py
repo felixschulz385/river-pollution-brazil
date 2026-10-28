@@ -1100,6 +1100,7 @@ def _geology_check_outputs(root_dir) -> list[OutputArtifactCheck]:
     from src.data.sources.geology.constants import (
         ADM2_COLUMNS,
         DEFAULT_ADM2_OUTPUT_PATH,
+        DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH,
         DISTRICT_SHARE_COLUMN,
         GOLD_OCCURRENCE_COLUMN,
         MUN_ID_COLUMN,
@@ -1119,7 +1120,56 @@ def _geology_check_outputs(root_dir) -> list[OutputArtifactCheck]:
             checks.append(check_column_has_data(frame, GOLD_OCCURRENCE_COLUMN))
         return checks
 
-    return [_artifact_check("geology_adm2", Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH, build_checks)]
+    return [
+        _artifact_check("geology_adm2", Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH, build_checks),
+        _artifact_check(
+            "geology_adm2_upstream", Path(root_dir) / DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH, _geology_upstream_checks
+        ),
+    ]
+
+
+def _geology_upstream_checks(frame) -> list[CheckResult]:
+    """Columns, one row per municipality, counts that grow with the reach and 0/1 Otto binaries."""
+    from src.data.sources.geology.constants import (
+        MUN_ID_COLUMN,
+        OTTO_GROUPS,
+        UPSTREAM_COLUMNS,
+        UPSTREAM_GROUPS,
+        otto_column,
+        upstream_count_column,
+    )
+
+    checks = [
+        check_required_columns(frame, list(UPSTREAM_COLUMNS)),
+        _non_empty_check(frame),
+        _uniqueness_check(frame, MUN_ID_COLUMN),
+    ]
+    if not checks[0].ok:
+        return checks
+    shrinking = [
+        group
+        for group in UPSTREAM_GROUPS
+        if (frame[upstream_count_column(group, "50")] > frame[upstream_count_column(group, "200")]).any()
+        or (frame[upstream_count_column(group, "200")] > frame[upstream_count_column(group, "all")]).any()
+    ]
+    checks.append(
+        CheckResult(
+            name="counts_grow_with_reach",
+            ok=not shrinking,
+            message=f"Counts shrink with the reach for {shrinking}." if shrinking else "50 <= 200 <= unlimited.",
+        )
+    )
+    binaries = [otto_column(group, direction) for group in OTTO_GROUPS for direction in ("upstream", "downstream")]
+    not_binary = [column for column in binaries if not frame[column].isin([0, 1]).all()]
+    checks.append(
+        CheckResult(
+            name="otto_binary",
+            ok=not not_binary,
+            message=f"Not 0/1: {not_binary}." if not_binary else "Otto-4 exposures are 0/1.",
+        )
+    )
+    checks.append(check_column_has_data(frame, upstream_count_column("gold", "all")))
+    return checks
 
 
 def _geology_check_fetched(root_dir) -> list[OutputArtifactCheck]:
@@ -1134,9 +1184,17 @@ def _geology_check_fetched(root_dir) -> list[OutputArtifactCheck]:
 
 
 def _geology_fingerprint_paths(root_dir) -> list[Path]:
-    from src.data.sources.geology.constants import DEFAULT_ADM2_OUTPUT_PATH, gpkg_path
+    from src.data.sources.geology.constants import (
+        DEFAULT_ADM2_OUTPUT_PATH,
+        DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH,
+        gpkg_path,
+    )
 
-    return [gpkg_path(root_dir), Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH]
+    return [
+        gpkg_path(root_dir),
+        Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH,
+        Path(root_dir) / DEFAULT_ADM2_UPSTREAM_OUTPUT_PATH,
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -1214,6 +1272,73 @@ def _malaria_fingerprint_paths(root_dir) -> list[Path]:
         *(year_path(root_dir, year) for year in YEARS),
         Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH,
         Path(root_dir) / DEFAULT_FLOWS_OUTPUT_PATH,
+    ]
+
+
+# --------------------------------------------------------------------------
+# commodity_prices
+# --------------------------------------------------------------------------
+
+def _commodity_prices_list_fetched(root_dir, force: bool = False) -> FetchListing:
+    from src.data.sources.commodity_prices.constants import bcb_path, pink_sheet_path
+
+    present = sum(path.exists() for path in (pink_sheet_path(root_dir), bcb_path(root_dir)))
+    return FetchListing(present=present, expected=2, detail=f"{present}/2 raw files (Pink Sheet, BCB SGS 1) present.")
+
+
+def _commodity_prices_check_outputs(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.commodity_prices.constants import (
+        ANNUAL_COLUMNS,
+        DEFAULT_ANNUAL_OUTPUT_PATH,
+        DEFAULT_MONTHLY_OUTPUT_PATH,
+        MONTHLY_COLUMNS,
+    )
+
+    def build_checks(frame, columns, key):
+        checks = [check_required_columns(frame, list(columns)), _non_empty_check(frame)]
+        for column in ("gold_usd_oz", "brl_per_usd", "gold_brl_oz"):
+            if column in frame.columns:
+                checks.append(check_value_range(frame, column, lo=1e-9, hi=float("inf")))
+        if set(key) <= set(frame.columns):
+            duplicates = int(frame.duplicated(list(key)).sum())
+            checks.append(CheckResult(name=f"unique:{','.join(key)}", ok=duplicates == 0,
+                                      message="Keys unique." if duplicates == 0 else f"{duplicates} duplicate keys."))
+        return checks
+
+    return [
+        _artifact_check("gold_price_monthly", Path(root_dir) / DEFAULT_MONTHLY_OUTPUT_PATH,
+                        lambda frame: build_checks(frame, MONTHLY_COLUMNS, ("year", "month"))),
+        _artifact_check("gold_price_annual", Path(root_dir) / DEFAULT_ANNUAL_OUTPUT_PATH,
+                        lambda frame: build_checks(frame, ANNUAL_COLUMNS, ("year",))),
+    ]
+
+
+def _commodity_prices_check_fetched(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.commodity_prices.constants import bcb_path, pink_sheet_path
+
+    artifacts = []
+    for label, path in (("pink_sheet", pink_sheet_path(root_dir)), ("bcb_sgs_1", bcb_path(root_dir))):
+        if not path.exists():
+            artifacts.append(_missing_artifact(label, path))
+            continue
+        artifacts.append(OutputArtifactCheck(label=label, path=path, exists=True,
+                                             checks=[check_file_nonempty(path, min_size_bytes=1024)]))
+    return artifacts
+
+
+def _commodity_prices_fingerprint_paths(root_dir) -> list[Path]:
+    from src.data.sources.commodity_prices.constants import (
+        DEFAULT_ANNUAL_OUTPUT_PATH,
+        DEFAULT_MONTHLY_OUTPUT_PATH,
+        bcb_path,
+        pink_sheet_path,
+    )
+
+    return [
+        pink_sheet_path(root_dir),
+        bcb_path(root_dir),
+        Path(root_dir) / DEFAULT_MONTHLY_OUTPUT_PATH,
+        Path(root_dir) / DEFAULT_ANNUAL_OUTPUT_PATH,
     ]
 
 
@@ -1642,6 +1767,14 @@ SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
         fingerprint_paths=_malaria_fingerprint_paths,
         fetch_method="Download (Zenodo SIVEP parquet)",
         check_fetched=_malaria_check_fetched,
+    ),
+    "commodity_prices": SourceAdapter(
+        name="commodity_prices",
+        list_fetched=_commodity_prices_list_fetched,
+        check_outputs=_commodity_prices_check_outputs,
+        fingerprint_paths=_commodity_prices_fingerprint_paths,
+        fetch_method="Download (World Bank, BCB API)",
+        check_fetched=_commodity_prices_check_fetched,
     ),
     "population": SourceAdapter(
         name="population",

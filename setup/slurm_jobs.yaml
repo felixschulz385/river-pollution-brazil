@@ -104,6 +104,16 @@ jobs:
     cpus_per_task: 2
     mem: 32G
 
+  # `--product upstream`: SGB occurrences placed in river trenches and counted
+  # upstream of each municipality. Loads the full river network (the system
+  # matrices, ~9 GB) like the land-cover ADM2 aggregate.
+  geology.preprocess.upstream:
+    job_name: preprocess_geology_upstream
+    time: "0-03:00:00"
+    qos: 6hours
+    cpus_per_task: 4
+    mem: 96G
+
   # SIVEP-Malária 2004-2024 -> ADM2 case counts and garimpo flows. One year
   # (up to ~3.5M records, 12 columns) is in memory at a time.
   # (malaria fetch needs internet: run it on the transfer node, not Slurm.)

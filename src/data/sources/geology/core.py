@@ -10,6 +10,18 @@ class Geology:
 
         return fetch_sgb_gold(root_dir=self.root_dir)
 
+    def aggregate_upstream(self, gpkg=None, river_network_path=None, n_jobs=None, output_path=None):
+        """Build the upstream occurrence counts and Otto-4 upstream/downstream binaries per municipality."""
+        from .upstream import build_adm2_upstream_geology
+
+        return build_adm2_upstream_geology(
+            root_dir=self.root_dir,
+            gpkg=gpkg,
+            river_network_path=river_network_path,
+            n_jobs=n_jobs,
+            output_path=output_path,
+        )
+
     def aggregate(self, gpkg=None, gadm_path=None, layer=None, adm2_id_column=None, adm2_output_path=None):
         """Build the ADM2 gold occurrence counts and province/district shares."""
         from .preprocess import build_adm2_geology

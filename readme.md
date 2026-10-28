@@ -53,7 +53,7 @@ python3 -m src.cli data assemble   --dataset <id>       # join preprocessed sour
 
 `--source` and `--phase` must precede any source-specific flags. `--source`
 is one of `health`, `climate`, `sensor_data`, `land_cover`, `population`,
-`river_network`, `biomes`, `geology`, `malaria`. `--phase` only applies to sources whose
+`river_network`, `biomes`, `geology`, `malaria`, `commodity_prices`. `--phase` only applies to sources whose
 preprocessing has two stages (`climate`, `land_cover`): `extract` (raw →
 per-source processed output) and `aggregate` (roll-up into sensor/ADM2
 upstream panels). `sensor_data` has a single preprocess step that does both
@@ -218,6 +218,35 @@ Current river-network outputs in `data/river_network/processed/` include:
 - `river_network_otto_basins.parquet`: Otto Pfafstetter basin codes (levels 1–6) per trench. Rebuild it alone, without the full pipeline, with `python3 -m src.data.sources.river_network otto-basins`.
 
 The expected persisted formats are described in `src/data/output_file_formats.md`.
+
+### Geology
+
+The Geological Survey of Brazil's mineral occurrences and gold provinces and
+districts (`data/geology/raw/sgb_gold.gpkg`), counted per municipality
+(`--product adm2`, the default) or upstream along the river network
+(`--product upstream`, which needs the river network):
+
+```bash
+python3 -m src.cli data fetch      --source geology
+python3 -m src.cli data preprocess --source geology --slurm
+python3 -m src.cli data preprocess --source geology --product upstream --slurm
+```
+
+Outputs: `data/geology/processed/geology_adm2.parquet` and
+`data/geology/processed/geology_adm2_upstream.parquet`.
+
+### Commodity Prices
+
+The World Bank Pink Sheet gold price and the Banco Central do Brasil's
+BRL/USD rate (SGS series 1), both downloaded on every fetch:
+
+```bash
+python3 -m src.cli data fetch      --source commodity_prices
+python3 -m src.cli data preprocess --source commodity_prices
+```
+
+Outputs: monthly and annual gold prices in USD and BRL, with logs,
+`data/commodity_prices/processed/gold_price_{monthly,annual}.parquet`.
 
 ## Analysis Workflow
 

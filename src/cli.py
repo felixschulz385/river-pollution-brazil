@@ -31,6 +31,7 @@ SOURCE_REGISTRY = {
     "biomes": dict(package="src.data.sources.biomes", fetch=True, phases=None),
     "geology": dict(package="src.data.sources.geology", fetch=True, phases=None),
     "malaria": dict(package="src.data.sources.malaria", fetch=True, phases=None),
+    "commodity_prices": dict(package="src.data.sources.commodity_prices", fetch=True, phases=None),
 }
 
 

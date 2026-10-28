@@ -309,6 +309,39 @@ Semantics:
   municipality are assigned to the nearest one within 5 km, else dropped.
 - Municipalities without occurrences have zero counts.
 
+### `data/geology/processed/geology_adm2_upstream.parquet`
+
+One row per `mun_id` (the 5,564 municipalities matched to river trenches),
+produced by `python -m src.data.sources.geology preprocess --product upstream`
+from the same occurrences and the river network. Each occurrence is placed in
+the trench whose drainage polygon contains it (the nearest within 5 km for
+points just outside every polygon).
+
+Columns:
+
+- `<group>_upstream_<reach>`: occurrences in the trenches upstream of the
+  municipality, for groups `gold`, `gold_unexploited`, `gold_garimpo`,
+  `gold_mine`, `gold_alluvial` (as in `geology_adm2`) and `tin` (substance
+  "Estanho"), and reaches `50` and `200` km and `all` (unlimited).
+- `<group>_upstream_otto4`, `<group>_downstream_otto4`: 0/1, any occurrence
+  in an Otto level-4 sub-basin upstream (downstream) of a level-4 sub-basin
+  the municipality's trenches lie in, for groups `gold`, `gold_unexploited`
+  and `tin`. Moreno-Louzada's exposure.
+
+Semantics:
+
+- Reaches are measured along the river network on the shifted distance scale
+  of the land-cover ADM2 aggregation: 0 is the upstream end of the trenches
+  touching the municipality, and occurrences in those trenches themselves
+  (the negative buckets) are not upstream. `geology_adm2` counts the
+  occurrences inside the municipality.
+- "Upstream" in the Otto binaries follows Pfafstetter coding within the
+  level-3 parent: a sub-basin is upstream of a main-stem interbasin (odd last
+  digit) with a lower last digit, and nothing is upstream of a tributary (even
+  last digit). Deposits in the municipality's own sub-basins do not count, and
+  nothing upstream across level-3 boundaries does.
+- Each trench is counted once per municipality, at its smallest distance.
+
 ## Malaria Outputs
 
 Produced by `src.data.sources.malaria` from the record-level SIVEP-Malária
@@ -361,3 +394,24 @@ Semantics:
 - Brazil-infected cases without a valid infection code are left out (14 in
   2004–24), so per-year `cases` can fall slightly short of `res_garimpo`.
 
+
+## Commodity Price Outputs
+
+Produced by `src.data.sources.commodity_prices` from the World Bank's monthly
+Commodity Price Data (the Pink Sheet, nominal gold price in USD per troy
+ounce, `data/commodity_prices/raw/cmo_historical_data_monthly.xlsx`) and the
+Banco Central do Brasil's SGS series 1 (daily PTAX sell rate, BRL per USD,
+from 1994-07-01, `bcb_sgs_1_brl_usd_daily.parquet`). Both are re-downloaded
+on every fetch, as the Pink Sheet is revised monthly.
+
+### `data/commodity_prices/processed/gold_price_monthly.parquet`
+
+One row per (`year`, `month`) with both series: `gold_usd_oz`, `brl_per_usd`
+(mean of the month's daily rates), `gold_brl_oz` (their product),
+`log_gold_usd` and `log_gold_brl`.
+
+### `data/commodity_prices/processed/gold_price_annual.parquet`
+
+One row per `year` with all twelve months (1995 onward): the means of the
+monthly `gold_usd_oz`, `brl_per_usd` and `gold_brl_oz`, the logs of the
+annual means `log_gold_usd` and `log_gold_brl`, and `months`.
