@@ -1,6 +1,6 @@
 # Garimpo supply in the Brazilian Amazon: research design
 
-*Living document; status as of 2026-10-27. It builds on the project's pollution and
+*Living document; status as of 2026-10-28. It builds on the project's pollution and
 health arms (`output/notebooks/pollution/memo.md`, `output/notebooks/health/memo.md`).
 The evidence behind each claim is collected in the [Evidence](#evidence) section, with
 the location of its code.*
@@ -26,7 +26,7 @@ relapse are counted?
   - mining permits from the National Mining Agency (ANM).
 - **Health as a consequence, not the headline.** Three pieces:
   - a downstream null for mapped gold mining;
-  - a test of Moreno-Louzada's price × geology design;
+  - Moreno-Louzada's price × geology design, which does not hold up in this data;
   - malaria carried home by mining crews.
 
 **What the project's evidence shows so far.**
@@ -43,18 +43,23 @@ relapse are counted?
     upstream (+23%). The result is robust but not about gold: it survives dropping every
     municipality with gold upstream, and C11 assigns its onsets to non-gold mining
     ([E2](#e2-the-amazon-mining-presence-result), [E4](#e4-gate-upstream-garimpo-gold-share-and-health)).
+  - *Moreno-Louzada's design:* gold upstream × the gold price does not reproduce his
+    anomaly result (+0.84 per 1,000 births per log point, SE 0.98, against +2.28). Only
+    congenital infant deaths respond, and not with state×year FE. The injury placebo
+    fails, and the interaction does not move garimpo upstream
+    ([E9](#e9-moreno-louzadas-design)).
 - **Garimpo is measurable in SIVEP.**
   - The split between local and incoming workers is feasible ([E5](#e5-sivep-as-a-measure-of-garimpo-workers)).
   - One in five garimpo cases was infected abroad.
   - SIVEP sees mining that MapBiomas misses, but only where malaria is transmitted.
+    C11 garimpo gold fits garimpo cases no better than C10 mining (Spearman 0.36 vs.
+    0.37), and 80% of case municipalities have none.
 - **Gold geology.** The Geological Survey of Brazil's (SGB) never-exploited gold
   occurrences predict where garimpo is about as well as all occurrences. They are,
   however, thin (74 Legal Amazon municipalities) ([E6](#e6-sgb-gold-geology)).
 
 **Open before the design is final.**
 
-- Moreno-Louzada's design in this project's data. It is the one remaining test of a
-  downstream health effect.
 - A novelty check on malaria importation by miners.
 - The permit layer (grant dates), needed for lead 1's laundering exposure.
 
@@ -119,13 +124,18 @@ move, while residents whose livelihoods have collapsed relapse.
   Reported as a finding, with its limits:
   - mapped area misses dredges;
   - mapped expansion is not random.
-- **Moreno-Louzada's design** (planned). Upstream gold deposits × the log gold price,
-  with SINASC anomalies at birth and birthweight as outcomes. This is the comparable
-  test, and it decides between the following readings:
-  - If it replicates with a flat injury placebo and survives the Zika years, there is
-    a downstream health effect, operating through price-induced activity rather than
-    mapped area.
-  - If it fails, the null generalizes, and his result is probably Zika or a trend.
+- **Moreno-Louzada's design does not hold up** ([E9](#e9-moreno-louzadas-design)).
+  Upstream gold deposits × the log gold price in reais, with anomalies at birth, birth
+  outcomes and infant deaths. It was the test of a downstream effect through
+  price-induced activity rather than mapped area.
+  - The anomaly coefficient is a third of his and insignificant in every specification
+    under cluster, bootstrap and randomization inference.
+  - Congenital infant deaths respond, but not with state×year FE or unweighted.
+  - The injury placebo fails, and there is no first stage on upstream garimpo.
+  - So the null generalizes. The price in reais trends up and jumps in 2020, and the
+    interaction picks up differential trends between exposed and other municipalities.
+    This is consistent with his result being a trend rather than Zika: dropping 2015–17
+    changes little.
 - **Malaria importation** (planned, after a novelty check). Crews infected at mining
   sites carry malaria to where they live.
   - Test: non-garimpo cases rise in crews' home municipalities after garimpo shocks
@@ -173,29 +183,36 @@ Rocha & Soares (2023, *ReStud*), which this project also uses.
   2512.10076) shows that conventional standard errors over-reject in single-price
   exposure designs. In a gold × homicides application for the Amazon, the corrected
   standard errors are about twice as large. Every gold-price × geology term here reports
-  them next to the wild-cluster bootstrap.
+  them next to the wild-cluster bootstrap and randomization over random-walk price paths.
+  In this project's health application they come out *smaller* than the Otto-3 SEs and
+  close to clustering by year ([E9](#e9-moreno-louzadas-design)).
 
 **Moreno-Louzada and this project's health null.**
 
+- *The comparable test* ([E9](#e9-moreno-louzadas-design)): his design in this project's
+  data (Otto-4 gold upstream × log gold price in BRL, SINASC anomalies at birth, Legal
+  Amazon, 2007–2021) gives +0.84 anomalies per 1,000 births per log point (Otto-3 SE
+  0.98), against his +2.28 (SE 1.16).
 - *Where they agree:* the LBW rate is null in both.
-- *Where they cannot be compared yet:*
-  - His variation is price × geology, which is plausibly exogenous and includes
-    activity invisible to satellites. Ours so far is mapped expansion, which is
-    neither.
-  - His anomaly outcome is SINASC anomalies at birth. Ours is SIH chapter-17
-    hospitalizations (`hosp_icd_17`).
-  - Our congenital coefficient has his sign (+7–14% per SD of gold share), but it fails
-    an injury placebo that his design does not run.
-- *His weak points:*
+- *His weak points, as tested:*
   - **Timing.** The raw treated–control divergence (his Fig. 6) opens in 2014–16, while
     gold prices were falling from the 2012 peak. That fits the 2013 law better than a
     price channel.
-  - **Zika.** Congenital-anomaly reporting surged in 2015–16 with the Zika epidemic. The
-    coefficient halves under state×year fixed effects (2.24 → 1.08).
+  - **Zika.** Congenital-anomaly reporting surged in 2015–16 with the Zika epidemic. His
+    coefficient halves under state×year fixed effects (2.24 → 1.08). Here it falls from
+    0.84 to 0.44 under state×year FE; dropping 2015–17 leaves it at 0.96.
   - **Weights.** Weighting by births gives Manaus and Belém, downstream of nearly every
-    deposit, very large weight.
-- *The comparable test:* his design in our data, with state×year fixed effects, the
-  Zika years excluded, the injury placebo, and corrected standard errors (work plan).
+    deposit, very large weight. Unweighted, the anomaly coefficient is 0.41; without the
+    two capitals, 0.63.
+  - **Placebos.** Downstream gold moves anomalies as much as upstream gold (1.79, p 0.11),
+    and the injury placebo falls significantly with the interaction.
+  - **Mechanism.** The interaction does not move upstream C11 garimpo gold or garimpo
+    malaria cases.
+- *Our own congenital measures:* SIH chapter-17 hospitalizations fall with the
+  interaction (−2.6 per 1,000 births), while congenital infant deaths rise (+0.31,
+  bootstrap p 0.016). With the mapped-area design, the congenital coefficient has his
+  sign (+7–14% per SD of gold share) but fails the injury placebo
+  ([E4](#e4-gate-upstream-garimpo-gold-share-and-health)).
 
 **Further close work** (systematic search; `output/research/literature/gold_mining_health/screening.md`):
 
@@ -382,7 +399,12 @@ X_mt = β_13·(IGD_m × post-2013_t) + β_23·(IGD_m × post-2023_t)
   - It is cross-sectional, so it defines groups only. ANM grant dates supply the timing.
   - CFEM royalties cannot measure declared sales by permit ([E7](#e7-cfem-royalties-by-permit)).
 - **Inference.** Otto-3 clusters with the wild-cluster bootstrap. For the price term,
-  add the corrected standard errors of Moreno-Louzada, Figueira & Picchetti (2025).
+  add the price-exposure SEs of Moreno-Louzada, Figueira & Picchetti (2025) and
+  randomization over random-walk price paths (`src/analysis/moreno_louzada.py`).
+  - The price-exposure SE treats yearly prices as independent and comes out close to
+    clustering by year.
+  - With a persistent price, that understates the uncertainty, and the random-walk
+    randomization is the binding check ([E9](#e9-moreno-louzadas-design)).
 
 **Threats and checks.**
 
@@ -532,7 +554,7 @@ ratio for lead 3 directly.
 
 - **Block 1 (crews):**
   - crew presence: incoming garimpo cases [in the pipeline, `malaria`];
-  - p_t: gold price in reais [to add];
+  - p_t: gold price in reais [in the pipeline, `commodity_prices`];
   - λ_t: policy dates [to verify], plus gold-buying points (DTVM/PCO) for variation
     across sites [to add];
   - q_i: SGB gold occurrences [in the pipeline, `geology`];
@@ -727,46 +749,40 @@ substitute sites of lead 3.
 
 ## Work plan
 
-1. **Formalize the evidence in code.** Several checks in the [Evidence](#evidence)
-   section were run in HPC scratch folders. They move into `src/analysis` and the health
-   notebook:
-   - the gate arm (E4), with a local C11 gold term added;
-   - the C11 and SIVEP checks (E3, E5);
-   - the geology relevance check (E6).
+The evidence behind E2–E6 and E9 is in the repo (`src/analysis`, `output/notebooks/`).
+The ADM2 panel carries:
 
-   Then: clean up `scripts/`, add a C11 preset and verification checks to `land_cover`,
-   and join `geology` and `malaria` into the ADM2 panel (zero-filled).
-2. **Moreno-Louzada's design.**
-   - Add the SINASC congenital-anomaly flag (and low APGAR, for comparability with
-     Romero & Saavedra) to the `health` source.
-   - Run upstream deposits × log gold price in reais on anomalies at birth, birthweight
-     and infant deaths, with state×year FE, without 2015–17, with the injury placebo and
-     with corrected standard errors.
-3. **Mining permits.** A `mining` source from the ANM Cadastro Mineiro microdata and the
+- the C11 shares, upstream and local;
+- the SGB geology, local and upstream;
+- the malaria cases;
+- the SINASC anomaly and APGAR counts and the infant deaths by ICD-10 chapter;
+- the gold price in reais.
+
+1. **Mining permits.** A `mining` source from the ANM Cadastro Mineiro microdata and the
    Monitor da Mineração layer: PLG grant and expiry dates, polygons, flags, by
    municipality-year. Open questions:
    - whether `Evento.txt` holds the event table;
    - the start year of the events;
    - the PLG codes from 521 onward.
-4. **Lead 1 supply estimates.**
-   - Gold price series in reais.
-   - IGD (needs FUNAI and CNUC boundaries).
-   - Upstream-reach geology measures.
-   - The supply equation on C11 and SIVEP, by group.
-5. **Lead 2 first pass.**
+2. **Lead 1 supply estimates.** The gold price in reais (`commodity_prices`) and the
+   upstream-reach geology (`geology --product upstream`) are in the panel. Still needed:
+   - IGD (needs FUNAI and CNUC boundaries);
+   - the supply equation on C11 and SIVEP, by group. E9's null first stage, upstream
+     and in the municipality, is a warning for the price × deposits term.
+3. **Lead 2 first pass.**
    - Prediction 5: local vs. incoming cases on price × deposits and on drought.
    - Prediction 2: a downstream aggregation of mining for the spread test.
-6. **Malaria importation.** Novelty check first, then the test with the flow table.
-7. **Lead 3.** IBAMA enforcement data, substitute sites, displacement ratio, the crew
+4. **Malaria importation.** Novelty check first, then the test with the flow table.
+5. **Lead 3.** IBAMA enforcement data, substitute sites, displacement ratio, the crew
    logit.
-8. **Lead 4.** FUNAI stages, CNUC dates, anticipation around PL 191/2020.
-9. **Optional water outcome.** Station turbidity from 2008, or satellite river
+6. **Lead 4.** FUNAI stages, CNUC dates, anticipation around PL 191/2020.
+7. **Optional water outcome.** Station turbidity from 2008, or satellite river
    turbidity, as a pollution outcome of upstream garimpo ([E8](#e8-amazon-station-coverage-for-turbidity)).
 
 ## Evidence
 
 Each entry gives the question, the result and where its code lives. "HPC scratch" means
-the code exists only outside the repo until work-plan step 1.
+the code exists only outside the repo.
 
 ### E1. Pollution arm and mercury data
 
@@ -793,8 +809,9 @@ the code exists only outside the repo until work-plan step 1.
 
 ### E2. The Amazon mining-presence result
 
-*Code: `src/analysis/health.py`, `output/notebooks/health/02_analysis.ipynb`; diagnostics
-in HPC scratch.*
+*Code: `src/analysis/health.py`, `output/notebooks/health/02_analysis.ipynb`; the gold
+and 2020 diagnostics in `src/analysis/garimpo_gold.py` and
+`output/notebooks/health/03_garimpo_gold.ipynb`.*
 
 - **Result.** Where mining (C10, class 30) appears within 50 km upstream, Amazon infant
   deaths rise by 0.21 log points, about 23% (bootstrap p = 0.0015). It rests on 36 onsets in 18
@@ -819,8 +836,9 @@ in HPC scratch.*
 
 ### E3. The C11 mining-substances layer
 
-*Code: `scripts/prepare_mapbiomas_mining.py`, `src/data/sources/land_cover/mining.py`,
-`panels.adm2_upstream_mining`; checks in HPC scratch.*
+*Code: `scripts/prepare_mapbiomas_mining.py`, `src/data/sources/land_cover/mining.py`
+(`data preprocess --source land_cover --product mining`), `panels.adm2_upstream_mining`;
+checks in `output/notebooks/garimpo/01_measurement.ipynb`.*
 
 - **Build checks.**
   - Per-trench totals are constant across years, and groups and phases add up.
@@ -828,13 +846,14 @@ in HPC scratch.*
     across years. This is probably pixels on trench boundaries counted twice.
 - **National garimpo gold:** 202 km² (1985), 1,251 (2000), 1,440 (2013), 1,804 (2019),
   2,076 (2020), 2,920 (2025).
-  - The series is close to cumulative, because it includes revegetating land: only 859
-    of 3,640 class-years fall.
-  - Growth: 20–48% a year in 1985–90 (the series ramping up), about 1% in 2000–11, 2–3%
-    in 2012–15, 4–5% in 2016–19.
+  - The layer is not a cumulative scar map: 859 of 3,640 class-years fall. It changes
+    slowly, though.
+  - Growth: 20–48% a year in 1985–90 (the series ramping up), under 1% in 2000–11, 2.7%
+    in 2012–15, 4.3% in 2016–19.
 - **The 2020 step.** Garimpo gold rises 15.1% and all mining 13.1% in 2020, against
   4.0–9.7% and 3.3–8.4% in the other years of 2016–2023. Industrial gold rises 12.8%,
-  against 1.7–2.9% in 2016–19.
+  against 1.7–2.9% in 2016–19. The step appears in every class, so part of it is a change
+  in classification between years.
 - **Exposure within 50 km upstream.**
   - Garimpo gold is upstream of 112–134 municipalities a year (137 ever: MG 51, PA 27,
     MT 22, MA 10, AP 7), and of 678 without the 50 km cap.
@@ -852,8 +871,9 @@ in HPC scratch.*
 
 ### E4. Gate: upstream garimpo-gold share and health
 
-*Code: HPC scratch.* Municipality and state×year FE, clustered by Otto-3 basin (38–57
-clusters), wild-cluster bootstrap. Controls: other upstream mining, the local C10 mining
+*Code: `src/analysis/garimpo_gold.py`, `output/notebooks/health/03_garimpo_gold.ipynb`;
+tables in `output/analysis/health/garimpo_gold/`.* Municipality and state×year FE,
+clustered by Otto-3 basin (38–57 clusters), wild-cluster bootstrap. Controls: other upstream mining, the local C10 mining
 terms, the health arm's controls. Sample: 2000–2019.
 
 - **Identifying variation.** Among municipalities with gold upstream at some point:
@@ -888,13 +908,21 @@ terms, the health arm's controls. Sample: 2000–2019.
   - dropping gold within 50 km: +0.21 (boot p 0.0003), 29 switchers;
   - dropping gold within 200 km: +0.22 (boot p 0.0005), 27 switchers;
   - the injury placebo is flat in both.
-- **Not yet tested:** a local C11 gold term. 65% of gold pixels in the 50 km sample lie
-  in the municipality's own trenches, which neither arm uses. Local gold is confounded
-  with the local economy, so this is a check, not a design.
+- **Local gold does not explain it.** 65% of gold pixels in the 50 km sample (40% at
+  200 km) lie in the municipality's own trenches, which the upstream arm does not use.
+  Adding the local C11 gold share is a check, not a design, since local gold is
+  confounded with the local economy.
+  - Local gold moves within 58 municipalities of the 50 km sample (within SD 0.12 pp).
+  - The upstream coefficients barely change: infant deaths 0.345 → 0.327 per pp at
+    50 km and 0.383 → 0.365 at 200 km; injury placebos 0.56 → 0.65 and 1.32 → 1.36.
+  - Local gold has no significant coefficient for any outcome (boot p ≥ 0.11), and the
+    failed placebo stays.
 
 ### E5. SIVEP as a measure of garimpo workers
 
-*Code: `src/data/sources/malaria` (the sample rules); checks in HPC scratch.*
+*Code: `src/data/sources/malaria` (the sample rules); checks in
+`output/notebooks/garimpo/01_measurement.ipynb`, tables in
+`output/analysis/garimpo/measurement/`.*
 
 - **Sample.** 5.38 million positive exams, excluding cure-verification slides. 312,276
   are garimpo cases.
@@ -925,17 +953,29 @@ terms, the health arm's controls. Sample: 2000–2019.
   33,600, Venezuela 17,200, Guyana 11,400, Suriname 1,500.
   - 5,391 of them are foreign residents, mostly Venezuelans infected in Venezuela (4,945,
     peaking in 2016–18). They have no Brazilian residence and are not in the flow table.
-- **Testing.** Year-on-year changes in garimpo positives correlate 0.28–0.32 with
-  changes in exams, against 0.47–0.59 for other malaria. So garimpo counts are not mainly
-  testing-driven.
+- **Testing.** Year-on-year changes in garimpo cases correlate 0.17–0.28 with changes
+  in exams (pooled, top 25 infection municipalities and the 61 with at least 100 cases),
+  against 0.47–0.53 between other positives and negatives. So garimpo counts are not
+  mainly testing-driven.
   - Negative exams carry almost no infection or residence site from 2007, so testing is
     measured by notification municipality.
-- **Fit to mapped mining (C10, local share).** Spearman 0.37 across Legal Amazon
-  municipalities.
-  - 55% of municipalities with garimpo cases have no mapped mining; they hold 3.8% of
-    cases. Examples: Aripuanã (2,276 cases); Alto Alegre has 0.006% mapped.
-  - SIVEP therefore captures activity MapBiomas misses (dredges, sites under canopy).
-  - The comparison with C11 garimpo gold is still to do.
+- **Fit to mapped mining.** Spearman correlation with 2010–22 mean garimpo cases across
+  the 808 municipalities of the Legal Amazon states:
+
+  | Measure | Local | Upstream 50 km | Upstream 200 km |
+  |---|---|---|---|
+  | C10 mining | 0.37 | 0.26 | |
+  | C11 garimpo gold | 0.36 | 0.26 | 0.26 |
+  | C11 garimpo, all substances | 0.36 | 0.29 | 0.30 |
+
+  - C11 gold does no better than C10 mining, and the local measures fit best.
+  - C11 gold is the most restrictive: 80% of case municipalities have no local garimpo
+    gold, and they hold a third of the cases. Under C10, 54% have no mapped mining and
+    they hold 3.8% of the cases.
+  - Large case municipalities with little or no mapped gold: Alto Alegre, Calçoene,
+    Mucajaí, Aripuanã. Their garimpos lie in Indigenous territories or across the
+    border, are mapped under another substance, or are too small for 30 m pixels.
+  - SIVEP and C11 are therefore complementary measures, not substitutes.
 - **Coding breaks.**
   - `id_lvc` is the consistent cure-verification flag; `tipo_lam`'s LVC code fades out
     after 2010.
@@ -944,7 +984,8 @@ terms, the health arm's controls. Sample: 2000–2019.
 
 ### E6. SGB gold geology
 
-*Code: `src/data/sources/geology`; checks in HPC scratch.*
+*Code: `src/data/sources/geology`; checks in
+`output/notebooks/garimpo/01_measurement.ipynb`.*
 
 - **Fit to C11 garimpo gold in 2020.**
   - 96% of garimpo-gold area lies inside a gold province, 44% inside a gold district,
@@ -986,13 +1027,81 @@ from other sources.
 - A station-based water outcome is therefore feasible only after 2008. Satellite river
   turbidity is the alternative.
 
+### E9. Moreno-Louzada's design
+
+*Code: `src/analysis/moreno_louzada.py`, `output/notebooks/health/04_moreno_louzada.ipynb`;
+tables in `output/analysis/health/moreno_louzada/`.*
+
+- **Design.**
+  - *Exposure:* any SGB gold occurrence in an Otto-4 sub-basin upstream of one the
+    municipality intersects (`gold_upstream_otto4`).
+  - *Price:* the log annual gold price in BRL (Pink Sheet × BCB).
+  - *Sample:* the Legal Amazon (eight states and Maranhão west of 44°W), without the
+    municipalities holding an occurrence, 2007–2021.
+  - *Model:* municipality and year FE, weighted by mean births.
+- **Sample.** 772 Legal Amazon municipalities. 154 hold an occurrence, leaving 618 (his
+  616). 161 are exposed, in 117 Otto-3 basins.
+- **The price.** The log price in BRL rises from 7.21 (2007) to 9.18 (2021), with one
+  step of +0.51 in 2020. Over the window the interaction is close to exposure × trend.
+- **Baseline** (per 1,000 births per log point; p-values Otto-3 / wild bootstrap /
+  two-way basin×year / P-E / random walk):
+
+  | Outcome | Estimate | SE (Otto-3) | p-values | Mean |
+  |---|---|---|---|---|
+  | Anomalies at birth | +0.84 | 0.98 | 0.39 / 0.43 / 0.40 / 0.001 / 0.79 | 5.3 |
+  | Low birth weight | −1.24 | 1.36 | 0.37 / 0.46 / 0.38 / 0.03 / 0.68 | 75 |
+  | Preterm (2012–21) | +5.5 | 4.2 | 0.19 / 0.30 / 0.18 / 0.04 / 0.72 | 122 |
+  | APGAR 5 min < 6 | −0.26 | 0.88 | 0.77 / 0.80 / 0.80 / 0.72 / 0.84 | 7.6 |
+  | Infant deaths, non-external | +0.12 | 0.39 | 0.76 / 0.77 / 0.71 / 0.47 / 0.72 | 15.4 |
+  | Infant deaths, congenital | +0.31 | 0.10 | 0.003 / 0.016 / 0.001 / 0.000 / 0.78 | 2.8 |
+  | Congenital hospitalizations | −2.58 | 0.98 | 0.009 / 0.053 / 0.023 / 0.002 / 0.84 | 16.7 |
+  | Injury hospitalizations (placebo, per 1,000 pop.) | −0.75 | 0.31 | 0.018 / 0.070 / 0.034 / 0.000 / 0.82 | 5.1 |
+
+  N = 9,264 municipality-years (6,178 for preterm). His anomaly estimate is +2.28
+  (SE 1.16).
+- **Robustness of the anomaly coefficient.** It stays between 0.41 and 1.03 and is
+  insignificant under the clustered and bootstrap inferences in every specification:
+  - state×year FE: 0.44;
+  - dropping 2015–17: 0.96;
+  - unweighted: 0.41;
+  - without Manaus and Belém: 0.63;
+  - 2004–2023: 0.99;
+  - USD price: 1.03.
+
+  Never-exploited occurrences give 2.36 (p 0.09) on 103 exposed municipalities. The
+  downstream-gold placebo gives 1.79 (p 0.11), as large as upstream gold.
+- **Congenital infant deaths** survive dropping 2015–17, the capitals, the downstream
+  control and the USD price (0.31–0.48). They halve with state×year FE (0.15, p 0.15),
+  fall to 0.07 unweighted and to 0.18 on 2004–2023 (p 0.06), and are insignificant for
+  never-exploited deposits.
+- **The placebo fails.** Injury hospitalizations fall significantly in most
+  specifications (bootstrap p 0.03–0.07 in seven of twelve). Congenital hospitalizations fall too,
+  opposite in sign to congenital deaths.
+- **No first stage.**
+  - Upstream C11 garimpo gold: +0.001 pp per log point (p 0.20–0.21; 2007–19, mean
+    0.005–0.008 pp).
+  - Upstream garimpo malaria cases: −0.01 log points (p 0.97).
+  - Garimpo malaria cases in the municipality: +0.05 (p 0.73).
+- **Inference.**
+  - Two-way clustering gives SEs within 25% of the Otto-3 SEs.
+  - The price-exposure SE (arXiv 2512.10076, Theorem 1, with the price demeaned over the
+    sample years) is 26–86% of the Otto-3 SE and close to clustering by year. It treats
+    the 15 yearly prices as independent, which a persistent price with serially
+    correlated residuals violates, and it rejects where nothing else does.
+  - Randomization over 1,999 driftless random-walk price paths with the observed
+    volatility gives p = 0.68–0.84 for every outcome.
+- **Reading.** The design does not reproduce his result in this data. What remains
+  (congenital deaths) depends on regional trends, comes with a failed placebo and has
+  no first stage, so it reads as differential trends between exposed and other
+  municipalities rather than a price-driven health effect.
+
 ## Data inventory
 
 | Data | Source | Use | Status |
 |---|---|---|---|
 | River network, reachability and distance matrices | project (BHO/ANA) | directed links, spread test, travel distances | in pipeline (`river_network`) |
 | Water quality, CONAMA violations | ANA monitoring stations | pollution outcomes | in pipeline (`sensor_data`) |
-| Hospitalizations, births, deaths by municipality | DATASUS (SIH, SINASC, SIM) | health outcomes | in pipeline (`health`); SINASC anomaly flag and APGAR to add |
+| Hospitalizations, births, deaths by municipality | DATASUS (SIH, SINASC, SIM) | health outcomes | in pipeline (`health`), including SINASC anomalies and APGAR and SIM infant deaths by ICD-10 chapter |
 | Land cover incl. a single mining class | MapBiomas Collection 10 | land-cover exposures | in pipeline (`land_cover`); mapping step in 2020 |
 | Mining substances (garimpo vs. industrial, by ore) | MapBiomas Collection 11 | garimpo area | in pipeline (`land_cover` with the mining legend); step in 2020 in every group |
 | Malaria cases with occupation, infection site, residence | SIVEP-Malária (Saldanha, Zenodo 20706957, CC BY) | garimpo workers by group; flows | in pipeline (`malaria`); 2025–26 preliminary in Zenodo 20706949 |
@@ -1002,7 +1111,7 @@ from other sources.
 | Fines, embargoes, seizures | IBAMA | enforcement shocks | to add |
 | Indigenous lands with stage and dates | FUNAI | IGD, lead 4 | to add |
 | Protected areas with creation dates | CNUC | IGD, lead 4 | to add |
-| Gold price | world market series × BRL exchange rate | price shock | to add |
+| Gold price | World Bank Pink Sheet × BCB BRL/USD rate | price shock | in pipeline (`commodity_prices`) |
 | Gold-buying points (DTVM/PCO) | ANM, Central Bank | laundering exposure by site | to add |
 | Registered fishers, closed-season payments | fisheries registry, federal transparency portal | fishing dependence | to add |
 | Bolsa Família payments | federal transparency portal | residents' transfer income | to add |
@@ -1066,8 +1175,10 @@ from other sources.
     they are accurate to a few km. `DATA_CADASTRO` is the database entry date (2000–06),
     not the discovery date.
   - *Pipeline:* the `geology` source writes `geology_adm2.parquet`: counts by status,
-    alluvial counts, and district and province area shares. Upstream-reach measures are
-    still to add.
+    alluvial counts, and district and province area shares. With `--product upstream`
+    it writes `geology_adm2_upstream.parquet`: counts upstream along the river network
+    within 50 km, 200 km and without limit, and the Otto-4 upstream and downstream
+    binaries.
   - *Not fetched:* SGB stream-sediment gold assays (`geoquimica_ouro`): 71,621 samples
     since 2012 and 25,428 / 13,096 earlier samples in the ppm / ppb layers, which may
     overlap. The table also has Hg.

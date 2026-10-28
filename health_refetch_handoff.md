@@ -37,9 +37,6 @@ Python ≥ 3.11 with the package dependencies (`pip install -e .`, which pulls i
 `selenium` and `webdriver-manager`) and a local Chrome. `webdriver-manager`
 fetches the matching chromedriver on first use.
 
-Optional check: `python scripts/repair_sih_morbidity_manifest.py --dry-run`
-should report 48 `pending` morbidity batches.
-
 ## 3. Download
 
 ```bash
@@ -59,8 +56,8 @@ python -m src.data.sources.health fetch --subtype mortality
 Check afterwards:
 
 ```bash
-python scripts/repair_sih_morbidity_manifest.py --dry-run   # expect 0 pending
-grep -c '"completed"' data/health/raw/birth_outcome_*/manifest.jsonl data/health/raw/mortality_age_*/manifest.jsonl
+grep -c '"pending"\|"failed"' data/health/raw/SIH_*/manifest.jsonl   # expect 0
+grep -c '"completed"' data/health/raw/birth_outcome_*/manifest.jsonl data/health/raw/mortality_age_*/manifest.jsonl data/health/raw/infant_deaths_icd10/manifest.jsonl
 ```
 
 ## 4. Copy the raw data back to scicore

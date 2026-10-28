@@ -28,7 +28,8 @@ The main directories are:
 - `src/assemble/`: standalone R assembly scripts.
 - `data/`: local data products used by the codebase.
 - `output/`: analysis outputs, figures, and documents.
-- `output/notebooks/`: analysis notebooks, split into `pollution/` (sensor panel) and `health/` (ADM2 panel); see `output/notebooks/README.md`.
+- `output/notebooks/`: analysis notebooks, split into `pollution/` (sensor panel), `health/` (ADM2 panel) and `garimpo/` (measurement of garimpo); see `output/notebooks/README.md`.
+- `output/research/`: research design notes, including `mining_economics_leads.md` (the garimpo-supply design and its evidence).
 - `setup/`: Docker and Slurm/HPC support files.
 - `tests/`: automated tests for the maintained Python components.
 
@@ -240,6 +241,20 @@ python3 -m src.cli data preprocess --source geology --product upstream --slurm
 
 Outputs: `data/geology/processed/geology_adm2.parquet` and
 `data/geology/processed/geology_adm2_upstream.parquet`.
+
+### Malaria
+
+Record-level SIVEP-Malária notifications 2004–2024 (Zenodo 20706957), counted
+by infection, residence and notification municipality, with garimpo cases
+split into local and incoming workers and infections abroad:
+
+```bash
+python3 -m src.cli data fetch      --source malaria
+python3 -m src.cli data preprocess --source malaria
+```
+
+Outputs: `data/malaria/processed/malaria_adm2.parquet` and the garimpo flow
+table `data/malaria/processed/malaria_garimpo_flows.parquet`.
 
 ### Commodity Prices
 

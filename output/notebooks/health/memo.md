@@ -127,12 +127,29 @@ the possible exception, but the Amazon infant-mortality result has no measured w
   - At 50 km the infant-death coefficient rests on one municipality, Centro do Guilherme
     (MA). Without it the coefficient falls from 0.35 to 0.16 per pp (boot p 0.62).
   - Adding 2020–24 cuts it to a third.
+  - Adding the municipality's own C11 gold share leaves the upstream coefficients
+    unchanged, and local gold itself is never significant (boot p ≥ 0.11).
+- **Moreno-Louzada's price-driven design does not hold up either**
+  (`04_moreno_louzada.ipynb`). The design takes gold in an upstream Otto-4 sub-basin ×
+  the log gold price in BRL, in the Legal Amazon without the municipalities holding a
+  deposit, 2007–2021.
+  - Anomalies at birth: +0.84 per 1,000 births per log point (Otto-3 SE 0.98, bootstrap
+    p 0.43), against his +2.28. Birth weight, preterm, APGAR and non-external infant
+    deaths are null.
+  - Congenital infant deaths rise (+0.31 per 1,000 births, bootstrap p 0.016), but the
+    coefficient halves and loses significance with state×year FE or without weights.
+  - The injury placebo falls significantly, and downstream gold does as much for
+    anomalies as upstream gold.
+  - There is no first stage: the interaction does not move upstream C11 garimpo gold or
+    garimpo malaria cases.
+  - The gold price in BRL is persistent and jumps in 2020. The price-exposure SE of
+    arXiv 2512.10076 is close to clustering by year and rejects where cluster and
+    randomization inference do not.
 
 So the Amazon result is a robust association with non-gold mining frontiers, not a
-mercury dose, and mapped gold mining shows no credible downstream health effect. The
-comparable test of a price-driven effect, Moreno-Louzada's gold price × upstream deposits
-design with SINASC anomalies at birth, has not been run yet. Details and code locations
-are in `output/research/mining_economics_leads.md` (Evidence, E2 and E4).
+mercury dose. Neither mapped gold mining nor the gold price × upstream deposits design
+shows a credible downstream health effect. Details and code locations are in
+`output/research/mining_economics_leads.md` (Evidence, E2, E4 and E9).
 
 ## Files
 

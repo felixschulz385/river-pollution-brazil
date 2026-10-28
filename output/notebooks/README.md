@@ -26,6 +26,17 @@ Re-run a descriptives notebook after any re-assembly, and record changed decisio
 its table before touching `02_analysis`.
 
 Other notebooks:
+- `health/03_garimpo_gold.ipynb`: the garimpo-gold gate, health outcomes on the upstream
+  MapBiomas Collection 11 garimpo-gold share (50 and 200 km, with and without the local
+  share), the Centro do Guilherme leave-one-out, and the Amazon presence result without
+  gold (`src/analysis/garimpo_gold.py`).
+- `health/04_moreno_louzada.ipynb`: Moreno-Louzada's design, gold deposits upstream
+  (Otto-4) × the log gold price in BRL on birth outcomes and infant deaths in the Legal
+  Amazon, with robustness, placebos, a first stage and four inferences
+  (`src/analysis/moreno_louzada.py`).
+- `garimpo/01_measurement.ipynb`: how well the C11 layer, SIVEP-Malária and the SGB
+  geology measure garimpo (Evidence E3, E5, E6 of
+  `output/research/mining_economics_leads.md`).
 - `health/upstream_mining_municipality_map.ipynb`: municipality upstream-deforestation
   map (moved from `src/analysis/notebooks/`; its `land_cover.feather` input is stale).
 - `pollution/maps.ipynb`: upstream drainage-area maps for four example sensors
@@ -45,13 +56,17 @@ Other notebooks:
   controls, FE keys). `build_health_panel()` returns the estimation frame.
 - `src/analysis/inference.py`: wild-cluster bootstrap for high-dimensional FE models
   (OLS), and a wild-cluster score bootstrap for PPML fits.
+- `src/analysis/garimpo_gold.py`, `src/analysis/moreno_louzada.py`: the estimators of
+  `health/03` and `health/04`; the latter adds the price-exposure variance of
+  Moreno-Louzada, Figueira and Picchetti and randomization inference over random-walk
+  price paths.
 - `src/analysis/descriptives.py`: FE demeaning (pyfixest), variation tables, distribution
   tables, binned scatters, effective cluster counts.
 
 The maintained CLI regression pipeline (`python -m src.cli analysis sensor-data`) lives
 in `src/analysis/sensor_data/` and is separate from these notebooks.
 
-## Status (as of 2026-10-21)
+## Status (as of 2026-10-28)
 
 **Pollution: active.** The model setup is decided (§11 of `pollution/01_descriptives.ipynb`)
 and implemented in `pollution/02_analysis.ipynb`, with standard errors clustered on Otto
@@ -65,8 +80,14 @@ block, Otto-3 clustering with a wild-cluster score bootstrap. Upstream land-cove
 has no detectable effect on hospitalizations, infant deaths or low birth weight, and no
 effect differs from the injury placebo. The mining arm (§9) finds no pooled effect but a
 suggestive rise in infant deaths (about +23%) where mining appears upstream in the
-Amazon. Coefficients are exported to
+Amazon, which is not gold mining. Neither the upstream garimpo-gold share (`health/03`)
+nor Moreno-Louzada's gold price × upstream deposits design (`health/04`) gives a credible
+health effect: both fail the injury placebo. Coefficients are exported to
 `output/analysis/health/`; see [`health/README.md`](health/README.md).
+
+**Garimpo: measurement.** `garimpo/01_measurement` checks the C11 layer, SIVEP-Malária
+and the SGB geology as measures of garimpo. Results are recorded in
+`output/research/mining_economics_leads.md` (Evidence).
 
 ## Sub-basins (Otto Pfafstetter)
 

@@ -1,6 +1,6 @@
 # Health stage: status
 
-**Status (2026-10-22): estimated.** The decision table in `01_descriptives.ipynb` §9 is
+**Status (2026-10-28): estimated.** The decision table in `01_descriptives.ipynb` §9 is
 decided and implemented in `src/analysis/health.py`; `02_analysis.ipynb` runs the
 baseline, the placebo comparison, robustness, distance bands, biome heterogeneity and
 wild-cluster score-bootstrap inference, and a mining arm (results in
@@ -16,7 +16,18 @@ placebo. See the summary at the top of `02_analysis.ipynb`.
 upstream, mining has no robust health effect. In the Amazon, mining appearing upstream
 raises infant deaths by about 23% (bootstrap p = 0.002; flat injury placebo; the rise
 follows onset in the event study). This is suggestive only: 36 onsets in 18 basins, a
-small pre-onset bump, and it survives multiple-testing correction narrowly.
+small pre-onset bump, and it survives multiple-testing correction narrowly. It is not
+gold: it is unchanged after dropping every municipality with garimpo gold upstream
+(`03_garimpo_gold.ipynb`).
+
+**Gold (`03_garimpo_gold`, `04_moreno_louzada`):** no credible downstream health effect.
+- The upstream MapBiomas Collection 11 garimpo-gold share raises infant deaths only as
+  much as it raises the injury placebo, and at 50 km the effect rests on one municipality.
+- Moreno-Louzada's design (Otto-4 gold upstream × log gold price in BRL, Legal Amazon,
+  2007–2021) does not reproduce his anomaly result (+0.84 per 1,000 births, Otto-3 SE 0.98,
+  against his +2.28). Congenital infant deaths rise (+0.31, bootstrap p 0.016), but not
+  with state×year FE, while the injury placebo falls significantly and there is no first
+  stage on upstream garimpo.
 
 ## Design
 
@@ -26,16 +37,20 @@ small pre-onset bump, and it survives multiple-testing correction narrowly.
 - **Candidate outcomes:**
   - SIH hospitalization rates per 1,000 by ICD-10 chapter: 01 infectious/parasitic,
     11 digestive, 14 genitourinary, 16 perinatal, 17 congenital; 19 injury as placebo.
-  - Low-birth-weight share and preterm share (SINASC; preterm only from 2012, see below).
-  - Infant and under-5 mortality per 1,000 live births, all-cause mortality (SIM).
+  - Low-birth-weight share and preterm share (SINASC; preterm only from 2012, see below);
+    congenital anomalies at birth (from 1999) and APGAR below 6 or 8 at 1 and 5 minutes.
+  - Infant and under-5 mortality per 1,000 live births, all-cause mortality (SIM); infant
+    deaths by ICD-10 chapter (congenital, external, all but external).
   - All-cause hospitalization and in-hospital death rates.
 - **Exposure:** land cover in 25 km rings upstream of the municipality (`lc_*` / `alr_*`).
 
 ## Blockers
 
-None open. The DATASUS re-download ran locally (scicore has no internet access) following
-[`health_refetch_handoff.md`](../../../health_refetch_handoff.md); rerun it the same way
-to add new years.
+None open. The DATASUS fetch scrapes TabNet with Selenium and needs internet access: run
+it locally following [`health_refetch_handoff.md`](../../../health_refetch_handoff.md), or
+on scicore through an HTTP proxy (`HTTP_PROXY`/`HTTPS_PROXY`). The anomaly, APGAR and
+infant-death tables were fetched on scicore that way. The fetch resumes from its per-year
+manifests.
 
 Resolved:
 - **1. Health outcomes in `adm2_panel`.** `adm2_panel` now carries SIH hospitalizations
