@@ -23,10 +23,18 @@ MORTALITY_URLS = {
     "pre_1996": "http://tabnet.datasus.gov.br/cgi/deftohtm.exe?sim/cnv/obt09br.def",
     "post_1995": "http://tabnet.datasus.gov.br/cgi/deftohtm.exe?sim/cnv/obt10br.def",
 }
+# SIM infant deaths (under 1 year), ICD-10 from 1996, by residence municipality.
+INFANT_DEATH_URL = "http://tabnet.datasus.gov.br/cgi/deftohtm.exe?sim/cnv/inf10br.def"
+INFANT_DEATH_CAUSE_COLUMN = "Capítulo_CID-10"
 
 BIRTH_COLUMN_OPTIONS = {
     "gestational_duration": "Duração_gestação",
     "birth_weight": "Peso_ao_nascer",
+    # Congenital anomaly detected at birth: "Sim", "Não", "Ignorado".
+    "congenital_anomaly": "Anomalia_congênita",
+    # APGAR scores in TabNet's bins: "0 a 2", "3 a 5", "6 a 7", "8 a 10", "Ignorado".
+    "apgar_1": "Apgar_1º_minuto",
+    "apgar_5": "Apgar_5º_minuto",
 }
 
 SIH_TOTAL_REQUEST_ID = "SIH_RESIDENCE_TOTAL_MUNICIPALITY_YEAR"
@@ -760,6 +768,44 @@ def fetch_mortality_age_tables(root_dir=".", headless=False, download_dir=None):
     return output_paths
 
 
+def fetch_infant_death_cause_tables(root_dir=".", headless=False, download_dir=None):
+    """Fetch SIM infant deaths by residence municipality and ICD-10 chapter, one batch per year (1996 on)."""
+    fallback_codes = [str(year % 100).zfill(2) for year in range(1996, 2024)]
+    form = DatasusTabnetForm(headless=headless, download_dir=download_dir)
+    try:
+        year_codes = _discover_tabnet_year_codes(form, INFANT_DEATH_URL, "infbr", fallback_codes, min_year=1996)
+    finally:
+        form.close()
+    table_name = "infant_deaths_icd10"
+    manifest_entries, pending_years = _plan_year_batches(root_dir, table_name, year_codes)
+
+    if pending_years:
+        form = DatasusTabnetForm(headless=headless, download_dir=download_dir)
+        try:
+            for year in pending_years:
+                def _fetch_year_table(form=form, year=year):
+                    logger.info("Fetching infant deaths by ICD-10 chapter for year code %s...", year)
+                    form.open(INFANT_DEATH_URL)
+                    form.select_column(INFANT_DEATH_CAUSE_COLUMN)
+                    form.select_only_option_value(f"infbr{year}.dbf")
+                    form.select_output_format_prn()
+                    form.submit_query()
+                    table = form.read_result_table()
+                    table.insert(0, "year_code", year)
+                    return table
+
+                try:
+                    _fetch_year_batch(root_dir, table_name, manifest_entries, year, _fetch_year_table)
+                finally:
+                    _reset_query_or_warn(form, f"infant deaths year {year}")
+        finally:
+            form.close()
+
+    return _combine_year_batches(
+        root_dir, table_name, os.path.join(_raw_dir(root_dir), "infant_deaths_icd10_raw.parquet")
+    )
+
+
 def fetch_sih_residence_total_municipality_year(
     root_dir=".",
     headless=False,
@@ -930,7 +976,7 @@ def fetch_hospitalization_tables(root_dir=".", headless=False, download_dir=None
 
 
 def fetch_birth_outcome_tables(root_dir=".", headless=False, download_dir=None, outcome_names=None):
-    """Fetch raw birth-outcome tables for gestational duration and birth weight.
+    """Fetch raw SINASC birth-outcome tables (`BIRTH_COLUMN_OPTIONS`) by municipality and year.
 
     Each year is checkpointed to disk as soon as it's fetched (see
     `fetch_mortality_age_tables`'s docstring for why), so a transient
@@ -1001,6 +1047,11 @@ def fetch_health_data(root_dir=".", subtype="all", headless=False, download_dir=
     outputs = {}
     if subtype in {"all", "mortality"}:
         outputs["mortality"] = fetch_mortality_age_tables(
+            root_dir=root_dir,
+            headless=headless,
+            download_dir=download_dir,
+        )
+        outputs["infant_deaths"] = fetch_infant_death_cause_tables(
             root_dir=root_dir,
             headless=headless,
             download_dir=download_dir,

@@ -6,7 +6,9 @@ import pandas as pd
 import pytest
 
 from src.data.sources.health.preprocess.preprocess import (
+    LOW_BIRTH_WEIGHT_BINS,
     MORTALITY_AGE_COLUMNS,
+    _clean_infant_death_frame,
     _clean_mortality_age_frame,
     _coerce_tabnet_numeric,
     _preprocess_sih_icd10_chapter_request,
@@ -164,3 +166,61 @@ def test_clean_mortality_age_frame_rejects_missing_age_columns():
 
     with pytest.raises(ValueError, match="Menor 1 ano"):
         _clean_mortality_age_frame(frame)
+
+
+def test_build_birth_summary_adds_anomaly_and_apgar_counts_when_given():
+    keys = {"mun_id": ["123456", "654321"], "year": [2015, 2015]}
+    birth_weight = pd.DataFrame({**keys, **{bin_: [0.0, 0.0] for bin_ in LOW_BIRTH_WEIGHT_BINS},
+                                 "Ignorado": [0.0, 0.0], "Total": [20.0, 10.0]})
+    gestational_duration = pd.DataFrame({**keys, "Ignorado": [0.0, 0.0], "Total": [20.0, 10.0]})
+    congenital_anomaly = pd.DataFrame({**keys, "Sim": [1.0, 0.0], "Não": [18.0, 10.0], "Ignorado": [1.0, 0.0],
+                                       "Total": [20.0, 10.0]})
+    # The second municipality's table lacks the empty low bins, as TabNet omits all-zero columns.
+    apgar_1 = pd.DataFrame({**keys, "0 a 2": [1.0, None], "3 a 5": [2.0, None], "6 a 7": [3.0, 1.0],
+                            "8 a 10": [13.0, 9.0], "Ignorado": [1.0, 0.0], "Total": [20.0, 10.0]})
+    apgar_5 = apgar_1.drop(columns=["0 a 2"])
+
+    summary = build_birth_summary(
+        birth_weight, gestational_duration, congenital_anomaly=congenital_anomaly, apgar_1=apgar_1, apgar_5=apgar_5
+    ).set_index("mun_id")
+
+    assert summary.loc["123456", "births_anomaly"] == 1.0
+    assert summary.loc["123456", "births_anomaly_ignored"] == 1.0
+    assert summary.loc["123456", "births_apgar1_below_6"] == 3.0
+    assert summary.loc["123456", "births_apgar1_below_8"] == 6.0
+    assert summary.loc["123456", "births_apgar1_ignored"] == 1.0
+    assert summary.loc["123456", "births_apgar5_below_6"] == 2.0
+    assert summary.loc["654321", "births_apgar1_below_6"] == 0.0
+    assert summary.loc["654321", "births_apgar1_below_8"] == 1.0
+
+
+def test_build_birth_summary_without_optional_tables_keeps_core_columns():
+    keys = {"mun_id": ["123456"], "year": [2015]}
+    birth_weight = pd.DataFrame({**keys, **{bin_: [0.0] for bin_ in LOW_BIRTH_WEIGHT_BINS}, "Ignorado": [0.0], "Total": [5.0]})
+    gestational_duration = pd.DataFrame({**keys, "Ignorado": [0.0], "Total": [5.0]})
+
+    summary = build_birth_summary(birth_weight, gestational_duration)
+
+    assert not any(column.startswith(("births_anomaly", "births_apgar")) for column in summary.columns)
+
+
+def test_clean_infant_death_frame_splits_external_causes_and_zero_fills_absent_chapters():
+    frame = pd.DataFrame(
+        {
+            "year_code": ["96", "96", "05"],
+            "Município": ["MUNICIPIO IGNORADO - RO", "110002 ARIQUEMES", "110002 ARIQUEMES"],
+            "Cap XVI": ["6", "37", "20"],
+            "Cap XVII": ["-", "2", "3"],
+            "Cap XX": ["-", "1", "-"],
+            "Total": [9.0, 69.0, 30.0],
+        }
+    )
+
+    cleaned = _clean_infant_death_frame(frame)
+
+    assert cleaned[["mun_id", "year"]].values.tolist() == [["110002", 1996], ["110002", 2005]]
+    assert cleaned["infant_deaths"].tolist() == [69.0, 30.0]
+    assert cleaned["infant_deaths_external"].tolist() == [1.0, 0.0]
+    assert cleaned["infant_deaths_nonexternal"].tolist() == [68.0, 30.0]
+    assert cleaned["infant_deaths_congenital"].tolist() == [2.0, 3.0]
+    assert cleaned["infant_deaths_ill_defined"].tolist() == [0.0, 0.0]

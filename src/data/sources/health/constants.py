@@ -30,6 +30,10 @@ HOSPITALIZATIONS_SELECTED_MORBIDITY_LIST_FILENAME = "health_hospitalizations_sel
 # (preprocess_mortality_age_tables).
 MORTALITY_FILENAME = "health_mortality.parquet"
 
+# SIM infant deaths by municipality, year and ICD-10 chapter, 1996 onwards
+# (preprocess_infant_death_tables).
+INFANT_DEATHS_FILENAME = "health_infant_deaths.parquet"
+
 
 # Per-municipality-year birth counts derived from the two birth-outcome tables
 # (write_birth_summary_table): births, low-birth-weight and preterm counts.

@@ -943,7 +943,8 @@ def test_health_check_outputs_all_missing(tmp_path):
 
     artifacts = adapter.check_outputs(tmp_path)
 
-    assert len(artifacts) == 7
+    # Three SIH tables, five birth-outcome tables, the births summary, mortality and infant deaths.
+    assert len(artifacts) == 11
     assert all(not artifact.exists for artifact in artifacts)
 
 

@@ -528,6 +528,9 @@ datasets:
           - hosp_water_sanitation_gastrointestinal
       # SINASC births with low-birth-weight (< 2500 g) and preterm (< 37 weeks)
       # counts; `*_known` exclude "Ignorado" and are the share denominators.
+      # Congenital anomalies detected at birth, and APGAR below 6 and below 8 at
+      # 1 and 5 minutes (TabNet's bins: 0-2, 3-5, 6-7, 8-10), with their
+      # "Ignorado" counts.
       - name: births
         path: data/health/processed/health_births.parquet
         join_keys: [mun_id, year]
@@ -537,6 +540,14 @@ datasets:
           - births_low_weight
           - births_gestation_known
           - births_preterm
+          - births_anomaly
+          - births_anomaly_ignored
+          - births_apgar1_below_6
+          - births_apgar1_below_8
+          - births_apgar1_ignored
+          - births_apgar5_below_6
+          - births_apgar5_below_8
+          - births_apgar5_ignored
       # SIM deaths by municipality of residence and age band. ICD-9 (<= 1995) and
       # ICD-10 (>= 1996) series never overlap in a year; a municipality-year SIM
       # does not list (mostly: municipality not yet created) stays missing.
@@ -558,6 +569,20 @@ datasets:
           - deaths_70_to_79
           - deaths_80_and_more
           - deaths_age_unknown
+      # SIM infant deaths (under 1 year) by residence municipality and ICD-10
+      # chapter, 1996 on: all causes, congenital (XVII), ill-defined (XVIII),
+      # external (XX, V01-Y98) and all but external. TabNet lists only
+      # municipality-years with an infant death, so the rest are zero.
+      - name: infant_deaths
+        path: data/health/processed/health_infant_deaths.parquet
+        join_keys: [mun_id, year]
+        fill: {value: 0, years: [1996, 2024]}
+        variables:
+          - infant_deaths
+          - infant_deaths_congenital
+          - infant_deaths_ill_defined
+          - infant_deaths_external
+          - infant_deaths_nonexternal
       # MapBiomas Collection 11 mining substances (`land_cover --product
       # mining`): upstream group shares within 50 and 200 km (inv-sqrt kernel,
       # as the land-cover block) and the local, own-trench shares (the

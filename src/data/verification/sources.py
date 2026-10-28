@@ -1429,25 +1429,26 @@ def _health_output_files() -> tuple[str, ...]:
         HOSPITALIZATIONS_ICD10_CHAPTER_FILENAME,
         HOSPITALIZATIONS_SELECTED_MORBIDITY_LIST_FILENAME,
         BIRTHS_FILENAME,
+        INFANT_DEATHS_FILENAME,
         MORTALITY_FILENAME,
-        birth_outcome_filename,
     )
 
     return (
         HOSPITALIZATIONS_FILENAME,
         HOSPITALIZATIONS_ICD10_CHAPTER_FILENAME,
         HOSPITALIZATIONS_SELECTED_MORBIDITY_LIST_FILENAME,
-        birth_outcome_filename("birth_weight"),
-        birth_outcome_filename("gestational_duration"),
+        *sorted(_health_birth_outcome_files()),
         BIRTHS_FILENAME,
         MORTALITY_FILENAME,
+        INFANT_DEATHS_FILENAME,
     )
 
 
 def _health_birth_outcome_files() -> set[str]:
+    from src.data.sources.health.fetch.datasus import BIRTH_COLUMN_OPTIONS
     from src.data.sources.health.constants import birth_outcome_filename
 
-    return {birth_outcome_filename("birth_weight"), birth_outcome_filename("gestational_duration")}
+    return {birth_outcome_filename(outcome) for outcome in BIRTH_COLUMN_OPTIONS}
 
 
 def _health_births_summary_file() -> str:
@@ -1460,6 +1461,12 @@ def _health_mortality_file() -> str:
     from src.data.sources.health.constants import MORTALITY_FILENAME
 
     return MORTALITY_FILENAME
+
+
+def _health_infant_deaths_file() -> str:
+    from src.data.sources.health.constants import INFANT_DEATHS_FILENAME
+
+    return INFANT_DEATHS_FILENAME
 
 
 _HEALTH_OUTPUT_FILES = _health_output_files()
@@ -1486,6 +1493,10 @@ _HEALTH_BIRTHS_SUMMARY_REQUIRED_COLUMNS = [
 # SIM deaths (preprocess_mortality_age_tables), wide by (mun_id, year).
 _HEALTH_MORTALITY_FILE = _health_mortality_file()
 _HEALTH_MORTALITY_REQUIRED_COLUMNS = ["mun_id", "year", "source_system", "deaths_total", "deaths_under_1"]
+# SIM infant deaths by ICD-10 chapter (preprocess_infant_death_tables), wide by (mun_id, year).
+_HEALTH_INFANT_DEATHS_FILE = _health_infant_deaths_file()
+_HEALTH_INFANT_DEATHS_REQUIRED_COLUMNS = ["mun_id", "year", "infant_deaths", "infant_deaths_external",
+                                          "infant_deaths_nonexternal"]
 
 
 def _health_list_fetched(root_dir, force: bool = False) -> FetchListing:
@@ -1522,6 +1533,11 @@ def _health_check_outputs(root_dir) -> list[OutputArtifactCheck]:
                 checks.append(
                     check_value_range(frame, "deaths_total", lo=0.0, hi=float("inf"), name="value_range:deaths_total")
                 )
+        elif filename == _HEALTH_INFANT_DEATHS_FILE:
+            checks.append(check_required_columns(frame, _HEALTH_INFANT_DEATHS_REQUIRED_COLUMNS))
+            if "infant_deaths_nonexternal" in frame.columns:
+                checks.append(check_value_range(frame, "infant_deaths_nonexternal", lo=0.0, hi=float("inf"),
+                                                name="value_range:infant_deaths_nonexternal"))
         elif filename in _HEALTH_BIRTH_OUTCOME_FILES:
             checks.append(check_required_columns(frame, _HEALTH_BIRTH_OUTCOME_REQUIRED_COLUMNS))
             if "Total" in frame.columns:

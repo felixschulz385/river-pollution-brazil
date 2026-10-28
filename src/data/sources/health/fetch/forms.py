@@ -19,7 +19,8 @@ from ..webdriver import create_chrome_driver
 
 logger = logging.getLogger(__name__)
 
-FORM_READY_TIMEOUT_SECONDS = 20
+# TabNet can take over 20 s to serve a large form (the SIM forms list every municipality).
+FORM_READY_TIMEOUT_SECONDS = 60
 FORM_OPEN_RETRIES = 3
 FORM_OPEN_RETRY_BACKOFF_SECONDS = 2
 

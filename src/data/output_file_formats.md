@@ -282,6 +282,51 @@ Semantics:
 - Stations that fall just outside every polygon (e.g. coastline
   simplification) are assigned the nearest biome instead of a missing value.
 
+## Health Outputs
+
+Produced by `src.data.sources.health` from DATASUS TabNet tables by residence
+municipality (`mun_id`, 6-digit IBGE) and year. Municipalities a year's table
+does not list stay absent.
+
+### `data/health/processed/health_births.parquet`
+
+SINASC births summary, one row per (`mun_id`, `year`), 1994 onward:
+
+- `births`; `births_low_weight` (< 2,500 g) over `births_weight_known`;
+  `births_preterm` (< 37 weeks) over `births_gestation_known`. The `*_known`
+  denominators exclude "Ignorado".
+- `births_anomaly`: congenital anomaly detected at birth ("Sim"), with
+  `births_anomaly_ignored`.
+- `births_apgar{1,5}_below_6`, `births_apgar{1,5}_below_8`: APGAR score at 1
+  and 5 minutes below 6 and below 8, with `births_apgar{1,5}_ignored`.
+
+Semantics:
+
+- TabNet bins APGAR as 0–2, 3–5, 6–7 and 8–10, so the usual "below 7" cut is
+  not available.
+- The anomaly and APGAR columns are present only when their tables
+  (`health_congenital_anomaly.parquet`, `health_apgar_1.parquet`,
+  `health_apgar_5.parquet`) are processed.
+- Preterm counts are comparable from 2012: SINASC's gestation coding changes in
+  2011.
+- Coverage (national, TabNet as of 2026-10-28): the anomaly field starts in 1999,
+  with no "Ignorado" category in 1999–2000; its known share is 89–92% in
+  2001–05 and at least 95% from 2006. APGAR is known for 58–86% of births in
+  1994–98, 89–93% in 1999–2004 and at least 95% from 2009. The anomaly rate
+  rises from 6.1 per 1,000 births (2004) to 10.2 (2023), so it carries a
+  detection trend.
+
+### `data/health/processed/health_infant_deaths.parquet`
+
+SIM infant deaths (under 1 year, form `inf10br`) by ICD-10 chapter, one row
+per (`mun_id`, `year`), 1996 onward: `infant_deaths` (all causes),
+`infant_deaths_congenital` (chapter XVII), `infant_deaths_ill_defined`
+(XVIII), `infant_deaths_external` (XX, V01–Y98) and
+`infant_deaths_nonexternal` (all but XX). A chapter absent from a year's table
+counts as zero. TabNet lists only municipality-years with an infant death;
+`adm2_panel` carries these columns zero-filled for 1996–2024, and the births
+summary's columns as they are.
+
 ## Geology Outputs
 
 ### `data/geology/processed/geology_adm2.parquet`

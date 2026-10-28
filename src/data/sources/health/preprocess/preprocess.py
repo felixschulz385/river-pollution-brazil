@@ -14,6 +14,7 @@ from ..constants import (
     HOSPITALIZATIONS_FILENAME,
     HOSPITALIZATIONS_ICD10_CHAPTER_FILENAME,
     HOSPITALIZATIONS_SELECTED_MORBIDITY_LIST_FILENAME,
+    INFANT_DEATHS_FILENAME,
     MORTALITY_FILENAME,
     birth_outcome_filename,
 )
@@ -316,6 +317,46 @@ def preprocess_mortality_age_tables(root_dir="."):
     output_path = os.path.join(_processed_dir(root_dir), MORTALITY_FILENAME)
     mortality.to_parquet(output_path, index=False)
     logger.info("Wrote %s (%d rows)", output_path, len(mortality))
+    return output_path
+
+
+# SIM infant-death ICD-10 chapter columns -> processed columns; `Total` covers all chapters.
+INFANT_DEATH_CHAPTER_COLUMNS = {
+    "Total": "infant_deaths",
+    "Cap XVII": "infant_deaths_congenital",
+    "Cap XVIII": "infant_deaths_ill_defined",
+    "Cap XX": "infant_deaths_external",
+}
+
+
+def _clean_infant_death_frame(frame):
+    """One row per municipality and year with infant deaths in total and for the chapters of interest.
+
+    As for the age table, rows without a 6-digit municipality code are dropped
+    and unlisted municipalities stay absent. A chapter with no deaths in a year
+    is absent from that year's table and counts as zero.
+    """
+    if "Total" not in frame.columns:
+        raise ValueError("Infant-death table has no 'Total' column.")
+    parts = frame["Município"].astype(str).str.strip().str.extract(r"^(\d{6})\s*(.*)$")
+    out = pd.DataFrame({"mun_id": parts[0], "year": frame["year_code"].map(tabnet_year_from_code)})
+    for raw_column, column in INFANT_DEATH_CHAPTER_COLUMNS.items():
+        values = frame[raw_column] if raw_column in frame.columns else pd.Series(0.0, index=frame.index)
+        out[column] = _coerce_tabnet_numeric(values).fillna(0).astype("float32")
+    out = out.dropna(subset=["mun_id"])
+    if out.duplicated(["mun_id", "year"]).any():
+        raise ValueError("Infant-death table has duplicate (mun_id, year) rows.")
+    out["infant_deaths_nonexternal"] = out["infant_deaths"] - out["infant_deaths_external"]
+    return out.sort_values(["mun_id", "year"], ignore_index=True)
+
+
+def preprocess_infant_death_tables(root_dir="."):
+    """Clean the SIM infant-death table by ICD-10 chapter into `health_infant_deaths.parquet`."""
+    raw_path = os.path.join(_raw_dir(root_dir), "infant_deaths_icd10_raw.parquet")
+    infant = _clean_infant_death_frame(pd.read_parquet(raw_path))
+    output_path = os.path.join(_processed_dir(root_dir), INFANT_DEATHS_FILENAME)
+    infant.to_parquet(output_path, index=False)
+    logger.info("Wrote %s (%d rows)", output_path, len(infant))
     return output_path
 
 
@@ -837,12 +878,24 @@ def _clean_birth_outcome_frame(frame):
     return frame.dropna(subset=["mun_id"])
 
 
+# Required for the births summary table; the others are added to it when fetched.
+CORE_BIRTH_OUTCOMES = ("gestational_duration", "birth_weight")
+OPTIONAL_BIRTH_OUTCOMES = ("congenital_anomaly", "apgar_1", "apgar_5")
+
+
 def preprocess_birth_outcome_tables(root_dir=".", outcome_names=None):
-    """Clean raw birth tables and write final parquet outputs."""
+    """Clean raw birth tables and write final parquet outputs.
+
+    Without `outcome_names`, cleans the core outcomes and every optional one
+    whose raw table has been fetched.
+    """
     raw_dir = _raw_dir(root_dir)
     processed_dir = _processed_dir(root_dir)
     outputs = {}
-    selected_outcomes = outcome_names or ["gestational_duration", "birth_weight"]
+    selected_outcomes = outcome_names or [
+        *CORE_BIRTH_OUTCOMES,
+        *(name for name in OPTIONAL_BIRTH_OUTCOMES if os.path.exists(os.path.join(raw_dir, f"{name}_raw.parquet"))),
+    ]
 
     for outcome_name in selected_outcomes:
         raw_path = os.path.join(raw_dir, f"{outcome_name}_raw.parquet")
@@ -851,7 +904,7 @@ def preprocess_birth_outcome_tables(root_dir=".", outcome_names=None):
         cleaned.to_parquet(output_path, index=False)
         outputs[outcome_name] = output_path
 
-    if {"gestational_duration", "birth_weight"}.issubset(selected_outcomes):
+    if set(CORE_BIRTH_OUTCOMES).issubset(selected_outcomes):
         outputs["births"] = write_birth_summary_table(root_dir=root_dir)
     return outputs
 
@@ -868,11 +921,36 @@ PRETERM_BINS = [
 ]
 
 
-def build_birth_summary(birth_weight, gestational_duration):
-    """Collapse the cleaned birth-weight and gestation tables into counts per (mun_id, year).
+# TabNet bins APGAR as 0-2, 3-5, 6-7 and 8-10, so the clinical cut-off (< 7)
+# is not available; < 6 (0-5) and < 8 (0-7) bracket it.
+APGAR_BELOW_6_BINS = ["0 a 2", "3 a 5"]
+APGAR_BELOW_8_BINS = [*APGAR_BELOW_6_BINS, "6 a 7"]
+ANOMALY_DETECTED = "Sim"
+
+
+def _anomaly_counts(congenital_anomaly):
+    counts = congenital_anomaly[["mun_id", "year"]].copy()
+    counts["births_anomaly"] = congenital_anomaly.reindex(columns=[ANOMALY_DETECTED]).sum(axis=1, min_count=0)
+    counts["births_anomaly_ignored"] = congenital_anomaly.reindex(columns=["Ignorado"]).sum(axis=1, min_count=0)
+    return counts
+
+
+def _apgar_counts(apgar, minute):
+    counts = apgar[["mun_id", "year"]].copy()
+    counts[f"births_apgar{minute}_below_6"] = apgar.reindex(columns=APGAR_BELOW_6_BINS).sum(axis=1, min_count=0)
+    counts[f"births_apgar{minute}_below_8"] = apgar.reindex(columns=APGAR_BELOW_8_BINS).sum(axis=1, min_count=0)
+    counts[f"births_apgar{minute}_ignored"] = apgar.reindex(columns=["Ignorado"]).sum(axis=1, min_count=0)
+    return counts
+
+
+def build_birth_summary(birth_weight, gestational_duration, congenital_anomaly=None, apgar_1=None, apgar_5=None):
+    """Collapse the cleaned birth-outcome tables into counts per (mun_id, year).
 
     `*_known` counts exclude the "Ignorado" bin and are the denominators of the
-    low-birth-weight and preterm shares.
+    low-birth-weight and preterm shares. When given, the congenital-anomaly and
+    APGAR tables add births with a detected anomaly, with APGAR below 6 and
+    below 8 at 1 and 5 minutes, and each table's "Ignorado" count (the
+    denominators are `births` minus those).
     """
     births = birth_weight[["mun_id", "year"]].copy()
     births["births"] = birth_weight["Total"]
@@ -883,6 +961,13 @@ def build_birth_summary(birth_weight, gestational_duration):
     preterm["births_gestation_known"] = gestational_duration["Total"] - gestational_duration["Ignorado"]
     preterm["births_preterm"] = gestational_duration.reindex(columns=PRETERM_BINS).sum(axis=1, min_count=0)
     summary = births.merge(preterm, on=["mun_id", "year"], how="outer", validate="one_to_one")
+    for counts in (
+        None if congenital_anomaly is None else _anomaly_counts(congenital_anomaly),
+        None if apgar_1 is None else _apgar_counts(apgar_1, 1),
+        None if apgar_5 is None else _apgar_counts(apgar_5, 5),
+    ):
+        if counts is not None:
+            summary = summary.merge(counts, on=["mun_id", "year"], how="left", validate="one_to_one")
     value_columns = [column for column in summary.columns if column not in {"mun_id", "year"}]
     summary[value_columns] = summary[value_columns].astype("float64")
     return summary
@@ -892,11 +977,18 @@ def write_birth_summary_table(root_dir="."):
     """Build `health_births.parquet` from the processed birth-outcome tables.
 
     Reads the processed (not raw) tables, so it can be rerun without re-fetching SINASC.
+    The congenital-anomaly and APGAR tables are used when they have been processed.
     """
     processed_dir = _processed_dir(root_dir)
+    optional = {}
+    for outcome_name in OPTIONAL_BIRTH_OUTCOMES:
+        path = os.path.join(processed_dir, birth_outcome_filename(outcome_name))
+        if os.path.exists(path):
+            optional[outcome_name] = pd.read_parquet(path)
     summary = build_birth_summary(
         pd.read_parquet(os.path.join(processed_dir, birth_outcome_filename("birth_weight"))),
         pd.read_parquet(os.path.join(processed_dir, birth_outcome_filename("gestational_duration"))),
+        **optional,
     )
     output_path = os.path.join(processed_dir, BIRTHS_FILENAME)
     summary.to_parquet(output_path, index=False)
@@ -915,6 +1007,7 @@ def preprocess_health_data(root_dir=".", subtype="all"):
     outputs = {}
     if subtype in {"all", "mortality"}:
         outputs["mortality"] = preprocess_mortality_age_tables(root_dir=root_dir)
+        outputs["infant_deaths"] = preprocess_infant_death_tables(root_dir=root_dir)
     if subtype in {"all", "hospitalization"}:
         outputs["hospitalization"] = preprocess_hospitalization_tables(root_dir=root_dir)
     if subtype in {"all", "birth"}:

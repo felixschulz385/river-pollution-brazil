@@ -88,14 +88,20 @@ python3 -m src.cli data preprocess --source health --subtype all
 ```
 
 Supported health subtypes are `mortality`, `hospitalization`, and `birth`.
+The fetch scrapes DATASUS TabNet with Selenium (headless Chrome), so it needs
+internet access.
 
-The repository currently contains derived health outputs such as:
+Derived health outputs, in `data/health/processed/` (formats in
+`src/data/output_file_formats.md`):
 
-- `data/health/processed/health_birth_weight.parquet`
-- `data/health/processed/health_gestational_duration.parquet`
-- `data/health/processed/health_hospitalizations.parquet`
-- `data/health/processed/health_hospitalizations_icd10_chapter.parquet`
-- `data/health/processed/health_hospitalizations_selected_morbidity_list.parquet`
+- `health_birth_weight.parquet`, `health_gestational_duration.parquet`,
+  `health_congenital_anomaly.parquet`, `health_apgar_1.parquet`,
+  `health_apgar_5.parquet`: SINASC births by category
+- `health_births.parquet`: the births summary (`--subtype birth_summary`)
+- `health_mortality.parquet`, `health_infant_deaths.parquet`: SIM deaths by age
+  band, and infant deaths by ICD-10 chapter
+- `health_hospitalizations.parquet`, `health_hospitalizations_icd10_chapter.parquet`,
+  `health_hospitalizations_selected_morbidity_list.parquet`: SIH hospitalizations
 
 ### Water Quality
 
