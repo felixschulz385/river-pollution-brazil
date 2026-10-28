@@ -464,3 +464,42 @@ One row per `year` with all twelve months (1995 onward): the means of the
 monthly `gold_usd_oz`, `brl_per_usd` and `gold_brl_oz`, the logs of the
 annual means `log_gold_usd` and `log_gold_brl`, and `months`. `adm2_panel`
 joins `gold_usd_oz`, `gold_brl_oz`, `log_gold_usd` and `log_gold_brl` by year.
+
+## Mining Permit Outputs
+
+Produced by `src.data.sources.mining` from the ANM Cadastro Mineiro (SCM)
+microdata (`data/mining/raw/anm_scm_microdados_<date>/microdados-scm.zip`, the
+newest snapshot; placed by hand, as the ANM firewall blocks scripted
+downloads). Tables read: `Processo`, `ProcessoTitulo`, `ProcessoMunicipio`,
+`ProcessoSubstancia` and `Municipio`.
+
+### `data/mining/processed/mining_permits_adm2.parquet`
+
+One row per (`mun_id`, `year`) for every municipality in the SCM list and
+1985–2026, zero-filled. For each group `<g>` (`all`; `gold`: ouro, minério de
+ouro, ouro nativo; `tin`: estanho, minério de estanho, cassiterita, pirita de
+estanho):
+
+- `plg_requests_<g>`: requests for a PLG (permissão de lavra garimpeira) by
+  protocol year: request types PLG and change of regime to PLG. ANM's
+  availability procedures and public offers of free areas are left out.
+- `plg_request_area_ha_<g>`: their area in hectares.
+- `plg_grants_<g>`: PLGs first granted in the year (publication of the
+  process's earliest PLG title).
+- `plg_active_<g>`: PLGs in force at some point in the year, from the grant
+  year to the latest PLG expiry.
+- `plg_active_area_ha_<g>`: their area.
+
+Semantics:
+
+- A process counts in every municipality it lists; its area is split equally
+  across them (the microdata have no polygons).
+- A process belongs to a substance group if it lists any of the group's
+  substances at any time. "Ouro pigmento" (orpiment) is not gold.
+- Renewals and extensions are further titles of the same process: they extend
+  the span in force but are not grants. A process whose PLG titles carry no
+  expiry is in force for five years from the grant (Lei 7.805/1989, art. 7).
+- Cancellations and forfeitures are not dated in the title table, so a PLG
+  revoked before its expiry still counts as in force.
+- Zero or negative process areas are treated as missing (area 0).
+- `adm2_panel` joins every column.

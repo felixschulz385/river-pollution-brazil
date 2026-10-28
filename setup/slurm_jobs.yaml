@@ -124,6 +124,15 @@ jobs:
     cpus_per_task: 2
     mem: 32G
 
+  # ANM SCM microdata: four tables of ~1M rows each read from the zip (the
+  # 1.1 GB event table is not read). The archive is placed by hand.
+  mining.preprocess:
+    job_name: preprocess_mining
+    time: "0-01:00:00"
+    qos: 6hours
+    cpus_per_task: 2
+    mem: 16G
+
   # Formerly setup/slurm_scripts/generate_river_network.sh
   river_network.preprocess:
     job_name: preprocess_river_network

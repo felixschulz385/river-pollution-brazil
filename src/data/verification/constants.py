@@ -17,6 +17,7 @@ SOURCES = (
     "geology",
     "malaria",
     "commodity_prices",
+    "mining",
     "population",
     "health",
     "assembly",

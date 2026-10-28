@@ -1343,6 +1343,83 @@ def _commodity_prices_fingerprint_paths(root_dir) -> list[Path]:
 
 
 # --------------------------------------------------------------------------
+# mining
+# --------------------------------------------------------------------------
+
+def _mining_list_fetched(root_dir, force: bool = False) -> FetchListing:
+    from src.data.sources.mining.constants import scm_archive_path
+
+    archive = scm_archive_path(root_dir)
+    present = 1 if archive is not None else 0
+    detail = f"SCM snapshot {archive.parent.name} present." if archive else "No SCM snapshot (manual placement)."
+    return FetchListing(present=present, expected=1, detail=detail)
+
+
+def _mining_permit_checks(frame) -> list[CheckResult]:
+    """Keys unique, counts and areas non-negative, and each substance group within all PLGs."""
+    from src.data.sources.mining.constants import (
+        ADM2_COLUMNS,
+        MEASURES,
+        MUN_ID_COLUMN,
+        SUBSTANCE_GROUPS,
+        YEAR_COLUMN,
+        measure_column,
+    )
+
+    checks = [check_required_columns(frame, list(ADM2_COLUMNS)), _non_empty_check(frame)]
+    if not set(ADM2_COLUMNS) <= set(frame.columns):
+        return checks
+    duplicates = int(frame.duplicated([MUN_ID_COLUMN, YEAR_COLUMN]).sum())
+    checks.append(CheckResult(
+        name="unique:mun_id,year",
+        ok=duplicates == 0,
+        message="All (mun_id, year) keys unique." if duplicates == 0 else f"{duplicates} duplicate keys.",
+    ))
+    values = frame[[column for column in ADM2_COLUMNS if column not in (MUN_ID_COLUMN, YEAR_COLUMN)]]
+    negative = int((values < 0).sum().sum())
+    checks.append(CheckResult(
+        name="non_negative",
+        ok=negative == 0,
+        message="No negative counts or areas." if negative == 0 else f"{negative} negative values.",
+    ))
+    exceeding = sorted(
+        measure_column(measure, group)
+        for group in SUBSTANCE_GROUPS
+        for measure in MEASURES
+        if (frame[measure_column(measure, group)] > frame[measure_column(measure, "all")] + 1e-6).any()
+    )
+    checks.append(CheckResult(
+        name="groups_within_all",
+        ok=not exceeding,
+        message="Substance groups never exceed all PLGs." if not exceeding else f"Exceed all PLGs: {exceeding}",
+    ))
+    return checks
+
+
+def _mining_check_outputs(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.mining.constants import DEFAULT_ADM2_OUTPUT_PATH
+
+    return [_artifact_check("mining_permits_adm2", Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH, _mining_permit_checks)]
+
+
+def _mining_check_fetched(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.mining.constants import SCM_ARCHIVE_FILENAME, raw_dir, scm_archive_path
+
+    archive = scm_archive_path(root_dir)
+    if archive is None:
+        return [_missing_artifact("scm_microdata", raw_dir(root_dir) / SCM_ARCHIVE_FILENAME)]
+    return [OutputArtifactCheck(label="scm_microdata", path=archive, exists=True,
+                                checks=[check_file_nonempty(archive, min_size_bytes=1 << 20)])]
+
+
+def _mining_fingerprint_paths(root_dir) -> list[Path]:
+    from src.data.sources.mining.constants import DEFAULT_ADM2_OUTPUT_PATH, scm_archive_path
+
+    archive = scm_archive_path(root_dir)
+    return [*([archive] if archive else []), Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH]
+
+
+# --------------------------------------------------------------------------
 # population
 # --------------------------------------------------------------------------
 
@@ -1791,6 +1868,14 @@ SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
         fingerprint_paths=_commodity_prices_fingerprint_paths,
         fetch_method="Download (World Bank, BCB API)",
         check_fetched=_commodity_prices_check_fetched,
+    ),
+    "mining": SourceAdapter(
+        name="mining",
+        list_fetched=_mining_list_fetched,
+        check_outputs=_mining_check_outputs,
+        fingerprint_paths=_mining_fingerprint_paths,
+        fetch_method="Manual placement (ANM SCM microdata zip)",
+        check_fetched=_mining_check_fetched,
     ),
     "population": SourceAdapter(
         name="population",

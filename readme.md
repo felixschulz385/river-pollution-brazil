@@ -54,7 +54,7 @@ python3 -m src.cli data assemble   --dataset <id>       # join preprocessed sour
 
 `--source` and `--phase` must precede any source-specific flags. `--source`
 is one of `health`, `climate`, `sensor_data`, `land_cover`, `population`,
-`river_network`, `biomes`, `geology`, `malaria`, `commodity_prices`. `--phase` only applies to sources whose
+`river_network`, `biomes`, `geology`, `malaria`, `commodity_prices`, `mining`. `--phase` only applies to sources whose
 preprocessing has two stages (`climate`, `land_cover`): `extract` (raw →
 per-source processed output) and `aggregate` (roll-up into sensor/ADM2
 upstream panels). `sensor_data` has a single preprocess step that does both
@@ -268,6 +268,21 @@ python3 -m src.cli data preprocess --source commodity_prices
 
 Outputs: monthly and annual gold prices in USD and BRL, with logs,
 `data/commodity_prices/processed/gold_price_{monthly,annual}.parquet`.
+
+### Mining Permits
+
+The ANM Cadastro Mineiro (SCM) microdata, counted per municipality and year:
+PLG (garimpo permit) requests, grants and permits in force, for all
+substances, gold and tin. The ANM firewall blocks scripted downloads, so
+`microdados-scm.zip` (from `dadosabertos.anm.gov.br/SCM/microdados/`) is
+downloaded in a browser and placed in
+`data/mining/raw/anm_scm_microdados_<date>/`; the newest snapshot is used.
+
+```bash
+python3 -m src.cli data preprocess --source mining --slurm
+```
+
+Output: `data/mining/processed/mining_permits_adm2.parquet`.
 
 ## Analysis Workflow
 

@@ -706,6 +706,28 @@ datasets:
           - gold_brl_oz
           - log_gold_usd
           - log_gold_brl
+      # ANM Cadastro Mineiro: PLG (garimpo permit) requests by protocol year,
+      # first grants, and PLGs in force, for all substances, gold and tin. A
+      # process counts in each of its municipalities; areas are split equally.
+      - name: mining_permits_adm2
+        path: data/mining/processed/mining_permits_adm2.parquet
+        join_keys: [mun_id, year]
+        variables:
+          - plg_requests_all
+          - plg_request_area_ha_all
+          - plg_grants_all
+          - plg_active_all
+          - plg_active_area_ha_all
+          - plg_requests_gold
+          - plg_request_area_ha_gold
+          - plg_grants_gold
+          - plg_active_gold
+          - plg_active_area_ha_gold
+          - plg_requests_tin
+          - plg_request_area_ha_tin
+          - plg_grants_tin
+          - plg_active_tin
+          - plg_active_area_ha_tin
       # SIVEP-Malária positives by infection (`inf_`), residence (`res_`) and
       # notification (`noti_`) municipality. The table lists only
       # municipality-years with a record, so the rest of 2004-2024 is 0;

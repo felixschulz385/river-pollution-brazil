@@ -69,7 +69,8 @@ relapse are counted?
 **Open before the design is final.**
 
 - A novelty check on malaria importation by miners.
-- The permit layer (grant dates), needed for lead 1's laundering exposure.
+- IGD (FUNAI and CNUC boundaries) and IBAMA enforcement data, for lead 1's exposure
+  and for separating the 2019 break from the enforcement collapse.
 
 ## The paper
 
@@ -779,12 +780,15 @@ The ADM2 panel carries:
 - the SINASC anomaly and APGAR counts and the infant deaths by ICD-10 chapter;
 - the gold price in reais.
 
-1. **Mining permits.** A `mining` source from the ANM Cadastro Mineiro microdata and the
-   Monitor da Mineração layer: PLG grant and expiry dates, polygons, flags, by
-   municipality-year. Open questions:
-   - whether `Evento.txt` holds the event table;
-   - the start year of the events;
-   - the PLG codes from 521 onward.
+1. **Mining permits.** The `mining` source counts PLG requests, first grants and PLGs
+   in force (with areas) by municipality and year, for all substances, gold and tin,
+   from the ANM Cadastro Mineiro microdata; `adm2_panel` carries them.
+   - Legal Amazon gold PLG requests: 779 (2012), 1,706 (2013), 894 (2014); 1,693 in 2020;
+     819 (2023), 484 (2024). Both policy dates show in the requests.
+   - Still to add:
+     - the dated events (`ProcessoEvento`, 1.1 GB): rejections, cancellations and
+       forfeitures, and monthly timing around July 2013 and April 2023;
+     - the Monitor da Mineração layer: polygons, and the MEND flag for ghost permits.
 2. **Lead 1 supply estimates.** The gold price in reais (`commodity_prices`), the
    upstream-reach geology (`geology --product upstream`) and the price × deposits test
    ([E10](#e10-garimpo-supply-and-the-gold-price)) are in place. Price × deposits does
@@ -1180,7 +1184,7 @@ tables in `output/analysis/garimpo/price_supply/`.*
 | Mining substances (garimpo vs. industrial, by ore) | MapBiomas Collection 11 | garimpo area | in pipeline (`land_cover` with the mining legend); step in 2020 in every group |
 | Malaria cases with occupation, infection site, residence | SIVEP-Malária (Saldanha, Zenodo 20706957, CC BY) | garimpo workers by group; flows | in pipeline (`malaria`); 2025–26 preliminary in Zenodo 20706949 |
 | Gold occurrences, gold provinces and districts | Geological Survey of Brazil (SGB) | deposit quality, IGD, geology control | in pipeline (`geology`); stream-sediment assays not fetched |
-| Mining permits with type, ore, dates, flags | ANM Cadastro Mineiro microdata; MapBiomas Monitor da Mineração | laundering exposure, ghost permits, anticipation | raw on the HPC; needs a `mining` source |
+| Mining permits with type, ore, dates, flags | ANM Cadastro Mineiro microdata; MapBiomas Monitor da Mineração | laundering exposure, ghost permits, anticipation | in pipeline (`mining`: PLG requests, grants, PLGs in force); events and the Monitor layer to add |
 | Royalty payments (CFEM) | ANM | declared output | not usable for garimpo (E7) |
 | Fines, embargoes, seizures | IBAMA | enforcement shocks | to add |
 | Indigenous lands with stage and dates | FUNAI | IGD, lead 4 | to add |
