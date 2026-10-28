@@ -342,6 +342,8 @@ Columns:
   `gold_occurrences_unexploited`, `_garimpo`, `_mine` and `_undetermined`.
   `gold_occurrences_alluvial` counts those with an alluvial host (alluvium,
   gravel, eluvium, colluvium, detrital sediment).
+- `tin_occurrences`, `tin_occurrences_unexploited`: tin (substance "Estanho")
+  occurrences, all and never exploited; the other-minerals placebo.
 - `gold_district_share`, `gold_province_share`: share of the municipality's
   area inside any gold district or province.
 

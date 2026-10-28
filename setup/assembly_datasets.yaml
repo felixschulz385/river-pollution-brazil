@@ -661,6 +661,8 @@ datasets:
           - gold_occurrences_mine
           - gold_occurrences_undetermined
           - gold_occurrences_alluvial
+          - tin_occurrences
+          - tin_occurrences_unexploited
           - gold_district_share
           - gold_province_share
       # SGB occurrences upstream along the river network (static): counts

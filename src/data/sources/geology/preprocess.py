@@ -22,6 +22,9 @@ from .constants import (
     NEAREST_MUNICIPALITY_MAX_DISTANCE_M,
     PROVINCE_SHARE_COLUMN,
     STATUS_COLUMNS,
+    TIN_OCCURRENCE_COLUMN,
+    TIN_SUBSTANCE,
+    TIN_UNEXPLOITED_COLUMN,
     gpkg_path,
 )
 
@@ -38,6 +41,12 @@ def load_gold_occurrences(path):
     if unknown:
         logger.warning("Gold occurrences with unmapped economic status (total only): %s", sorted(unknown))
     return gold
+
+
+def load_tin_occurrences(path):
+    """Tin (cassiterite) occurrences, the other-minerals placebo."""
+    occurrences = gpd.read_file(path, layer="occurrences")
+    return occurrences[occurrences["SUBSTANCIAS"].fillna("").str.contains(TIN_SUBSTANCE)].copy()
 
 
 def assign_municipality(points, boundaries):
@@ -99,6 +108,12 @@ def build_adm2_geology(
     for status, column in STATUS_COLUMNS.items():
         result[column] = gold[gold["STATUS_ECONOMICO"] == status].groupby(MUN_ID_COLUMN).size()
     result[ALLUVIAL_COLUMN] = gold[gold["alluvial"]].groupby(MUN_ID_COLUMN).size()
+
+    tin = load_tin_occurrences(gpkg).to_crs(BRAZIL_PROJECTED_CRS)
+    tin[MUN_ID_COLUMN] = assign_municipality(tin, boundaries)
+    tin = tin.dropna(subset=[MUN_ID_COLUMN])
+    result[TIN_OCCURRENCE_COLUMN] = tin.groupby(MUN_ID_COLUMN).size()
+    result[TIN_UNEXPLOITED_COLUMN] = tin[tin["STATUS_ECONOMICO"] == "Não explotado"].groupby(MUN_ID_COLUMN).size()
     result[list(COUNT_COLUMNS)] = result[list(COUNT_COLUMNS)].fillna(0).astype("int64")
 
     for column, polygon_layer in (

@@ -26,6 +26,9 @@ OCCURRENCE_FIELDS = (
 SGB_GOLD_FILENAME = "sgb_gold.gpkg"
 
 GOLD_SUBSTANCE = "Ouro"
+# Tin is the other-minerals placebo: garimpo-mined (cassiterite in Rondônia)
+# without mercury.
+TIN_SUBSTANCE = "Estanho"
 ALLUVIAL_HOSTS = r"Alúvio|Aluvi|Cascalho|Elúvio|Colúvio|Sedimento detrit"
 
 # Occurrence positions are mostly digitized from 1:250,000 and 1:100,000
@@ -46,9 +49,13 @@ STATUS_COLUMNS = {
     "Mina": "gold_occurrences_mine",
     "Indeterminado": "gold_occurrences_undetermined",
 }
+TIN_OCCURRENCE_COLUMN = "tin_occurrences"
+TIN_UNEXPLOITED_COLUMN = "tin_occurrences_unexploited"
 DISTRICT_SHARE_COLUMN = "gold_district_share"
 PROVINCE_SHARE_COLUMN = "gold_province_share"
-COUNT_COLUMNS = (GOLD_OCCURRENCE_COLUMN, *STATUS_COLUMNS.values(), ALLUVIAL_COLUMN)
+COUNT_COLUMNS = (
+    GOLD_OCCURRENCE_COLUMN, *STATUS_COLUMNS.values(), ALLUVIAL_COLUMN, TIN_OCCURRENCE_COLUMN, TIN_UNEXPLOITED_COLUMN,
+)
 ADM2_COLUMNS = (MUN_ID_COLUMN, AREA_COLUMN, *COUNT_COLUMNS, DISTRICT_SHARE_COLUMN, PROVINCE_SHARE_COLUMN)
 
 DEFAULT_ADM2_OUTPUT_PATH = str(processed_dir(".", "geology") / "geology_adm2.parquet")
@@ -61,9 +68,7 @@ UPSTREAM_PRODUCT = "upstream"
 PRODUCTS = (ADM2_PRODUCT, UPSTREAM_PRODUCT)
 
 # Upstream counts: occurrence group -> (substance, `STATUS_ECONOMICO` value or
-# None for all, alluvial only). Tin is the other-minerals placebo: mined
-# without mercury.
-TIN_SUBSTANCE = "Estanho"
+# None for all, alluvial only).
 UPSTREAM_GROUPS = {
     "gold": (GOLD_SUBSTANCE, None, False),
     "gold_unexploited": (GOLD_SUBSTANCE, "Não explotado", False),

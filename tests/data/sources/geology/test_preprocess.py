@@ -27,7 +27,7 @@ def _write_inputs(tmp_path: Path):
                 Point(-55.5, -5.5),
                 Point(-55.2, -5.5),
                 Point(-54.5, -5.5),
-                Point(-54.5, -5.6),  # tin: not counted
+                Point(-54.5, -5.6),  # tin: counted separately
                 Point(-54.0 + 0.01, -5.5),  # ~1 km east of the second municipality
                 Point(-50.0, -5.5),  # far from both: dropped
             ],
@@ -61,6 +61,8 @@ def test_build_adm2_geology_counts_and_shares(tmp_path: Path):
     assert result["gold_occurrences_unexploited"].tolist() == [1, 1]
     assert result["gold_occurrences_mine"].tolist() == [0, 1]
     assert result["gold_occurrences_alluvial"].tolist() == [1, 1]
+    assert result["tin_occurrences"].tolist() == [0, 1]
+    assert result["tin_occurrences_unexploited"].tolist() == [0, 0]
     assert result.loc["150010", "gold_district_share"] == pytest.approx(0.5, abs=0.01)
     assert result.loc["150020", "gold_district_share"] == 0.0
     assert result.loc["150010", "gold_province_share"] == pytest.approx(1.0)
