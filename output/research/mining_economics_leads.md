@@ -54,6 +54,14 @@ relapse are counted?
   - SIVEP sees mining that MapBiomas misses, but only where malaria is transmitted.
     C11 garimpo gold fits garimpo cases no better than C10 mining (Spearman 0.36 vs.
     0.37), and 80% of case municipalities have none.
+- **Garimpo does not follow the gold price.**
+  - Municipalities with never-exploited gold hold 85% of garimpo cases, but within
+    them garimpo does not track the price in reais.
+  - C11 garimpo grows on a smooth trend.
+  - Garimpo cases are flat through 2018, while the price rises by 1.3 log points, then
+    break upward in 2019, mostly in Roraima.
+  - The price lever is therefore not identified from price × geology; the policy dates
+    are ([E10](#e10-garimpo-supply-and-the-gold-price)).
 - **Gold geology.** The Geological Survey of Brazil's (SGB) never-exploited gold
   occurrences predict where garimpo is about as well as all occurrences. They are,
   however, thin (74 Legal Amazon municipalities) ([E6](#e6-sgb-gold-geology)).
@@ -392,6 +400,14 @@ X_mt = β_13·(IGD_m × post-2013_t) + β_23·(IGD_m × post-2023_t)
     Occurrences recorded at garimpos or mines are not predetermined ([E6](#e6-sgb-gold-geology)).
 - **By group.** The same equation on local and on incoming cases gives the model's
   prediction 5.
+- **The price term, tested** ([E10](#e10-garimpo-supply-and-the-gold-price)).
+  - Within municipalities, garimpo does not follow the price: C11 garimpo grows on a
+    smooth trend in deposit municipalities, and SIVEP garimpo cases break upward in 2019,
+    mostly in Roraima.
+  - So γ is not a usable supply elasticity, and price × deposits stays a control.
+  - The design rests on the policy dates, which is where the cases move. The 2019–20
+    break has to be read against the enforcement collapse (lead 3) as well as the
+    price.
 - **Ghost permits as heterogeneity.** Permit area that declares gold sales but shows
   little mining footprint before 2013 is a mechanism test.
   - The Monitor da Mineração's MEND flag (mining expected but not detected) is a
@@ -405,6 +421,11 @@ X_mt = β_13·(IGD_m × post-2013_t) + β_23·(IGD_m × post-2023_t)
     clustering by year.
   - With a persistent price, that understates the uncertainty, and the random-walk
     randomization is the binding check ([E9](#e9-moreno-louzadas-design)).
+  - With few exposed municipalities in few basins and an outcome that is zero
+    elsewhere, the restricted wild-cluster bootstrap over-rejects. For C11 shares it
+    gives p ≈ 0.005 whatever the sign of the coefficient ([E10](#e10-garimpo-supply-and-the-gold-price)).
+    IGD will have the same structure, so it needs randomization over municipalities as
+    well.
 
 **Threats and checks.**
 
@@ -764,11 +785,15 @@ The ADM2 panel carries:
    - whether `Evento.txt` holds the event table;
    - the start year of the events;
    - the PLG codes from 521 onward.
-2. **Lead 1 supply estimates.** The gold price in reais (`commodity_prices`) and the
-   upstream-reach geology (`geology --product upstream`) are in the panel. Still needed:
+2. **Lead 1 supply estimates.** The gold price in reais (`commodity_prices`), the
+   upstream-reach geology (`geology --product upstream`) and the price × deposits test
+   ([E10](#e10-garimpo-supply-and-the-gold-price)) are in place. Price × deposits does
+   not identify a supply elasticity, so the estimates rest on the policy dates. Still
+   needed:
    - IGD (needs FUNAI and CNUC boundaries);
-   - the supply equation on C11 and SIVEP, by group. E9's null first stage, upstream
-     and in the municipality, is a warning for the price × deposits term.
+   - the IGD × post-2013 and × post-2023 terms on C11 and SIVEP, by group;
+   - a way to separate the 2019–20 break in garimpo cases from the enforcement collapse
+     (lead 3's IBAMA data) and from the Roraima rush.
 3. **Lead 2 first pass.**
    - Prediction 5: local vs. incoming cases on price × deposits and on drought.
    - Prediction 2: a downstream aggregation of mining for the spread test.
@@ -1094,6 +1119,52 @@ tables in `output/analysis/health/moreno_louzada/`.*
   (congenital deaths) depends on regional trends, comes with a failed placebo and has
   no first stage, so it reads as differential trends between exposed and other
   municipalities rather than a price-driven health effect.
+
+### E10. Garimpo supply and the gold price
+
+*Code: `src/analysis/garimpo_supply.py`, `output/notebooks/garimpo/02_price_supply.ipynb`;
+tables in `output/analysis/garimpo/price_supply/`.*
+
+- **Design.** Lead 1's γ term on its own.
+  - *Exposure:* the municipality's own never-exploited SGB gold occurrences (binary)
+    × the log gold price in BRL.
+  - *Outcomes:* the C11 garimpo share of its own trenches (gold, and all substances;
+    2004–2019) and SIVEP garimpo cases by infection municipality (all, local, incoming,
+    any case; log(1 + cases), 2004–2024).
+  - *Model:* Legal Amazon, municipality and year FE, unweighted, Otto-3 clusters.
+  - *Placebos:* tin occurrences × price, and non-garimpo malaria as an outcome.
+- **The geology is where garimpo is.** 74 of 772 municipalities hold a never-exploited
+  occurrence. They hold 85% of the 248,000 garimpo cases of 2004–2024.
+- **Event study** (exposed vs. other municipalities, relative to 2004):
+  - *C11 garimpo:* the gap grows smoothly from 0 to 0.05 pp (gold) and 0.07 pp (all
+    substances) by 2019, including 2012–15, when the price was flat.
+  - *Garimpo cases:* flat or falling through 2018 (−0.20 log points in 2018), while the
+    price rose by 1.3 log points. Then about +0.5 from 2019, almost all among incoming
+    workers, and unchanged through 2024.
+  - *Without Roraima:* the break shrinks to 0.25–0.30 and is not significant.
+- **Price × deposits** (per log point of the price; Otto-3 p, random-walk p):
+
+  | Spec | C11 gold (pp) | Garimpo cases | Incoming cases | Other malaria (placebo) |
+  |---|---|---|---|---|
+  | Baseline | +0.030 (0.13, 0.84) | +0.21 (0.26, 0.78) | +0.24 (0.18, 0.78) | −0.12 (0.48, 0.85) |
+  | Without Roraima | +0.034 (0.12, 0.84) | +0.04 (0.71, 0.86) | +0.07 (0.49, 0.79) | −0.22 (0.15, 0.84) |
+  | 2004–2012 | +0.011 (0.16) | −0.08 (0.47) | −0.05 (0.58) | −0.30 (0.14) |
+  | Deposit trend | −0.023 (0.07, 0.46) | +0.77 (0.01, 0.17) | +0.65 (0.007, 0.18) | +0.49 (0.18, 0.21) |
+  | State×year FE + deposit trend | −0.029 (0.08) | +0.86 (0.01) | +0.73 (0.003) | +0.67 (0.03) |
+
+  - The tin placebo is negative (−0.37 on cases, p 0.07).
+  - The deposit-trend coefficient measures the deviation from a linear trend, i.e. the
+    2019 break. Other malaria moves with it, so it is not a price elasticity.
+- **Inference.** The restricted wild-cluster bootstrap gives p ≈ 0.005 for the C11
+  shares in every specification, including those where the sign flips. With 74
+  exposed municipalities in few basins and zeros elsewhere it over-rejects, so the
+  Otto-3 and random-walk p-values are the ones to read.
+- **Reading.**
+  - Gold geology locates garimpo, but within municipalities garimpo follows a trend
+    (C11) and a post-2019 break concentrated in Roraima (SIVEP), not the gold price.
+  - The price lever is not identified from price × geology.
+  - The 2019 break coincides with the enforcement collapse and the Yanomami rush as
+    much as with the 2020 price step. It persists through the 2023 reversal.
 
 ## Data inventory
 

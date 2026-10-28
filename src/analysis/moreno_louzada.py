@@ -223,12 +223,12 @@ def _demean(values, data, fe, weights):
     return residuals
 
 
-def random_walk_p(data, exposure, price, fe=FE, weighted=True, draws=RI_DRAWS, seed=SEED):
+def random_walk_p(data, exposure, price, fe=FE, weighted=True, draws=RI_DRAWS, seed=SEED, controls=()):
     """Randomization p-value of the interaction over simulated random-walk price paths.
 
     Each draw replaces the price path by a driftless Gaussian random walk with
-    the observed SD of yearly changes; its coefficient (by FWL, for a spec
-    with the interaction as the only regressor) is compared with the observed
+    the observed SD of yearly changes; its coefficient (by FWL, net of the FE
+    and of the `controls` columns of `data`) is compared with the observed
     one. Returns the observed coefficient and the two-sided p-value.
     """
     weights = data["weight"].to_numpy(dtype=np.float64) if weighted else np.ones(len(data))
@@ -245,6 +245,11 @@ def random_walk_p(data, exposure, price, fe=FE, weighted=True, draws=RI_DRAWS, s
         exposure_values[:, None] * paths[:, position].T,
     ])
     residuals = _demean(columns, data, fe, weights)
+    if controls:
+        control_values = _demean(data[list(controls)].to_numpy(dtype=np.float64), data, fe, weights)
+        sqrt_w = np.sqrt(weights)[:, None]
+        coefficients = np.linalg.lstsq(sqrt_w * control_values, sqrt_w * residuals, rcond=None)[0]
+        residuals = residuals - control_values @ coefficients
     y, z = residuals[:, 0], residuals[:, 1:]
     betas = (weights[:, None] * z * y[:, None]).sum(axis=0) / (weights[:, None] * z ** 2).sum(axis=0)
     observed, simulated = betas[0], betas[1:]

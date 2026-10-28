@@ -37,6 +37,10 @@ Other notebooks:
 - `garimpo/01_measurement.ipynb`: how well the C11 layer, SIVEP-Malária and the SGB
   geology measure garimpo (Evidence E3, E5, E6 of
   `output/research/mining_economics_leads.md`).
+- `garimpo/02_price_supply.ipynb`: does garimpo respond to the gold price where there is
+  gold geology? Own never-exploited gold occurrences × the log gold price on C11 garimpo
+  and SIVEP garimpo cases, with an event study (Evidence E10;
+  `src/analysis/garimpo_supply.py`).
 - `health/upstream_mining_municipality_map.ipynb`: municipality upstream-deforestation
   map (moved from `src/analysis/notebooks/`; its `land_cover.feather` input is stale).
 - `pollution/maps.ipynb`: upstream drainage-area maps for four example sensors
@@ -60,6 +64,8 @@ Other notebooks:
   `health/03` and `health/04`; the latter adds the price-exposure variance of
   Moreno-Louzada, Figueira and Picchetti and randomization inference over random-walk
   price paths.
+- `src/analysis/garimpo_supply.py`: the estimator of `garimpo/02`, reusing the
+  Moreno-Louzada helpers (randomization with control terms, e.g. deposit trends).
 - `src/analysis/descriptives.py`: FE demeaning (pyfixest), variation tables, distribution
   tables, binned scatters, effective cluster counts.
 
@@ -85,9 +91,11 @@ nor Moreno-Louzada's gold price × upstream deposits design (`health/04`) gives 
 health effect: both fail the injury placebo. Coefficients are exported to
 `output/analysis/health/`; see [`health/README.md`](health/README.md).
 
-**Garimpo: measurement.** `garimpo/01_measurement` checks the C11 layer, SIVEP-Malária
-and the SGB geology as measures of garimpo. Results are recorded in
-`output/research/mining_economics_leads.md` (Evidence).
+**Garimpo: measurement and supply.** `garimpo/01_measurement` checks the C11 layer,
+SIVEP-Malária and the SGB geology as measures of garimpo. `garimpo/02_price_supply` finds
+that garimpo in gold-geology municipalities does not follow the gold price: C11 garimpo
+grows on a trend, and garimpo cases break upward in 2019, mostly in Roraima. Results are
+recorded in `output/research/mining_economics_leads.md` (Evidence).
 
 ## Sub-basins (Otto Pfafstetter)
 
