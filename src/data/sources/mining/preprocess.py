@@ -9,7 +9,10 @@ import pandas as pd
 from .constants import (
     ADM2_COLUMNS,
     DEFAULT_ADM2_OUTPUT_PATH,
+    DEFAULT_MONTHLY_OUTPUT_PATH,
     GROUPS,
+    MONTH_COLUMN,
+    MONTHLY_COLUMNS,
     MUN_ID_COLUMN,
     MUNICIPALITY_LIST_TABLE,
     MUNICIPALITY_TABLE,
@@ -50,7 +53,8 @@ def _year(dates):
 def plg_processes(processes, titles):
     """One row per process with a PLG request or title.
 
-    `request_year` is the protocol year of PLG requests (`PLG_REQUEST_TYPES`);
+    `request_year` and `request_month` are the protocol year and month (first day) of
+    PLG requests (`PLG_REQUEST_TYPES`);
     `grant_year` the publication year of the earliest PLG title; `expiry_year`
     the latest PLG expiry, or the grant year plus `PLG_TERM_YEARS` when no
     title has one. `area_ha` is the process area; zero or negative areas are
@@ -68,7 +72,9 @@ def plg_processes(processes, titles):
     by_process["expiry_year"] = by_process["expiry_year"].fillna(by_process["grant_year"] + PLG_TERM_YEARS)
 
     result = pd.DataFrame(index=processes.index[is_request].union(by_process.index))
-    result["request_year"] = _year(processes.loc[is_request, "DTProtocolo"]).reindex(result.index)
+    protocol = processes.loc[is_request, "DTProtocolo"]
+    result["request_year"] = _year(protocol).reindex(result.index)
+    result["request_month"] = pd.to_datetime(protocol.str[:7], format="%Y-%m", errors="coerce").reindex(result.index)
     result = result.join(by_process)
     result["area_ha"] = area.where(area > 0).reindex(result.index)
     return result.rename_axis("DSProcesso")
@@ -135,8 +141,21 @@ def adm2_permits(plg, shares, groups, municipalities, years=YEARS):
     return result.reset_index()[list(ADM2_COLUMNS)]
 
 
-def build_adm2_permits(root_dir=".", archive=None, output_path=None):
-    """Read the newest SCM snapshot and write the municipality x year PLG table."""
+def monthly_requests(plg, shares, groups, years=YEARS):
+    """Municipality x month PLG requests by substance group, for months with any request within `years`."""
+    linked = plg.reset_index().merge(shares, on="DSProcesso").dropna(subset=["request_month"])
+    linked = linked[linked["request_month"].dt.year.between(years[0], years[-1])]
+    counts = []
+    for group in GROUPS:
+        members = groups[group]
+        rows = linked if members is None else linked[linked["DSProcesso"].isin(members)]
+        counts.append(rows.groupby([MUN_ID_COLUMN, "request_month"]).size().rename(measure_column("plg_requests", group)))
+    result = pd.concat(counts, axis=1).fillna(0).astype("int64").rename_axis([MUN_ID_COLUMN, MONTH_COLUMN])
+    return result.reset_index()[list(MONTHLY_COLUMNS)]
+
+
+def build_adm2_permits(root_dir=".", archive=None, output_path=None, monthly_output_path=None):
+    """Read the newest SCM snapshot and write the municipality x year PLG table and the monthly requests."""
     archive = Path(archive) if archive else scm_archive_path(root_dir)
     if archive is None:
         raise FileNotFoundError(
@@ -152,14 +171,19 @@ def build_adm2_permits(root_dir=".", archive=None, output_path=None):
     municipalities = read_scm_table(archive, MUNICIPALITY_LIST_TABLE, ["IDMunicipio"])["IDMunicipio"].str[:6]
 
     plg = plg_processes(processes, titles)
-    result = adm2_permits(plg, municipality_shares(links), group_processes(substances),
-                          set(municipalities[municipalities.str.fullmatch(r"\d{6}", na=False)]))
+    shares, groups = municipality_shares(links), group_processes(substances)
+    result = adm2_permits(plg, shares, groups, set(municipalities[municipalities.str.fullmatch(r"\d{6}", na=False)]))
+    monthly = monthly_requests(plg, shares, groups)
 
     resolved_output_path = Path(root_dir) / (output_path or DEFAULT_ADM2_OUTPUT_PATH)
     resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
     result.to_parquet(resolved_output_path, index=False)
+    resolved_monthly_path = Path(root_dir) / (monthly_output_path or DEFAULT_MONTHLY_OUTPUT_PATH)
+    monthly.to_parquet(resolved_monthly_path, index=False)
     logger.info(
-        "Wrote ADM2 PLG permits to %s (shape=%s; %d PLG processes, %d with a grant)",
-        resolved_output_path, result.shape, len(plg), int(plg["grant_year"].notna().sum()),
+        "Wrote ADM2 PLG permits to %s (shape=%s; %d PLG processes, %d with a grant) and monthly requests to %s "
+        "(shape=%s)",
+        resolved_output_path, result.shape, len(plg), int(plg["grant_year"].notna().sum()), resolved_monthly_path,
+        monthly.shape,
     )
     return result

@@ -576,6 +576,19 @@ Semantics:
 - Zero or negative process areas are treated as missing (area 0).
 - `adm2_panel` joins every column.
 
+### `data/mining/processed/mining_requests_monthly.parquet`
+
+One row per (`mun_id`, `month`) with at least one PLG request, 1985–2026;
+months without a request are absent. `month` is the first day of the protocol
+month (timestamp).
+
+- `plg_requests_all`, `plg_requests_gold`, `plg_requests_tin`: the requests of
+  `mining_permits_adm2`, by protocol month. Summed over a year's months they
+  give the yearly table's `plg_requests_<g>`.
+
+Not joined into `adm2_panel`; the quarterly timing analysis of lead 1 reads it
+directly (`src/analysis/garimpo_laundering.py`).
+
 ## Enforcement Outputs
 
 Produced by `src.data.sources.enforcement` from IBAMA's Fiscalização open data

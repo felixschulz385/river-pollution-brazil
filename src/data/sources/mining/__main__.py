@@ -25,12 +25,14 @@ def configure_parser(parser, include_action=True):
     parser.add_argument("--root-dir", default=".")
     parser.add_argument("--archive", default=None, help="SCM microdata zip (default: the newest snapshot)")
     parser.add_argument("--adm2-output", default=None)
+    parser.add_argument("--monthly-output", default=None)
     return parser
 
 
 def run(args):
     """Execute the requested mining action for parsed ``args``."""
-    Mining(root_dir=args.root_dir).preprocess(archive=args.archive, adm2_output_path=args.adm2_output)
+    Mining(root_dir=args.root_dir).preprocess(archive=args.archive, adm2_output_path=args.adm2_output,
+                                                monthly_output_path=args.monthly_output)
 
 
 def main():

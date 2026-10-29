@@ -302,7 +302,8 @@ downloaded in a browser and placed in
 python3 -m src.cli data preprocess --source mining --slurm
 ```
 
-Output: `data/mining/processed/mining_permits_adm2.parquet`.
+Outputs: `data/mining/processed/mining_permits_adm2.parquet` (municipality × year) and
+`data/mining/processed/mining_requests_monthly.parquet` (requests by municipality and protocol month).
 
 ### Enforcement
 

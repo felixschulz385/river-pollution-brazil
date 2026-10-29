@@ -5,9 +5,9 @@ import zipfile
 import pandas as pd
 import pytest
 
-from src.data.sources.mining.constants import ADM2_COLUMNS, scm_archive_path
+from src.data.sources.mining.constants import ADM2_COLUMNS, DEFAULT_MONTHLY_OUTPUT_PATH, MONTHLY_COLUMNS, scm_archive_path
 from src.data.sources.mining.preprocess import build_adm2_permits
-from src.data.verification.sources import _mining_permit_checks
+from src.data.verification.sources import _mining_monthly_checks, _mining_permit_checks
 
 
 def _write_archive(path):
@@ -94,6 +94,23 @@ def test_output_is_a_full_zero_filled_grid_that_passes_verification(permits):
     assert result.loc["150030"].sum().sum() == 0  # municipality without processes
     assert scm_archive_path(root).name == "microdados-scm.zip"
     assert all(check.ok for check in _mining_permit_checks(result.reset_index()))
+
+
+def test_monthly_requests_by_protocol_month_sum_to_the_years(permits):
+    root, result = permits
+    monthly = pd.read_parquet(root / DEFAULT_MONTHLY_OUTPUT_PATH)
+    keyed = monthly.set_index(["mun_id", "month"])
+
+    assert list(monthly.columns) == list(MONTHLY_COLUMNS)
+    assert len(monthly) == 3  # the gold request in each of its municipalities and the tin request
+    assert keyed.loc[("150020", pd.Timestamp("2012-05-01")), "plg_requests_gold"] == 1
+    assert keyed.loc[("110001", pd.Timestamp("2013-08-01")), ["plg_requests_all", "plg_requests_gold",
+                                                              "plg_requests_tin"]].tolist() == [1, 0, 1]
+    assert all(check.ok for check in _mining_monthly_checks(monthly, result.reset_index()))
+
+    monthly.loc[0, "plg_requests_all"] += 1
+    failed = {check.name for check in _mining_monthly_checks(monthly, result.reset_index()) if not check.ok}
+    assert failed == {"months_sum_to_years"}
 
 
 def test_verification_flags_groups_exceeding_all():

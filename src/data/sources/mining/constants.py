@@ -64,7 +64,13 @@ ADM2_COLUMNS = (
     *(measure_column(measure, group) for group in GROUPS for measure in MEASURES),
 )
 
+# Municipality x month PLG requests (by protocol date), for timing around the
+# July 2013 and April 2023 policy dates; months without a request are absent.
+MONTH_COLUMN = "month"
+MONTHLY_COLUMNS = (MUN_ID_COLUMN, MONTH_COLUMN, *(measure_column("plg_requests", group) for group in GROUPS))
+
 DEFAULT_ADM2_OUTPUT_PATH = str(processed_dir(".", "mining") / "mining_permits_adm2.parquet")
+DEFAULT_MONTHLY_OUTPUT_PATH = str(processed_dir(".", "mining") / "mining_requests_monthly.parquet")
 
 
 def mining_dir(root_dir: str | Path = ".") -> Path:

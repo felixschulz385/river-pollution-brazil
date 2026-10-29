@@ -1514,10 +1514,62 @@ def _mining_permit_checks(frame) -> list[CheckResult]:
     return checks
 
 
-def _mining_check_outputs(root_dir) -> list[OutputArtifactCheck]:
-    from src.data.sources.mining.constants import DEFAULT_ADM2_OUTPUT_PATH
+def _mining_monthly_checks(frame, yearly=None) -> list[CheckResult]:
+    """Keys unique, counts positive somewhere, groups within all, and months summing to the yearly requests."""
+    from src.data.sources.mining.constants import (
+        GROUPS,
+        MONTH_COLUMN,
+        MONTHLY_COLUMNS,
+        MUN_ID_COLUMN,
+        SUBSTANCE_GROUPS,
+        YEAR_COLUMN,
+        measure_column,
+    )
 
-    return [_artifact_check("mining_permits_adm2", Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH, _mining_permit_checks)]
+    checks = [check_required_columns(frame, list(MONTHLY_COLUMNS)), _non_empty_check(frame)]
+    if not set(MONTHLY_COLUMNS) <= set(frame.columns):
+        return checks
+    duplicates = int(frame.duplicated([MUN_ID_COLUMN, MONTH_COLUMN]).sum())
+    checks.append(CheckResult(
+        name="unique:mun_id,month", ok=duplicates == 0,
+        message="All (mun_id, month) keys unique." if duplicates == 0 else f"{duplicates} duplicate keys.",
+    ))
+    counts =[measure_column("plg_requests", group) for group in GROUPS]
+    sparse = bool((frame[counts] >= 0).all().all() and (frame[measure_column("plg_requests", "all")] > 0).all())
+    checks.append(CheckResult(
+        name="non_negative_sparse", ok=sparse,
+        message="Counts non-negative; every row has a request." if sparse
+        else "Negative counts or rows without a request.",
+    ))
+    exceeding = [group for group in SUBSTANCE_GROUPS
+                 if (frame[measure_column("plg_requests", group)] > frame[measure_column("plg_requests", "all")]).any()]
+    checks.append(CheckResult(
+        name="groups_within_all", ok=not exceeding,
+        message="Substance groups never exceed all requests." if not exceeding else f"Exceed all: {exceeding}",
+    ))
+    if yearly is not None and set(counts) <= set(yearly.columns):
+        by_year = frame.groupby([frame[MUN_ID_COLUMN], frame[MONTH_COLUMN].dt.year.rename(YEAR_COLUMN)])[counts].sum()
+        expected = yearly.set_index([MUN_ID_COLUMN, YEAR_COLUMN])[counts]
+        expected = expected[expected.sum(axis=1) > 0]
+        aligned = by_year.reindex(expected.index.union(by_year.index), fill_value=0)
+        mismatched = int((aligned != expected.reindex(aligned.index, fill_value=0)).any(axis=1).sum())
+        checks.append(CheckResult(
+            name="months_sum_to_years", ok=mismatched == 0,
+            message="Monthly requests sum to the yearly table." if mismatched == 0
+            else f"{mismatched} municipality-years whose months do not sum to the yearly requests.",
+        ))
+    return checks
+
+
+def _mining_check_outputs(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.mining.constants import DEFAULT_ADM2_OUTPUT_PATH, DEFAULT_MONTHLY_OUTPUT_PATH
+
+    yearly = _safe_read_parquet(Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH)
+    return [
+        _artifact_check("mining_permits_adm2", Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH, _mining_permit_checks),
+        _artifact_check("mining_requests_monthly", Path(root_dir) / DEFAULT_MONTHLY_OUTPUT_PATH,
+                        lambda frame: _mining_monthly_checks(frame, yearly)),
+    ]
 
 
 def _mining_check_fetched(root_dir) -> list[OutputArtifactCheck]:
@@ -1531,10 +1583,15 @@ def _mining_check_fetched(root_dir) -> list[OutputArtifactCheck]:
 
 
 def _mining_fingerprint_paths(root_dir) -> list[Path]:
-    from src.data.sources.mining.constants import DEFAULT_ADM2_OUTPUT_PATH, scm_archive_path
+    from src.data.sources.mining.constants import (
+        DEFAULT_ADM2_OUTPUT_PATH,
+        DEFAULT_MONTHLY_OUTPUT_PATH,
+        scm_archive_path,
+    )
 
     archive = scm_archive_path(root_dir)
-    return [*([archive] if archive else []), Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH]
+    return [*([archive] if archive else []), Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH,
+            Path(root_dir) / DEFAULT_MONTHLY_OUTPUT_PATH]
 
 
 # --------------------------------------------------------------------------
