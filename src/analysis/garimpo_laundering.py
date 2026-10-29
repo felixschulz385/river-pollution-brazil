@@ -22,6 +22,12 @@ of the other controls. Across all Legal Amazon municipalities the permutation
 is not valid (IGD municipalities are garimpo regions with their own trends, and
 it rejects for the non-garimpo malaria placebo); within municipalities with
 gold occurrences ("gold municipalities only") it is the binding test.
+
+The permit outcomes are also read by quarter (`mining`'s monthly requests): an
+event study of IGD x quarter around the law (2013Q3) and the suspension
+(2023Q2), and a scan of IGD x post-q over candidate break quarters q. The
+least-squares break date is the q with the smallest residual sum of squares;
+it is the law's quarter if the law is what moved the requests.
 """
 
 from __future__ import annotations
@@ -32,6 +38,7 @@ import pandas as pd
 from src.analysis import garimpo_supply as S
 from src.analysis import moreno_louzada as M
 from src.analysis.inference import wild_cluster_bootstrap
+from src.data.sources.mining.constants import DEFAULT_MONTHLY_OUTPUT_PATH
 
 YEARS = S.YEARS
 C11_YEARS = S.C11_YEARS
@@ -45,6 +52,13 @@ PRICE = S.PRICE
 DEPOSITS = S.EXPOSURE  # never-exploited gold anywhere in the municipality
 RI_DRAWS = 999
 RI_CHUNK = 100
+
+QUARTERS = ("2009Q1", "2025Q4")
+LAW_QUARTER = "2013Q3"  # Lei 12.844 of 19 July 2013
+REVERSAL_QUARTER = "2023Q2"  # STF injunction of April 2023
+BASE_QUARTER = "2013Q2"
+QUARTER_FE = "mun_id + quarter_id"
+SCAN = ("2010Q1", "2022Q4")  # candidate break quarters, scanned on the quarters before the reversal
 
 IGD = "igd"
 EXPOSURES = {
@@ -287,3 +301,58 @@ def sample_table(frame):
         "share in IGD municipalities ": float(requests.reindex(igd).sum() / requests.sum()),
     })
     return pd.Series(rows)
+
+
+def quarterly_requests(frame, path=None, quarters=QUARTERS):
+    """Municipality x quarter gold PLG requests (zeros filled) for `frame`'s municipalities, with their exposures."""
+    path = path or M.PROJECT_ROOT / DEFAULT_MONTHLY_OUTPUT_PATH
+    monthly = pd.read_parquet(path, columns=["mun_id", "month", "plg_requests_gold"])
+    municipalities = frame.drop_duplicates("mun_id").set_index("mun_id")[
+        [*EXPOSURES, TIN_IGD, DEPOSITS, S.ALL_GOLD_EXPOSURE, CLUSTER]
+    ]
+    monthly = monthly[monthly["mun_id"].isin(municipalities.index)]
+    counts = monthly.groupby([monthly["mun_id"], monthly["month"].dt.to_period("Q").rename("quarter")])[
+        "plg_requests_gold"].sum()
+    grid = pd.MultiIndex.from_product(
+        [municipalities.index, pd.period_range(*quarters, freq="Q")], names=["mun_id", "quarter"]
+    )
+    data = counts.reindex(grid, fill_value=0).rename("plg_requests_gold").reset_index()
+    data = data.join(municipalities, on="mun_id")
+    data["quarter_id"] = data["quarter"].astype(str)
+    data["y"] = np.log1p(data["plg_requests_gold"])
+    data["weight"] = 1.0
+    return data.dropna(subset=[CLUSTER]).reset_index(drop=True)
+
+
+def quarterly_event_study(data, exposure=IGD, base=BASE_QUARTER, deposit_only=False):
+    """Coefficients of exposure x quarter (base quarter omitted), municipality and quarter FE, Otto-3 SEs."""
+    data = data[data[S.ALL_GOLD_EXPOSURE] > 0].copy() if deposit_only else data.copy()
+    base = pd.Period(base, freq="Q")
+    terms = {}
+    for quarter in sorted(data["quarter"].unique()):
+        if quarter != base:
+            name = f"q{quarter}"
+            data[name] = data[exposure] * data["quarter"].eq(quarter)
+            terms[name] = quarter
+    tidy = M.estimate(data, list(terms), fe=QUARTER_FE, weighted=False).tidy()
+    rows = [{"quarter": base, "estimate": 0.0, "se": 0.0}]
+    rows += [{"quarter": quarter, "estimate": tidy.loc[name, "Estimate"], "se": tidy.loc[name, "Std. Error"]}
+             for name, quarter in terms.items()]
+    return pd.DataFrame(rows).sort_values("quarter").assign(exposure=exposure).reset_index(drop=True)
+
+
+def break_scan(data, exposure=IGD, candidates=SCAN, deposit_only=False):
+    """exposure x post-q for each candidate break quarter q, on the quarters before the reversal, with its SSR."""
+    data = data[data["quarter"] < pd.Period(REVERSAL_QUARTER, freq="Q")]
+    if deposit_only:
+        data = data[data[S.ALL_GOLD_EXPOSURE] > 0]
+    data = data.copy()
+    rows = []
+    for candidate in pd.period_range(*candidates, freq="Q"):
+        data["step"] = data[exposure] * (data["quarter"] >= candidate)
+        model = M.estimate(data, ["step"], fe=QUARTER_FE, weighted=False)
+        tidy = model.tidy()
+        rows.append({"break": candidate, "estimate": tidy.loc["step", "Estimate"],
+                     "se": tidy.loc["step", "Std. Error"], "t": tidy.loc["step", "t value"],
+                     "ssr": float((model.resid() ** 2).sum())})
+    return pd.DataFrame(rows).assign(exposure=exposure)

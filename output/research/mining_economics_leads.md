@@ -62,11 +62,14 @@ relapse are counted?
     break upward in 2019, mostly in Roraima.
   - The price lever is therefore not identified from price × geology; the policy dates
     are ([E10](#e10-garimpo-supply-and-the-gold-price)).
-- **The laundering rules move permits, not measured garimpo.**
+- **The 2013 laundering rule shows no break; its 2023 suspension may show in permits.**
   - IGD is thin: 27 Legal Amazon municipalities have never-exploited gold inside
     protected areas in force by 2012. They hold 42% of garimpo cases.
-  - Gold PLG requests rise there after the 2013 good-faith rule (+0.49 log points) and
-    fall after its 2023 suspension (−0.48). The rise passes every inference.
+  - By year, gold PLG requests there are higher after the 2013 good-faith rule (+0.49
+    log points) and lower after its 2023 suspension (−0.48).
+  - By quarter, the requests do not move when the rule starts. IGD's share of Legal
+    Amazon requests is lowest in the law's quarter, the gap already rises before it,
+    and the best-fitting break is 2019Q3. The post-2023 fall is the clearer date.
   - C11 garimpo and garimpo cases do not follow the dates. C11 follows a smooth trend.
     Cases follow the 2019 break, which non-garimpo malaria shares, and keep rising
     after 2023 ([E11](#e11-garimpo-and-the-laundering-rules)).
@@ -426,14 +429,16 @@ X_mt = β_13·(IGD_m × post-2013_t) + β_23·(IGD_m × post-2023_t)
     break has to be read against the enforcement collapse (lead 3) as well as the
     price.
 - **The policy dates, tested** ([E11](#e11-garimpo-and-the-laundering-rules)).
-  - Gold PLG requests in IGD municipalities follow both dates: up after 2013, down after
-    2023.
-  - C11 garimpo and SIVEP garimpo cases do not. The case series is dominated by the
-    2019 break, and the outcome placebo moves with it.
-  - So far, the laundering rules act on the paper trail (permits) rather than on
-    measured mining. That is what laundering on paper predicts if the illegal output
-    was already there. Whether output rose needs an activity measure that is not driven
-    by the 2019 malaria break.
+  - Gold PLG requests in IGD municipalities are higher after 2013 and lower after 2023
+    by year. By quarter, they do not move when the 2013 rule starts: the gap rises
+    before it, and the best-fitting break is 2019Q3. The fall from 2023 is the clearer
+    date, though in the full sample it starts in 2023Q1, before the April suspension.
+  - C11 garimpo and SIVEP garimpo cases do not follow the dates. The case series is
+    dominated by the 2019 break, and the outcome placebo moves with it.
+  - So the 2013 rule is not identified as a break in any outcome. IGD municipalities
+    diverge from 2019, together with the case break and the enforcement collapse, so
+    the 2019–20 shift is the event to explain. Whether output responded to the 2023
+    suspension needs an activity measure that is not driven by the 2019 malaria break.
 - **Ghost permits as heterogeneity.** Permit area that declares gold sales but shows
   little mining footprint before 2013 is a mechanism test.
   - The Monitor da Mineração's MEND flag (mining expected but not detected) is a
@@ -820,7 +825,7 @@ The ADM2 panel carries:
      819 (2023), 484 (2024). Both policy dates show in the requests.
    - Still to add:
      - the dated events (`ProcessoEvento`, 1.1 GB): rejections, cancellations and
-       forfeitures, and monthly timing around July 2013 and April 2023;
+       forfeitures (requests by protocol month are in `mining_requests_monthly`);
      - the Monitor da Mineração layer: polygons, and the MEND flag for ghost permits.
 2. **Lead 1 supply estimates.** The gold price in reais (`commodity_prices`), the
    upstream-reach geology (`geology --product upstream`), IGD (`protected_areas` and
@@ -828,11 +833,9 @@ The ADM2 panel carries:
    ([E10](#e10-garimpo-supply-and-the-gold-price)) are in place. Price × deposits does
    not identify a supply elasticity, so the estimates rest on the policy dates.
    - The IGD × post-2013 and × post-2023 estimates are run
-     ([E11](#e11-garimpo-and-the-laundering-rules)). Permits respond; C11 and the
-     cases do not.
+     ([E11](#e11-garimpo-and-the-laundering-rules)). Permits respond by year but show no
+     break at the 2013 rule by quarter; C11 and the cases do not respond.
    - Still needed:
-     - the permit events and monthly timing (`mining`), to check that the request rise
-       starts after July 2013;
      - a way to separate the 2019–20 break in garimpo cases from the enforcement
        collapse (the `enforcement` counts) and from the Roraima rush;
      - an activity measure for 2020–24 (VIIRS, step 8), since C11 stops in 2019 and
@@ -1291,15 +1294,31 @@ tables in `output/analysis/garimpo/laundering/`.*
   and within gold municipalities for its post-2013 term (0.04). IGD municipalities are
   not exchangeable with others for the malaria outcomes. For the permit outcomes the
   permutation agrees with the Otto-3 and bootstrap p-values.
+- **Timing of the requests** (`mining_requests_monthly`, by protocol quarter, 2009–2025;
+  IGD × quarter relative to 2013Q2, municipality and quarter FE):
+  - Legal Amazon gold requests double in 2013, but the surge runs from 2012Q4 to 2013Q3
+    and sits in other deposit municipalities (406 in 2013Q2, before the law). IGD's
+    share is 8–12% in 2009–14, lowest in 2013Q3 (2.6%), 19–27% in 2018–22 and 8–16% in
+    2023–25.
+  - The IGD gap rises from −0.38 (2009) to −0.13 (2013) before the law, dips in 2013Q3
+    (−0.27, SE 0.11), stays near −0.11 in 2014–18 apart from a 2015 burst, and is +0.12
+    to +0.21 in 2020–22. It falls to −0.11 in 2023: from 2023Q1 in the full sample,
+    from 2023Q2 among gold municipalities.
+  - A scan of IGD × post-q over 2010Q1–2022Q4 barely discriminates (the SSR ranges
+    over 27 of 2,921). The least-squares break is 2019Q3 in both samples.
+  - Requests come in batches from a few municipalities: Jacareacanga (134 in 2020),
+    Altamira (57 in 2013), Amajari (54 in 2015), São Félix do Xingu.
 - **Reading.**
-  - The rules show up in the paper trail: requests for garimpo permits rise in
-    municipalities with gold inside protected areas when permits can launder their gold,
-    and fall when that route closes. Part of the rise is shared by tin-bearing protected
-    regions.
-  - They do not show up in measured garimpo. C11 follows a trend that ends before 2023,
-    and the case series follows the 2019 break, which non-garimpo malaria shares.
-  - The permit result fits laundering on paper. The output response is not identified
-    with the activity measures available.
+  - The annual post-2013 term in the requests is a slow divergence and a 2019–22 surge,
+    not a response to the good-faith rule: nothing moves in the quarter the rule starts,
+    and the pre-2013 gap was already closing. An IGD trend cuts the term to +0.29. Part of the
+    rise is shared by tin-bearing protected regions.
+  - The fall from 2023 fits the closing of the route, but it starts around the Yanomami
+    emergency (January 2023) as much as the April suspension, and it coincides with the
+    July 2023 electronic invoice for gold (IN RFB 2.138/2023).
+  - Measured garimpo does not follow the dates either. C11 follows a trend that ends
+    before 2023, and the case series follows the 2019 break, which non-garimpo malaria
+    shares.
 
 ## Data inventory
 

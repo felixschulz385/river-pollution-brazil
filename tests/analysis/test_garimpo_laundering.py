@@ -75,3 +75,32 @@ def test_event_study_is_zero_in_the_base_year_and_steps_up_from_2013():
 
     assert study.loc[L.BASE_YEAR, "estimate"] == 0.0
     assert study.loc[2013:, "estimate"].mean() > 0.8 > abs(study.loc[:2011, "estimate"].mean())
+
+
+def _monthly(tmp_path, frame, seed=4):
+    """Monthly gold PLG requests: Poisson(0.3) everywhere, Poisson(2) in IGD municipalities from July 2013."""
+    rng = np.random.default_rng(seed)
+    months = pd.date_range("2009-01-01", "2025-12-01", freq="MS")
+    igd = frame.drop_duplicates("mun_id").set_index("mun_id")[L.IGD]
+    rows = [
+        {"mun_id": mun_id, "month": month,
+         "plg_requests_gold": rng.poisson(2.0 if exposed and month >= pd.Timestamp("2013-07-01") else 0.3)}
+        for mun_id, exposed in igd.items() for month in months
+    ]
+    monthly = pd.DataFrame(rows)
+    path = tmp_path / "monthly.parquet"
+    monthly[monthly["plg_requests_gold"] > 0].to_parquet(path)  # sparse, like the mining output
+    return path
+
+
+def test_quarterly_requests_fill_zeros_and_the_timing_tests_find_the_law_quarter(tmp_path):
+    frame = _frame()
+    frame = frame.assign(**{name: frame[L.IGD] for name in L.EXPOSURES})
+    data = L.quarterly_requests(frame, path=_monthly(tmp_path, frame))
+
+    assert len(data) == 60 * len(pd.period_range(*L.QUARTERS, freq="Q"))
+    study = L.quarterly_event_study(data).set_index("quarter")
+    assert study.loc[pd.Period(L.BASE_QUARTER, freq="Q"), "estimate"] == 0.0
+    assert study.loc["2013Q3":, "estimate"].mean() > 1.0 > abs(study.loc[:"2013Q1", "estimate"].mean())
+    scan = L.break_scan(data).set_index("break")
+    assert scan["ssr"].idxmin() == pd.Period(L.LAW_QUARTER, freq="Q")

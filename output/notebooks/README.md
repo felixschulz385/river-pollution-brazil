@@ -44,8 +44,8 @@ Other notebooks:
 - `garimpo/03_laundering.ipynb`: do garimpo and permits respond to the 2013 good-faith
   rule and its 2023 suspension where gold lies inside protected areas (IGD)? IGD ×
   post-2013 and × post-2023 on C11, SIVEP garimpo cases and gold PLG requests and
-  grants, with an event study and permutation inference (Evidence E11;
-  `src/analysis/garimpo_laundering.py`).
+  grants, with an event study and permutation inference, and the timing of the
+  requests by quarter (Evidence E11; `src/analysis/garimpo_laundering.py`).
 - `health/upstream_mining_municipality_map.ipynb`: municipality upstream-deforestation
   map (moved from `src/analysis/notebooks/`; its `land_cover.feather` input is stale).
 - `pollution/maps.ipynb`: upstream drainage-area maps for four example sensors
@@ -102,9 +102,10 @@ health effect: both fail the injury placebo. Coefficients are exported to
 SIVEP-Malária and the SGB geology as measures of garimpo. `garimpo/02_price_supply` finds
 that garimpo in gold-geology municipalities does not follow the gold price: C11 garimpo
 grows on a trend, and garimpo cases break upward in 2019, mostly in Roraima.
-`garimpo/03_laundering` finds that gold PLG requests rise after the 2013 good-faith rule
-and fall after its 2023 suspension where gold lies inside protected areas, while C11
-garimpo and garimpo cases do not follow those dates. Results are recorded in
+`garimpo/03_laundering` finds that, where gold lies inside protected areas, gold PLG
+requests are higher after the 2013 good-faith rule and lower after its 2023 suspension
+by year, but by quarter they do not move when the rule starts (the best-fitting break
+is 2019Q3). C11 garimpo and garimpo cases do not follow either date. Results are recorded in
 `output/research/mining_economics_leads.md` (Evidence).
 
 ## Sub-basins (Otto Pfafstetter)
