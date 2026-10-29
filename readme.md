@@ -54,7 +54,7 @@ python3 -m src.cli data assemble   --dataset <id>       # join preprocessed sour
 
 `--source` and `--phase` must precede any source-specific flags. `--source`
 is one of `health`, `climate`, `sensor_data`, `land_cover`, `population`,
-`river_network`, `biomes`, `geology`, `malaria`, `commodity_prices`, `mining`. `--phase` only applies to sources whose
+`river_network`, `biomes`, `geology`, `malaria`, `commodity_prices`, `mining`, `enforcement`. `--phase` only applies to sources whose
 preprocessing has two stages (`climate`, `land_cover`): `extract` (raw →
 per-source processed output) and `aggregate` (roll-up into sensor/ADM2
 upstream panels). `sensor_data` has a single preprocess step that does both
@@ -283,6 +283,23 @@ python3 -m src.cli data preprocess --source mining --slurm
 ```
 
 Output: `data/mining/processed/mining_permits_adm2.parquet`.
+
+### Enforcement
+
+IBAMA's Fiscalização open data: fines, embargoes, seizures and destruction
+terms, cleaned into one record table (no personal data) with mining and garimpo
+flags from the descriptions, and counted per municipality and year. The portal
+(`dadosabertos.ibama.gov.br`) blocks requests from outside Brazil, so the files
+are downloaded over a Brazilian connection and placed, with their provenance,
+schema and checksum files, in `data/enforcement/raw/ibama_<YYYY-MM-DD>/`; the
+newest complete snapshot is used.
+
+```bash
+python3 -m src.cli data preprocess --source enforcement --slurm
+```
+
+Outputs: `data/enforcement/processed/ibama_records.parquet` and
+`data/enforcement/processed/enforcement_adm2.parquet`.
 
 ## Analysis Workflow
 

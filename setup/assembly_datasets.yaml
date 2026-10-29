@@ -728,6 +728,49 @@ datasets:
           - plg_grants_tin
           - plg_active_tin
           - plg_active_area_ha_tin
+      # IBAMA enforcement: fines, embargoes, seizures and destruction terms by
+      # municipality and year, for all records and those classed as mining and
+      # garimpo from their descriptions. The table lists municipality-years with
+      # a record, so each action is 0 elsewhere from the year it is recorded
+      # until the last full year of the snapshot, and missing before.
+      - name: enforcement_fines_adm2
+        path: data/enforcement/processed/enforcement_adm2.parquet
+        join_keys: [mun_id, year]
+        fill: {value: 0, years: [1996, 2025]}
+        variables:
+          - ibama_fines_all
+          - ibama_fine_value_brl_all
+          - ibama_fines_mining
+          - ibama_fine_value_brl_mining
+          - ibama_fines_garimpo
+          - ibama_fine_value_brl_garimpo
+      - name: enforcement_embargoes_adm2
+        path: data/enforcement/processed/enforcement_adm2.parquet
+        join_keys: [mun_id, year]
+        fill: {value: 0, years: [2000, 2025]}
+        variables:
+          - ibama_embargoes_all
+          - ibama_embargo_area_ha_all
+          - ibama_embargoes_mining
+          - ibama_embargo_area_ha_mining
+          - ibama_embargoes_garimpo
+          - ibama_embargo_area_ha_garimpo
+      - name: enforcement_seizures_adm2
+        path: data/enforcement/processed/enforcement_adm2.parquet
+        join_keys: [mun_id, year]
+        fill: {value: 0, years: [2005, 2025]}
+        variables:
+          - ibama_seizures_all
+          - ibama_seizures_mining
+          - ibama_seizures_garimpo
+      - name: enforcement_destructions_adm2
+        path: data/enforcement/processed/enforcement_adm2.parquet
+        join_keys: [mun_id, year]
+        fill: {value: 0, years: [2014, 2025]}
+        variables:
+          - ibama_destructions_all
+          - ibama_destructions_mining
+          - ibama_destructions_garimpo
       # SIVEP-Malária positives by infection (`inf_`), residence (`res_`) and
       # notification (`noti_`) municipality. The table lists only
       # municipality-years with a record, so the rest of 2004-2024 is 0;

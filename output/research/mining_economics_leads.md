@@ -69,8 +69,9 @@ relapse are counted?
 **Open before the design is final.**
 
 - A novelty check on malaria importation by miners.
-- IGD (FUNAI and CNUC boundaries) and IBAMA enforcement data, for lead 1's exposure
-  and for separating the 2019 break from the enforcement collapse.
+- IGD (FUNAI and CNUC boundaries), for lead 1's exposure.
+- Separating the 2019 break from the enforcement collapse, with the IBAMA records
+  (`enforcement`).
 
 ## The paper
 
@@ -580,7 +581,7 @@ ratio for lead 3 directly.
   - λ_t: policy dates [to verify], plus gold-buying points (DTVM/PCO) for variation
     across sites [to add];
   - q_i: SGB gold occurrences [in the pipeline, `geology`];
-  - e_it: IBAMA seizures and equipment destruction [to add];
+  - e_it: IBAMA seizures and equipment destruction [in the pipeline, `enforcement`];
   - c_i: river distances [in the pipeline], roads and airstrips [to add];
   - the destination logit: the SIVEP flow table [in the pipeline].
 - **Block 2 (residents):**
@@ -601,7 +602,8 @@ ratio for lead 3 directly.
 
   The spread test also needs a downstream aggregation of mining, next to the upstream
   one. That is a computation, not new data.
-- **Block 5 (relapse):** IBAMA enforcement timing [to add]; optionally INPE DETER mining
+- **Block 5 (relapse):** IBAMA enforcement timing [in the pipeline, `enforcement`, dated
+  records with coordinates]; optionally INPE DETER mining
   alerts for re-entry within a year.
 
 **Threats.**
@@ -669,10 +671,11 @@ elsewhere, where does it go, and does the health burden move with it?
 
 **Data.**
 
-- **To add:** IBAMA fines, embargoes and seizures (geocoded, public), with operation
-  dates from official reporting.
-- **In the pipeline:** C11, SIVEP (counts and flows), the river network for travel
-  distances.
+- **In the pipeline:** IBAMA fines, embargoes, seizures and destruction terms
+  (`enforcement`: dated, mostly geocoded, with operation codes and names), C11, SIVEP
+  (counts and flows), the river network for travel distances.
+- **To add:** operation dates and areas from official reporting, to group records into
+  operations where the operation code is missing.
 
 **Threats.**
 
@@ -778,7 +781,8 @@ The ADM2 panel carries:
 - the SGB geology, local and upstream;
 - the malaria cases;
 - the SINASC anomaly and APGAR counts and the infant deaths by ICD-10 chapter;
-- the gold price in reais.
+- the gold price in reais;
+- the PLG permits (`mining`) and the IBAMA enforcement counts (`enforcement`).
 
 1. **Mining permits.** The `mining` source counts PLG requests, first grants and PLGs
    in force (with areas) by municipality and year, for all substances, gold and tin,
@@ -797,13 +801,28 @@ The ADM2 panel carries:
    - IGD (needs FUNAI and CNUC boundaries);
    - the IGD × post-2013 and × post-2023 terms on C11 and SIVEP, by group;
    - a way to separate the 2019–20 break in garimpo cases from the enforcement collapse
-     (lead 3's IBAMA data) and from the Roraima rush.
+     (the `enforcement` counts) and from the Roraima rush.
 3. **Lead 2 first pass.**
    - Prediction 5: local vs. incoming cases on price × deposits and on drought.
    - Prediction 2: a downstream aggregation of mining for the spread test.
 4. **Malaria importation.** Novelty check first, then the test with the flow table.
-5. **Lead 3.** IBAMA enforcement data, substitute sites, displacement ratio, the crew
-   logit.
+5. **Lead 3.** The `enforcement` source holds IBAMA's fines, embargoes, seizures and
+   destruction terms as dated records (no personal data) and as municipality × year
+   counts in `adm2_panel`. Each record is classed as mining or garimpo from its
+   description and its items.
+   - Legal Amazon garimpo actions:
+     - seizures: 8–71 a year in 2008–16, 124 (2017), 46 (2019), 87 (2020), then 207
+       (2021), 404 (2023), 572 (2024) and 517 (2025);
+     - destruction terms (recorded from 2014): 28 (2019), 158 (2021), 322 (2023), 508 (2024),
+       487 (2025);
+     - garimpo fines are fewer: 25 (2019), 216 (2023), 293 (2024).
+   - Recorded garimpo enforcement is small before 2021 and falls only from the 2017
+     peak, so the 2019 break in garimpo cases has no matching collapse in these counts.
+     The surge starts in 2021 and is mostly from 2023, in Pará, Roraima, Mato Grosso and
+     Amazonas.
+   - Over 90% of garimpo seizures and destructions carry coordinates. Destruction terms
+     rarely reference a fine, so they link to the rest of an operation by operation code.
+   - Still to do: substitute sites, the displacement ratio and the crew logit.
 6. **Lead 4.** FUNAI stages, CNUC dates, anticipation around PL 191/2020.
 7. **Optional water outcome.** Station turbidity from 2008, or satellite river
    turbidity, as a pollution outcome of upstream garimpo ([E8](#e8-amazon-station-coverage-for-turbidity)).
@@ -1186,7 +1205,7 @@ tables in `output/analysis/garimpo/price_supply/`.*
 | Gold occurrences, gold provinces and districts | Geological Survey of Brazil (SGB) | deposit quality, IGD, geology control | in pipeline (`geology`); stream-sediment assays not fetched |
 | Mining permits with type, ore, dates, flags | ANM Cadastro Mineiro microdata; MapBiomas Monitor da Mineração | laundering exposure, ghost permits, anticipation | in pipeline (`mining`: PLG requests, grants, PLGs in force); events and the Monitor layer to add |
 | Royalty payments (CFEM) | ANM | declared output | not usable for garimpo (E7) |
-| Fines, embargoes, seizures | IBAMA | enforcement shocks | to add |
+| Fines, embargoes, seizures, destruction terms | IBAMA Fiscalização open data | enforcement shocks, relapse timing | in pipeline (`enforcement`: records and municipality × year counts, mining and garimpo classes); seizures stop in 2026-05 in the current snapshot |
 | Indigenous lands with stage and dates | FUNAI | IGD, lead 4 | to add |
 | Protected areas with creation dates | CNUC | IGD, lead 4 | to add |
 | Gold price | World Bank Pink Sheet × BCB BRL/USD rate | price shock | in pipeline (`commodity_prices`) |

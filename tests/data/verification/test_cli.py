@@ -40,6 +40,7 @@ def test_cli_summary_on_empty_root_reports_not_present_locally(tmp_path):
         "malaria",
         "commodity_prices",
         "mining",
+        "enforcement",
         "population",
         "health",
         "assembly",
@@ -58,6 +59,7 @@ def test_cli_summary_on_empty_root_reports_not_present_locally(tmp_path):
         "malaria",
         "commodity_prices",
         "mining",
+        "enforcement",
         "population",
         "health",
         "assembly",
@@ -82,6 +84,7 @@ def test_cli_summary_on_empty_root_reports_not_present_locally(tmp_path):
         "malaria",
         "commodity_prices",
         "mining",
+        "enforcement",
         "population",
         "health",
     ):

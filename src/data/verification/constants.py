@@ -18,6 +18,7 @@ SOURCES = (
     "malaria",
     "commodity_prices",
     "mining",
+    "enforcement",
     "population",
     "health",
     "assembly",

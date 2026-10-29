@@ -503,3 +503,74 @@ Semantics:
   revoked before its expiry still counts as in force.
 - Zero or negative process areas are treated as missing (area 0).
 - `adm2_panel` joins every column.
+
+## Enforcement Outputs
+
+Produced by `src.data.sources.enforcement` from IBAMA's Fiscalização open data
+(`dadosabertos.ibama.gov.br`), placed by hand in a dated snapshot folder
+`data/enforcement/raw/ibama_<YYYY-MM-DD>/` (the portal blocks requests from
+outside Brazil). The folder's `PROVENANCE.md` and `SCHEMA.md` document the
+download, the formats, the keys and the coverage; the newest complete snapshot
+is read. Tables read: fines (`auto_infracao`, one CSV per year), embargoes
+(`termo_de_embargo`), seizures (`apreensao`) with their seized items (`bem`),
+and destruction terms (`termo_destruicao_inutilizacao`) with their destroyed
+items (`bem_destruido`).
+
+### `data/enforcement/processed/ibama_records.parquet`
+
+One row per fine, embargo, seizure or destruction term that is not cancelled,
+deleted or replaced (`SIT_CANCELADO`/`ST_CANCELADO` = "N"). Names, CPF/CNPJ,
+plates and free text are dropped.
+
+- `action`: `fines`, `embargoes`, `seizures` or `destructions`.
+- `record_id`: `seq:<system ID>`, or `code:<printed code>-<series>` for
+  records from the AIe app without a system ID. Unique within an action.
+- `date`, `year`: the fine, embargo, seizure or destruction date. Dates before
+  1977 or after the snapshot (typos such as 2925) are missing.
+- `mun_id` (6-digit IBGE), `uf`: where the action took place.
+- `lon`, `lat`: the record's point. Pairs outside Brazil's bounding box are
+  swapped back if swapped, and missing otherwise (0/0, typos).
+- `value_brl`: the fine as set by the agent (fines), or the value of the seized
+  or destroyed goods; nominal reais.
+- `area_ha`: embargoed area (embargoes). `lifted_date`: date the embargo was
+  lifted, if it was.
+- `items`: number of seized or destroyed items on the term (seizures and
+  destructions).
+- `operation`: operation name; `operation_code`, `operation_seq`: the
+  enforcement action's code and system ID, which link records of one operation
+  (destruction terms rarely reference a fine, as equipment is often destroyed
+  with no offender identified).
+- `fine_seq`, `fine_code`: the fine a term references (for fines, their own
+  IDs). IDs are trimmed, upper-cased and stripped of float formatting.
+- `mining`, `garimpo`: mining terms in the description fields (fines: the
+  description and the offence text; terms: their description, complementary
+  information and justification) or in the type and description of the term's
+  items. `garimpo` matches garimp*, ouro, mercúrio or cassiterita; `mining`
+  adds lavra, mineração, minério and extraction of minerals. Text is
+  lower-cased and accent-folded, and names are removed first: places (Ouro
+  Preto, São José do Ouro), farms (Fazenda Estrela de Ouro), the colour, and
+  mercury-vapour lamps. Location fields are not searched, as they carry place
+  names (Lavras, the Transgarimpeira road). A few watercourse names (Igarapé do
+  Ouro) still match. Every garimpo record is a mining record.
+
+### `data/enforcement/processed/enforcement_adm2.parquet`
+
+One row per (`mun_id`, `year`) with at least one located record, up to the
+last full year before the snapshot. For each class `<c>` (`all`, `mining`,
+`garimpo`):
+
+- `ibama_fines_<c>`, `ibama_fine_value_brl_<c>`: fines and their summed value.
+- `ibama_embargoes_<c>`, `ibama_embargo_area_ha_<c>`: embargoes and their
+  summed area.
+- `ibama_seizures_<c>`: seizure terms.
+- `ibama_destructions_<c>`: destruction terms.
+
+Semantics:
+
+- Each action's columns are 0 from the year the action is recorded (fines
+  1996, embargoes 2000, seizures 2005, destruction terms 2014) and missing
+  before. `adm2_panel` joins every column and fills the same years with 0.
+- Seizure records stop when IBAMA's seizure export was last refreshed (2026-05
+  in the 2026-10-29 snapshot); the table's last year is complete for every
+  action.
+- Records count where they took place, by their own municipality code.

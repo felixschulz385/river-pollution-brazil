@@ -1420,6 +1420,130 @@ def _mining_fingerprint_paths(root_dir) -> list[Path]:
 
 
 # --------------------------------------------------------------------------
+# enforcement
+# --------------------------------------------------------------------------
+
+def _enforcement_list_fetched(root_dir, force: bool = False) -> FetchListing:
+    from src.data.sources.enforcement.constants import snapshot_path
+
+    snapshot = snapshot_path(root_dir)
+    present = 1 if snapshot is not None else 0
+    detail = f"IBAMA snapshot {snapshot.name} present." if snapshot else "No IBAMA snapshot (manual placement)."
+    return FetchListing(present=present, expected=1, detail=detail)
+
+
+def _enforcement_record_checks(frame) -> list[CheckResult]:
+    """Record keys unique within each action, and garimpo records a subset of mining records."""
+    from src.data.sources.enforcement.constants import RECORD_COLUMNS
+
+    checks = [check_required_columns(frame, list(RECORD_COLUMNS)), _non_empty_check(frame)]
+    if not set(RECORD_COLUMNS) <= set(frame.columns):
+        return checks
+    duplicates = int(frame.duplicated(["action", "record_id"]).sum())
+    checks.append(CheckResult(
+        name="unique:action,record_id",
+        ok=duplicates == 0,
+        message="All (action, record_id) keys unique." if duplicates == 0 else f"{duplicates} duplicate keys.",
+    ))
+    outside = int((frame["garimpo"] & ~frame["mining"]).sum())
+    checks.append(CheckResult(
+        name="garimpo_within_mining",
+        ok=outside == 0,
+        message="Every garimpo record is a mining record." if outside == 0 else f"{outside} garimpo records not mining.",
+    ))
+    return checks
+
+
+def _enforcement_adm2_checks(frame) -> list[CheckResult]:
+    """Keys unique, values non-negative, missing only before each action's coverage, classes nested."""
+    from src.data.sources.enforcement.constants import (
+        ACTION_MEASURES,
+        ADM2_COLUMNS,
+        COVERAGE_START,
+        MUN_ID_COLUMN,
+        YEAR_COLUMN,
+        action_columns,
+        measure_column,
+    )
+
+    checks = [check_required_columns(frame, list(ADM2_COLUMNS)), _non_empty_check(frame)]
+    if not set(ADM2_COLUMNS) <= set(frame.columns):
+        return checks
+    duplicates = int(frame.duplicated([MUN_ID_COLUMN, YEAR_COLUMN]).sum())
+    checks.append(CheckResult(
+        name="unique:mun_id,year",
+        ok=duplicates == 0,
+        message="All (mun_id, year) keys unique." if duplicates == 0 else f"{duplicates} duplicate keys.",
+    ))
+    values = frame[[column for column in ADM2_COLUMNS if column not in (MUN_ID_COLUMN, YEAR_COLUMN)]]
+    negative = int((values < 0).sum().sum())
+    checks.append(CheckResult(
+        name="non_negative",
+        ok=negative == 0,
+        message="No negative counts or amounts." if negative == 0 else f"{negative} negative values.",
+    ))
+    misplaced = sorted(
+        action for action, start in COVERAGE_START.items()
+        if frame.loc[frame[YEAR_COLUMN] >= start, list(action_columns(action))].isna().any().any()
+        or frame.loc[frame[YEAR_COLUMN] < start, list(action_columns(action))].notna().any().any()
+    )
+    checks.append(CheckResult(
+        name="missing_only_before_coverage",
+        ok=not misplaced,
+        message="Values missing exactly before each action's coverage." if not misplaced
+        else f"Missing values misplaced: {misplaced}",
+    ))
+    exceeding = sorted(
+        measure_column(measure, narrow)
+        for measures in ACTION_MEASURES.values()
+        for measure, _ in measures
+        for narrow, broad in (("mining", "all"), ("garimpo", "mining"))
+        if (frame[measure_column(measure, narrow)] > frame[measure_column(measure, broad)] + 1e-6).any()
+    )
+    checks.append(CheckResult(
+        name="classes_nested",
+        ok=not exceeding,
+        message="Garimpo within mining within all." if not exceeding else f"Exceed the broader class: {exceeding}",
+    ))
+    return checks
+
+
+def _enforcement_check_outputs(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.enforcement.constants import DEFAULT_ADM2_OUTPUT_PATH, DEFAULT_RECORDS_OUTPUT_PATH
+
+    return [
+        _artifact_check("ibama_records", Path(root_dir) / DEFAULT_RECORDS_OUTPUT_PATH, _enforcement_record_checks),
+        _artifact_check("enforcement_adm2", Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH, _enforcement_adm2_checks),
+    ]
+
+
+def _enforcement_check_fetched(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.enforcement.constants import SNAPSHOT_PREFIX, TABLES, raw_dir, snapshot_path
+
+    snapshot = snapshot_path(root_dir)
+    if snapshot is None:
+        return [_missing_artifact("ibama_snapshot", raw_dir(root_dir) / f"{SNAPSHOT_PREFIX}<YYYY-MM-DD>")]
+    return [
+        OutputArtifactCheck(label=f"ibama_{action}", path=snapshot / spec["file"], exists=True,
+                            checks=[check_file_nonempty(snapshot / spec["file"], min_size_bytes=1 << 20)])
+        for action, spec in TABLES.items()
+    ]
+
+
+def _enforcement_fingerprint_paths(root_dir) -> list[Path]:
+    from src.data.sources.enforcement.constants import (
+        DEFAULT_ADM2_OUTPUT_PATH,
+        DEFAULT_RECORDS_OUTPUT_PATH,
+        TABLES,
+        snapshot_path,
+    )
+
+    snapshot = snapshot_path(root_dir)
+    raw = [snapshot / spec["file"] for spec in TABLES.values()] if snapshot else []
+    return [*raw, Path(root_dir) / DEFAULT_RECORDS_OUTPUT_PATH, Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH]
+
+
+# --------------------------------------------------------------------------
 # population
 # --------------------------------------------------------------------------
 
@@ -1876,6 +2000,14 @@ SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
         fingerprint_paths=_mining_fingerprint_paths,
         fetch_method="Manual placement (ANM SCM microdata zip)",
         check_fetched=_mining_check_fetched,
+    ),
+    "enforcement": SourceAdapter(
+        name="enforcement",
+        list_fetched=_enforcement_list_fetched,
+        check_outputs=_enforcement_check_outputs,
+        fingerprint_paths=_enforcement_fingerprint_paths,
+        fetch_method="Manual placement (IBAMA snapshot)",
+        check_fetched=_enforcement_check_fetched,
     ),
     "population": SourceAdapter(
         name="population",
