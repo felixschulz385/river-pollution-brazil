@@ -85,12 +85,16 @@ def test_occurrence_groups_trench_assignment_and_counts(tmp_path):
         {"trench_id": [1, 2], "geometry": [box(-56, -6, -55, -5), box(-55, -6, -54, -5)]}, crs=4326
     )
 
-    occurrences = load_occurrence_groups(gpkg)
+    protected = gpd.GeoDataFrame(
+        {"mining_barred": [True], "in_force_2012": [True], "geometry": [box(-55.45, -5.6, -55.35, -5.4)]}, crs=4326
+    )
+    occurrences = load_occurrence_groups(gpkg, protected)
     trench_ids = assign_trench(occurrences, drainage)
     counts = trench_counts(occurrences, trench_ids)
 
     assert len(occurrences) == 4  # copper is in no group
     assert occurrences["gold_alluvial"].tolist() == [True, False, False, False]
+    assert occurrences["gold_unexploited_protected"].tolist() == [False, True, False, False]
     assert trench_ids.tolist()[:3] == [1, 1, 2] and pd.isna(trench_ids.iloc[3])  # far point dropped
     assert counts.loc[1, ["gold", "gold_garimpo", "gold_unexploited", "tin"]].tolist() == [2, 1, 1, 0]
     assert counts.loc[2, "tin"] == 1

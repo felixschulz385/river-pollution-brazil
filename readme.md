@@ -54,7 +54,7 @@ python3 -m src.cli data assemble   --dataset <id>       # join preprocessed sour
 
 `--source` and `--phase` must precede any source-specific flags. `--source`
 is one of `health`, `climate`, `sensor_data`, `land_cover`, `population`,
-`river_network`, `biomes`, `geology`, `malaria`, `commodity_prices`, `mining`, `enforcement`. `--phase` only applies to sources whose
+`river_network`, `biomes`, `protected_areas`, `geology`, `malaria`, `commodity_prices`, `mining`, `enforcement`. `--phase` only applies to sources whose
 preprocessing has two stages (`climate`, `land_cover`): `extract` (raw →
 per-source processed output) and `aggregate` (roll-up into sensor/ADM2
 upstream panels). `sensor_data` has a single preprocess step that does both
@@ -226,12 +226,29 @@ Current river-network outputs in `data/river_network/processed/` include:
 
 The expected persisted formats are described in `src/data/output_file_formats.md`.
 
+### Protected Areas
+
+Indigenous lands (FUNAI) and conservation units (CNUC) from INPE TerraBrasilis,
+merged into one polygon per area, with whether mining is barred there and
+whether the area was in force by 2012, and their area shares per municipality.
+Geology needs the merged areas, so this source runs first.
+
+```bash
+python3 -m src.cli data fetch      --source protected_areas
+python3 -m src.cli data preprocess --source protected_areas --slurm
+```
+
+Outputs: `data/protected_areas/processed/protected_areas.parquet` and
+`data/protected_areas/processed/protected_areas_adm2.parquet`.
+
 ### Geology
 
 The Geological Survey of Brazil's mineral occurrences and gold provinces and
 districts (`data/geology/raw/sgb_gold.gpkg`), counted per municipality
 (`--product adm2`, the default) or upstream along the river network
-(`--product upstream`, which needs the river network):
+(`--product upstream`, which needs the river network). Occurrences inside
+protected areas that bar mining and were in force by 2012 (lead 1's IGD) are
+counted separately, from the `protected_areas` output:
 
 ```bash
 python3 -m src.cli data fetch      --source geology

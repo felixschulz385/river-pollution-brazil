@@ -14,6 +14,7 @@ SOURCES = (
     "sensor_data",
     "climate",
     "biomes",
+    "protected_areas",
     "geology",
     "malaria",
     "commodity_prices",

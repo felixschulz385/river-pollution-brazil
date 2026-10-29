@@ -69,7 +69,8 @@ relapse are counted?
 **Open before the design is final.**
 
 - A novelty check on malaria importation by miners.
-- IGD (FUNAI and CNUC boundaries), for lead 1's exposure.
+- Stage dates for the Indigenous lands, so that IGD's 2012 cutoff is exact (the
+  layer in the pipeline has the current stage only).
 - Separating the 2019 break from the enforcement collapse, with the IBAMA records
   (`enforcement`).
 
@@ -397,7 +398,13 @@ X_mt = β_13·(IGD_m × post-2013_t) + β_23·(IGD_m × post-2023_t)
   - new PLG grants (ANM event 513).
 - **Exposure:**
   - *IGD:* gold deposits inside protected areas, registered before 2013, in the
-    municipality and upstream along the network.
+    municipality and upstream along the network. In the panel (`protected_areas`,
+    `geology`): never-exploited SGB gold occurrences inside Indigenous lands (declared
+    onward) and integral-protection units or extractive reserves, in force by 2012.
+    - Thin locally: 27 Legal Amazon municipalities, 204 occurrences, mostly in Pará,
+      Roraima and Amapá.
+    - Upstream: 12 municipalities within 50 km, 31 within 200 km, 127 without limit, 73
+      by the Otto-4 rule.
   - *deposits_m:* never-exploited SGB gold occurrences, restricted to the Legal Amazon.
     Occurrences recorded at garimpos or mines are not predetermined ([E6](#e6-sgb-gold-geology)).
 - **By group.** The same equation on local and on incoming cases gives the model's
@@ -589,7 +596,7 @@ ratio for lead 3 directly.
   - fish: upstream mining H_it [C11, in the pipeline]; fishers and seguro-defeso [to add];
   - forest: MapBiomas C10 [in the pipeline];
   - transfers: Bolsa Família [to add];
-  - heterogeneity in κ: FUNAI lands [to add] and the Census Indigenous and riverine
+  - heterogeneity in κ: FUNAI lands [in the pipeline, `protected_areas`] and the Census Indigenous and riverine
     population shares [to add].
 - **Block 3 (wage):** no series exists for informal garimpo work. Census 2010/2022
   garimpeiro occupation counts and formal mining employment in RAIS are proxies;
@@ -742,11 +749,10 @@ demarcation is pending, attract garimpo into Indigenous lands and protected area
 **Data.**
 
 - **To add:**
-  - Indigenous-land boundaries with stage and decree dates (FUNAI);
-  - protected-area boundaries with creation dates (national register of conservation
-    units, CNUC);
+  - the Indigenous lands' stage and decree dates (FUNAI);
   - permit requests over Indigenous lands (ANM microdata and SIGMINE).
-- **In the pipeline:** C11, SIVEP.
+- **In the pipeline:** C11, SIVEP, Indigenous-land boundaries with current stage and
+  conservation units with creation year (`protected_areas`).
 
 **Threats.**
 
@@ -782,7 +788,9 @@ The ADM2 panel carries:
 - the malaria cases;
 - the SINASC anomaly and APGAR counts and the infant deaths by ICD-10 chapter;
 - the gold price in reais;
-- the PLG permits (`mining`) and the IBAMA enforcement counts (`enforcement`).
+- the PLG permits (`mining`) and the IBAMA enforcement counts (`enforcement`);
+- the protected-area shares (`protected_areas`) and IGD, the gold and tin occurrences
+  inside protected areas in force by 2012, local and upstream (`geology`).
 
 1. **Mining permits.** The `mining` source counts PLG requests, first grants and PLGs
    in force (with areas) by municipality and year, for all substances, gold and tin,
@@ -794,11 +802,11 @@ The ADM2 panel carries:
        forfeitures, and monthly timing around July 2013 and April 2023;
      - the Monitor da Mineração layer: polygons, and the MEND flag for ghost permits.
 2. **Lead 1 supply estimates.** The gold price in reais (`commodity_prices`), the
-   upstream-reach geology (`geology --product upstream`) and the price × deposits test
+   upstream-reach geology (`geology --product upstream`), IGD (`protected_areas` and
+   `geology`, local and upstream) and the price × deposits test
    ([E10](#e10-garimpo-supply-and-the-gold-price)) are in place. Price × deposits does
    not identify a supply elasticity, so the estimates rest on the policy dates. Still
    needed:
-   - IGD (needs FUNAI and CNUC boundaries);
    - the IGD × post-2013 and × post-2023 terms on C11 and SIVEP, by group;
    - a way to separate the 2019–20 break in garimpo cases from the enforcement collapse
      (the `enforcement` counts) and from the Roraima rush.
@@ -1206,8 +1214,8 @@ tables in `output/analysis/garimpo/price_supply/`.*
 | Mining permits with type, ore, dates, flags | ANM Cadastro Mineiro microdata; MapBiomas Monitor da Mineração | laundering exposure, ghost permits, anticipation | in pipeline (`mining`: PLG requests, grants, PLGs in force); events and the Monitor layer to add |
 | Royalty payments (CFEM) | ANM | declared output | not usable for garimpo (E7) |
 | Fines, embargoes, seizures, destruction terms | IBAMA Fiscalização open data | enforcement shocks, relapse timing | in pipeline (`enforcement`: records and municipality × year counts, mining and garimpo classes); seizures stop in 2026-05 in the current snapshot |
-| Indigenous lands with stage and dates | FUNAI | IGD, lead 4 | to add |
-| Protected areas with creation dates | CNUC | IGD, lead 4 | to add |
+| Indigenous lands with stage and dates | FUNAI, via INPE TerraBrasilis | IGD, lead 4 | in pipeline (`protected_areas`: boundaries and current stage); stage and decree dates to add |
+| Protected areas with creation dates | CNUC, via INPE TerraBrasilis | IGD, lead 4 | in pipeline (`protected_areas`: boundaries, category, creation year; units up to about 2020) |
 | Gold price | World Bank Pink Sheet × BCB BRL/USD rate | price shock | in pipeline (`commodity_prices`) |
 | Gold-buying points (DTVM/PCO) | ANM, Central Bank | laundering exposure by site | to add |
 | Registered fishers, closed-season payments | fisheries registry, federal transparency portal | fishing dependence | to add |

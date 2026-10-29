@@ -1080,6 +1080,103 @@ def _biomes_fingerprint_paths(root_dir) -> list[Path]:
 
 
 # --------------------------------------------------------------------------
+# protected_areas
+# --------------------------------------------------------------------------
+
+def _protected_areas_list_fetched(root_dir, force: bool = False) -> FetchListing:
+    from src.data.sources.protected_areas.constants import gpkg_path
+
+    path = gpkg_path(root_dir)
+    present = 1 if path.exists() else 0
+    return FetchListing(
+        present=present, expected=1, detail=f"Protected-area GeoPackage {'present' if present else 'missing'} at {path}."
+    )
+
+
+def _protected_area_checks(frame) -> list[CheckResult]:
+    """Columns, unique area IDs, and areas in force by 2012 only among those of known kind."""
+    from src.data.sources.protected_areas.constants import AREA_COLUMNS, KINDS
+
+    checks = [
+        check_required_columns(frame, list(AREA_COLUMNS)),
+        _non_empty_check(frame),
+        _uniqueness_check(frame, "area_id"),
+    ]
+    if "kind" in frame.columns:
+        unknown = sorted(set(frame["kind"]) - set(KINDS))
+        checks.append(CheckResult(
+            name="known_kinds", ok=not unknown,
+            message=f"Unknown kinds: {unknown}" if unknown else "Indigenous lands and conservation units only.",
+        ))
+    return checks
+
+
+def _protected_areas_adm2_checks(frame) -> list[CheckResult]:
+    """Shares in [0, 1], the union at least each kind, and the 2012 areas within all barred areas."""
+    from src.data.sources.protected_areas.constants import (
+        ADM2_COLUMNS,
+        CONSERVATION_SHARE_COLUMN,
+        INDIGENOUS_SHARE_COLUMN,
+        MUN_ID_COLUMN,
+        PROTECTED_2012_SHARE_COLUMN,
+        PROTECTED_SHARE_COLUMN,
+    )
+
+    checks = [
+        check_required_columns(frame, list(ADM2_COLUMNS)),
+        _non_empty_check(frame),
+        _uniqueness_check(frame, MUN_ID_COLUMN),
+    ]
+    if not checks[0].ok:
+        return checks
+    shares = [column for column in ADM2_COLUMNS if column != MUN_ID_COLUMN]
+    checks += [check_value_range(frame, column, lo=0.0, hi=1.0) for column in shares]
+    tolerance = 1e-6
+    nested = (
+        (frame[PROTECTED_SHARE_COLUMN] + tolerance >= frame[[INDIGENOUS_SHARE_COLUMN, CONSERVATION_SHARE_COLUMN]].max(axis=1))
+        & (frame[PROTECTED_2012_SHARE_COLUMN] <= frame[PROTECTED_SHARE_COLUMN] + tolerance)
+    )
+    checks.append(CheckResult(
+        name="shares_nested", ok=bool(nested.all()),
+        message="Union covers each kind; 2012 areas within all." if nested.all()
+        else f"{int((~nested).sum())} municipalities with inconsistent shares.",
+    ))
+    return checks
+
+
+def _protected_areas_check_outputs(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.protected_areas.constants import DEFAULT_ADM2_OUTPUT_PATH, DEFAULT_AREAS_OUTPUT_PATH
+
+    return [
+        _artifact_check("protected_areas", Path(root_dir) / DEFAULT_AREAS_OUTPUT_PATH, _protected_area_checks),
+        _artifact_check("protected_areas_adm2", Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH,
+                        _protected_areas_adm2_checks),
+    ]
+
+
+def _protected_areas_check_fetched(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.protected_areas.constants import LAYERS, gpkg_path, layer_name
+
+    path = gpkg_path(root_dir)
+    if not path.exists():
+        return [_missing_artifact("protected_areas_gpkg", path)]
+    checks = [check_file_nonempty(path, min_size_bytes=1024)]
+    checks += [check_gpkg_layer_readable(path, layer_name(type_name))
+               for type_names in LAYERS.values() for type_name in type_names]
+    return [OutputArtifactCheck(label="protected_areas_gpkg", path=path, exists=True, checks=checks)]
+
+
+def _protected_areas_fingerprint_paths(root_dir) -> list[Path]:
+    from src.data.sources.protected_areas.constants import (
+        DEFAULT_ADM2_OUTPUT_PATH,
+        DEFAULT_AREAS_OUTPUT_PATH,
+        gpkg_path,
+    )
+
+    return [gpkg_path(root_dir), Path(root_dir) / DEFAULT_AREAS_OUTPUT_PATH, Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH]
+
+
+# --------------------------------------------------------------------------
 # geology
 # --------------------------------------------------------------------------
 
@@ -1968,6 +2065,14 @@ SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
         fingerprint_paths=_biomes_fingerprint_paths,
         fetch_method="Download (IBGE shapefile, HTTP)",
         check_fetched=_biomes_check_fetched,
+    ),
+    "protected_areas": SourceAdapter(
+        name="protected_areas",
+        list_fetched=_protected_areas_list_fetched,
+        check_outputs=_protected_areas_check_outputs,
+        fingerprint_paths=_protected_areas_fingerprint_paths,
+        fetch_method="Download (INPE TerraBrasilis WFS)",
+        check_fetched=_protected_areas_check_fetched,
     ),
     "geology": SourceAdapter(
         name="geology",

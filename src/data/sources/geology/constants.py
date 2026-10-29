@@ -51,10 +51,16 @@ STATUS_COLUMNS = {
 }
 TIN_OCCURRENCE_COLUMN = "tin_occurrences"
 TIN_UNEXPLOITED_COLUMN = "tin_occurrences_unexploited"
+# Occurrences inside protected areas that bar mining and were in force by 2012
+# (`protected_areas`): lead 1's IGD exposure and its tin placebo.
+GOLD_PROTECTED_COLUMN = "gold_occurrences_protected"
+GOLD_UNEXPLOITED_PROTECTED_COLUMN = "gold_occurrences_unexploited_protected"
+TIN_PROTECTED_COLUMN = "tin_occurrences_protected"
 DISTRICT_SHARE_COLUMN = "gold_district_share"
 PROVINCE_SHARE_COLUMN = "gold_province_share"
 COUNT_COLUMNS = (
     GOLD_OCCURRENCE_COLUMN, *STATUS_COLUMNS.values(), ALLUVIAL_COLUMN, TIN_OCCURRENCE_COLUMN, TIN_UNEXPLOITED_COLUMN,
+    GOLD_PROTECTED_COLUMN, GOLD_UNEXPLOITED_PROTECTED_COLUMN, TIN_PROTECTED_COLUMN,
 )
 ADM2_COLUMNS = (MUN_ID_COLUMN, AREA_COLUMN, *COUNT_COLUMNS, DISTRICT_SHARE_COLUMN, PROVINCE_SHARE_COLUMN)
 
@@ -68,14 +74,17 @@ UPSTREAM_PRODUCT = "upstream"
 PRODUCTS = (ADM2_PRODUCT, UPSTREAM_PRODUCT)
 
 # Upstream counts: occurrence group -> (substance, `STATUS_ECONOMICO` value or
-# None for all, alluvial only).
+# None for all, alluvial only, inside protected areas only).
 UPSTREAM_GROUPS = {
-    "gold": (GOLD_SUBSTANCE, None, False),
-    "gold_unexploited": (GOLD_SUBSTANCE, "Não explotado", False),
-    "gold_garimpo": (GOLD_SUBSTANCE, "Garimpo", False),
-    "gold_mine": (GOLD_SUBSTANCE, "Mina", False),
-    "gold_alluvial": (GOLD_SUBSTANCE, None, True),
-    "tin": (TIN_SUBSTANCE, None, False),
+    "gold": (GOLD_SUBSTANCE, None, False, False),
+    "gold_unexploited": (GOLD_SUBSTANCE, "Não explotado", False, False),
+    "gold_garimpo": (GOLD_SUBSTANCE, "Garimpo", False, False),
+    "gold_mine": (GOLD_SUBSTANCE, "Mina", False, False),
+    "gold_alluvial": (GOLD_SUBSTANCE, None, True, False),
+    "tin": (TIN_SUBSTANCE, None, False, False),
+    "gold_protected": (GOLD_SUBSTANCE, None, False, True),
+    "gold_unexploited_protected": (GOLD_SUBSTANCE, "Não explotado", False, True),
+    "tin_protected": (TIN_SUBSTANCE, None, False, True),
 }
 # Upstream reaches (km along the river network from the upstream end of the
 # municipality's trenches, as the land-cover rings); None is unlimited.
@@ -84,7 +93,7 @@ UPSTREAM_REACHES_KM = {"50": 50.0, "200": 200.0, "all": None}
 # downstream (Pfafstetter coding, same level-3 basin) of any sub-basin the
 # municipality intersects. Binary, for these groups.
 OTTO_LEVEL = 4
-OTTO_GROUPS = ("gold", "gold_unexploited", "tin")
+OTTO_GROUPS = ("gold", "gold_unexploited", "tin", "gold_unexploited_protected", "tin_protected")
 
 
 def upstream_count_column(group, reach):

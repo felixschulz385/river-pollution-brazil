@@ -7,6 +7,7 @@ import pandas as pd
 from src.data.sources.biomes.constants import BRAZIL_PROJECTED_CRS
 from src.data.sources.biomes.preprocess import _load_adm2_boundaries
 from src.data.sources.land_cover.constants import derive_mun_id_from_adm2_id
+from src.data.sources.protected_areas.preprocess import covered_share, load_protected_areas, protected_mask
 
 from .constants import (
     ADM2_COLUMNS,
@@ -17,12 +18,15 @@ from .constants import (
     DEFAULT_ADM2_OUTPUT_PATH,
     DISTRICT_SHARE_COLUMN,
     GOLD_OCCURRENCE_COLUMN,
+    GOLD_PROTECTED_COLUMN,
     GOLD_SUBSTANCE,
+    GOLD_UNEXPLOITED_PROTECTED_COLUMN,
     MUN_ID_COLUMN,
     NEAREST_MUNICIPALITY_MAX_DISTANCE_M,
     PROVINCE_SHARE_COLUMN,
     STATUS_COLUMNS,
     TIN_OCCURRENCE_COLUMN,
+    TIN_PROTECTED_COLUMN,
     TIN_SUBSTANCE,
     TIN_UNEXPLOITED_COLUMN,
     gpkg_path,
@@ -73,14 +77,6 @@ def assign_municipality(points, boundaries):
     return joined[MUN_ID_COLUMN]
 
 
-def covered_share(boundaries, polygons, area):
-    """Share of each municipality's area inside the union of `polygons`."""
-    union = gpd.GeoDataFrame(geometry=[polygons.geometry.make_valid().union_all()], crs=polygons.crs)
-    overlay = gpd.overlay(boundaries, union, how="intersection")
-    covered = overlay.geometry.area.groupby(overlay[MUN_ID_COLUMN]).sum()
-    return (covered / area).reindex(area.index).fillna(0.0).clip(upper=1.0)
-
-
 def build_adm2_geology(
     root_dir=".",
     gpkg=None,
@@ -88,9 +84,11 @@ def build_adm2_geology(
     layer=None,
     adm2_id_column=None,
     output_path=None,
+    protected_areas_path=None,
 ):
     """Gold occurrence counts and gold province/district area shares per municipality."""
     gpkg = Path(gpkg) if gpkg else gpkg_path(root_dir)
+    protected_areas = load_protected_areas(root_dir, protected_areas_path)
     boundaries = _load_adm2_boundaries(
         root_dir, gadm_path=gadm_path, layer=layer, adm2_id_column=adm2_id_column
     ).to_crs(BRAZIL_PROJECTED_CRS)
@@ -108,12 +106,18 @@ def build_adm2_geology(
     for status, column in STATUS_COLUMNS.items():
         result[column] = gold[gold["STATUS_ECONOMICO"] == status].groupby(MUN_ID_COLUMN).size()
     result[ALLUVIAL_COLUMN] = gold[gold["alluvial"]].groupby(MUN_ID_COLUMN).size()
+    gold_protected = gold[protected_mask(gold, protected_areas)]
+    result[GOLD_PROTECTED_COLUMN] = gold_protected.groupby(MUN_ID_COLUMN).size()
+    result[GOLD_UNEXPLOITED_PROTECTED_COLUMN] = (
+        gold_protected[gold_protected["STATUS_ECONOMICO"] == "Não explotado"].groupby(MUN_ID_COLUMN).size()
+    )
 
     tin = load_tin_occurrences(gpkg).to_crs(BRAZIL_PROJECTED_CRS)
     tin[MUN_ID_COLUMN] = assign_municipality(tin, boundaries)
     tin = tin.dropna(subset=[MUN_ID_COLUMN])
     result[TIN_OCCURRENCE_COLUMN] = tin.groupby(MUN_ID_COLUMN).size()
     result[TIN_UNEXPLOITED_COLUMN] = tin[tin["STATUS_ECONOMICO"] == "Não explotado"].groupby(MUN_ID_COLUMN).size()
+    result[TIN_PROTECTED_COLUMN] = tin[protected_mask(tin, protected_areas)].groupby(MUN_ID_COLUMN).size()
     result[list(COUNT_COLUMNS)] = result[list(COUNT_COLUMNS)].fillna(0).astype("int64")
 
     for column, polygon_layer in (

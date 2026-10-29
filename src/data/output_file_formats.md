@@ -327,6 +327,55 @@ counts as zero. TabNet lists only municipality-years with an infant death;
 `adm2_panel` carries these columns zero-filled for 1996–2024, and the births
 summary's columns as they are.
 
+## Protected Area Outputs
+
+Produced by `src.data.sources.protected_areas` from INPE TerraBrasilis
+(`terrabrasilis.dpi.inpe.br/geoserver`, WFS), which serves FUNAI's
+Indigenous-land and the CNUC conservation-unit polygons clipped to the Legal
+Amazon and to each biome (`data/protected_areas/raw/terrabrasilis_protected_areas.gpkg`,
+one layer per WFS layer). Preprocess merges each area's pieces. The layers
+carry the Indigenous lands' current stage, without stage dates, and the
+conservation units' creation year; the unit layer includes units created up to
+about 2020.
+
+### `data/protected_areas/processed/protected_areas.parquet`
+
+GeoParquet (EPSG:4326), one row per area:
+
+- `area_id`: `ti:<FUNAI code>` or `uc:<n>` (units sorted by name).
+- `kind`: `indigenous_land` or `conservation_unit`.
+- `name`, `category`, `group` (`PI` integral protection, `US` sustainable
+  use), `sphere` (federal, state, municipal), `stage` (Indigenous lands:
+  Em Estudo, Delimitada, Declarada, Homologada, Encaminhada RI, Regularizada),
+  `year_created` (conservation units: the first year in `ano_cria`).
+- `mining_barred`: mining has no legal option. Indigenous lands from the
+  declaration onward; integral-protection units and extractive reserves (SNUC,
+  art. 18 §6). APAs, national forests (where mining is licensed), RDS, ARIEs
+  and RPPNs do not count.
+- `in_force_2012`: in force by the end of 2012, before the 2013 good-faith
+  rule. Units created by 2012; Indigenous lands homologated or further on. With
+  no stage dates in the layer, a land homologated after 2012 counts as in
+  force.
+
+Semantics:
+
+- An area's pieces (one per region layer) are merged by FUNAI code
+  (Indigenous lands) or by name, category, sphere and year (units). Stray lines
+  and degenerate rings are dropped and the polygons repaired.
+
+### `data/protected_areas/processed/protected_areas_adm2.parquet`
+
+One row per `mun_id`, the share of the municipality's area in areas that bar
+mining:
+
+- `indigenous_land_share`: Indigenous lands.
+- `conservation_barred_share`: integral-protection units and extractive reserves.
+- `protected_share`: either (the union, so overlaps count once).
+- `protected_2012_share`: those in force by 2012.
+
+`adm2_panel` carries every column, constant across years. The deposits inside
+these areas (lead 1's IGD) are counted in the geology outputs.
+
 ## Geology Outputs
 
 ### `data/geology/processed/geology_adm2.parquet`
@@ -344,6 +393,10 @@ Columns:
   gravel, eluvium, colluvium, detrital sediment).
 - `tin_occurrences`, `tin_occurrences_unexploited`: tin (substance "Estanho")
   occurrences, all and never exploited; the other-minerals placebo.
+- `gold_occurrences_protected`, `gold_occurrences_unexploited_protected`,
+  `tin_occurrences_protected`: occurrences inside protected areas that bar
+  mining and were in force by 2012 (`protected_areas`: `mining_barred` and
+  `in_force_2012`). The never-exploited gold count is lead 1's IGD.
 - `gold_district_share`, `gold_province_share`: share of the municipality's
   area inside any gold district or province.
 
@@ -368,12 +421,15 @@ Columns:
 
 - `<group>_upstream_<reach>`: occurrences in the trenches upstream of the
   municipality, for groups `gold`, `gold_unexploited`, `gold_garimpo`,
-  `gold_mine`, `gold_alluvial` (as in `geology_adm2`) and `tin` (substance
-  "Estanho"), and reaches `50` and `200` km and `all` (unlimited).
+  `gold_mine`, `gold_alluvial` (as in `geology_adm2`), `tin` (substance
+  "Estanho"), and `gold_protected`, `gold_unexploited_protected` and
+  `tin_protected` (inside protected areas in force by 2012, as in
+  `geology_adm2`), and reaches `50` and `200` km and `all` (unlimited).
 - `<group>_upstream_otto4`, `<group>_downstream_otto4`: 0/1, any occurrence
   in an Otto level-4 sub-basin upstream (downstream) of a level-4 sub-basin
-  the municipality's trenches lie in, for groups `gold`, `gold_unexploited`
-  and `tin`. Moreno-Louzada's exposure.
+  the municipality's trenches lie in, for groups `gold`, `gold_unexploited`,
+  `tin`, `gold_unexploited_protected` and `tin_protected`. Moreno-Louzada's
+  exposure.
 
 Semantics:
 

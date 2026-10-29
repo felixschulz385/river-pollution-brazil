@@ -648,8 +648,19 @@ datasets:
           - local_c11_garimpo_other
           - local_c11_industrial_gold
           - local_c11_industrial_other
+      # Area shares in Indigenous lands and conservation units that bar mining,
+      # all and those in force by 2012 (static).
+      - name: protected_areas_adm2
+        path: data/protected_areas/processed/protected_areas_adm2.parquet
+        join_keys: [mun_id]
+        variables:
+          - indigenous_land_share
+          - conservation_barred_share
+          - protected_share
+          - protected_2012_share
       # SGB gold geology per municipality (static): occurrence counts by
-      # economic status, alluvial occurrences, and gold district/province shares.
+      # economic status, alluvial occurrences, occurrences inside protected
+      # areas in force by 2012 (IGD), and gold district/province shares.
       - name: geology_adm2
         path: data/geology/processed/geology_adm2.parquet
         join_keys: [mun_id]
@@ -663,6 +674,9 @@ datasets:
           - gold_occurrences_alluvial
           - tin_occurrences
           - tin_occurrences_unexploited
+          - gold_occurrences_protected
+          - gold_occurrences_unexploited_protected
+          - tin_occurrences_protected
           - gold_district_share
           - gold_province_share
       # SGB occurrences upstream along the river network (static): counts
@@ -690,12 +704,25 @@ datasets:
           - tin_upstream_50
           - tin_upstream_200
           - tin_upstream_all
+          - gold_protected_upstream_50
+          - gold_protected_upstream_200
+          - gold_protected_upstream_all
+          - gold_unexploited_protected_upstream_50
+          - gold_unexploited_protected_upstream_200
+          - gold_unexploited_protected_upstream_all
+          - tin_protected_upstream_50
+          - tin_protected_upstream_200
+          - tin_protected_upstream_all
           - gold_upstream_otto4
           - gold_downstream_otto4
           - gold_unexploited_upstream_otto4
           - gold_unexploited_downstream_otto4
           - tin_upstream_otto4
           - tin_downstream_otto4
+          - gold_unexploited_protected_upstream_otto4
+          - gold_unexploited_protected_downstream_otto4
+          - tin_protected_upstream_otto4
+          - tin_protected_downstream_otto4
       # World Bank Pink Sheet gold price in USD and, with the BCB rate, in BRL
       # (annual means of monthly prices, per troy ounce), joined by year.
       - name: gold_price

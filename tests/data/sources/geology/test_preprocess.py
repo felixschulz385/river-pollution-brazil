@@ -41,11 +41,21 @@ def _write_inputs(tmp_path: Path):
     gpd.GeoDataFrame({"geometry": [box(-56, -6, -55, -5), box(-56, -6, -55, -5)]}, crs=4326).to_file(
         gpkg, layer="gold_provinces", driver="GPKG"
     )
-    return gadm_path, gpkg
+    # A land in force by 2012 around the unexploited occurrence in the first municipality; a RESEX created
+    # after 2012 around its garimpo occurrence, and an APA (mining allowed) around the second's tin.
+    protected = gpd.GeoDataFrame({
+        "kind": ["indigenous_land", "conservation_unit", "conservation_unit"],
+        "mining_barred": [True, True, False],
+        "in_force_2012": [True, False, True],
+        "geometry": [box(-55.3, -5.6, -55.1, -5.4), box(-55.6, -5.6, -55.4, -5.4), box(-54.6, -5.7, -54.4, -5.4)],
+    }, crs=4326)
+    protected_path = tmp_path / "protected_areas.parquet"
+    protected.to_parquet(protected_path)
+    return gadm_path, gpkg, protected_path
 
 
 def test_build_adm2_geology_counts_and_shares(tmp_path: Path):
-    gadm_path, gpkg = _write_inputs(tmp_path)
+    gadm_path, gpkg, protected_path = _write_inputs(tmp_path)
 
     result = build_adm2_geology(
         root_dir=str(tmp_path),
@@ -53,6 +63,7 @@ def test_build_adm2_geology_counts_and_shares(tmp_path: Path):
         gadm_path=str(gadm_path),
         layer="ADM_ADM_2",
         output_path=str(tmp_path / "geology_adm2.parquet"),
+        protected_areas_path=str(protected_path),
     ).set_index("mun_id")
 
     assert result.index.tolist() == ["150010", "150020"]
@@ -63,6 +74,9 @@ def test_build_adm2_geology_counts_and_shares(tmp_path: Path):
     assert result["gold_occurrences_alluvial"].tolist() == [1, 1]
     assert result["tin_occurrences"].tolist() == [0, 1]
     assert result["tin_occurrences_unexploited"].tolist() == [0, 0]
+    assert result["gold_occurrences_protected"].tolist() == [1, 0]  # the RESEX is too recent
+    assert result["gold_occurrences_unexploited_protected"].tolist() == [1, 0]
+    assert result["tin_occurrences_protected"].tolist() == [0, 0]  # APAs allow mining
     assert result.loc["150010", "gold_district_share"] == pytest.approx(0.5, abs=0.01)
     assert result.loc["150020", "gold_district_share"] == 0.0
     assert result.loc["150010", "gold_province_share"] == pytest.approx(1.0)

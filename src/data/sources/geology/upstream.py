@@ -26,6 +26,7 @@ from src.data.shared.spatial_tabular import deduplicate_drainage_polygons
 from src.data.sources import river_network as rn_module
 from src.data.sources.biomes.constants import BRAZIL_PROJECTED_CRS
 from src.data.sources.land_cover.constants import derive_mun_id_from_adm2_id
+from src.data.sources.protected_areas.preprocess import load_protected_areas, protected_mask
 from src.data.sources.river_network.constants import PROCESSED_DIR as RIVER_NETWORK_PROCESSED_DIR
 
 from .constants import (
@@ -50,17 +51,20 @@ TRENCH_ID_COLUMN = "trench_id"
 OTTO_COLUMN = f"otto_basin_l{OTTO_LEVEL}"
 
 
-def load_occurrence_groups(path):
+def load_occurrence_groups(path, protected_areas):
     """SGB occurrences with one boolean column per `UPSTREAM_GROUPS` group."""
     occurrences = gpd.read_file(path, layer="occurrences")
     substances = occurrences["SUBSTANCIAS"].fillna("")
     alluvial = occurrences["ROCHAS_HOSPEDEIRAS"].fillna("").str.contains(ALLUVIAL_HOSTS)
-    for group, (substance, status, alluvial_only) in UPSTREAM_GROUPS.items():
+    protected = protected_mask(occurrences, protected_areas)
+    for group, (substance, status, alluvial_only, protected_only) in UPSTREAM_GROUPS.items():
         member = substances.str.contains(substance)
         if status is not None:
             member &= occurrences["STATUS_ECONOMICO"].eq(status)
         if alluvial_only:
             member &= alluvial
+        if protected_only:
+            member &= protected
         occurrences[group] = member
     return occurrences[occurrences[list(UPSTREAM_GROUPS)].any(axis=1)].reset_index(drop=True)
 
@@ -159,13 +163,14 @@ def municipality_otto_basins(river_network_path, otto=None):
     return matches.dropna(subset=[OTTO_COLUMN]).groupby(MUN_ID_COLUMN)[OTTO_COLUMN].agg(set).to_dict()
 
 
-def build_adm2_upstream_geology(root_dir=".", gpkg=None, river_network_path=None, n_jobs=None, output_path=None):
+def build_adm2_upstream_geology(root_dir=".", gpkg=None, river_network_path=None, n_jobs=None, output_path=None,
+                                protected_areas_path=None):
     """Write `geology_adm2_upstream.parquet`: upstream occurrence counts and Otto-4 binaries per municipality."""
     gpkg = Path(gpkg) if gpkg else gpkg_path(root_dir)
     river_network_path = Path(root_dir) / (river_network_path or RIVER_NETWORK_PROCESSED_DIR)
     n_jobs = n_jobs or resolve_n_jobs()
 
-    occurrences = load_occurrence_groups(gpkg)
+    occurrences = load_occurrence_groups(gpkg, load_protected_areas(root_dir, protected_areas_path))
     logger.info("SGB occurrences by group: %s", occurrences[list(UPSTREAM_GROUPS)].sum().to_dict())
 
     network = rn_module.RiverNetwork()

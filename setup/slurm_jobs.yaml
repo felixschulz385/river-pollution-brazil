@@ -97,6 +97,13 @@ jobs:
   # SGB gold occurrences and province/district polygons -> ADM2. The overlay
   # of the dissolved province union against every municipality dominates.
   # (geology fetch needs internet: run it on the transfer node, not Slurm.)
+  protected_areas.preprocess:
+    job_name: preprocess_protected_areas
+    time: "0-01:00:00"
+    qos: 6hours
+    cpus_per_task: 2
+    mem: 32G
+
   geology.preprocess:
     job_name: preprocess_geology
     time: "0-01:00:00"
