@@ -21,12 +21,14 @@ from .constants import (
     DEFAULT_ADM2_OUTPUT_PATH,
     DEFAULT_AREAS_OUTPUT_PATH,
     ESTABLISHED_STAGES,
+    FUNAI_FIELDS,
     INDIGENOUS,
     INDIGENOUS_SHARE_COLUMN,
     LAYERS,
     MUN_ID_COLUMN,
     PROTECTED_2012_SHARE_COLUMN,
     PROTECTED_SHARE_COLUMN,
+    funai_path,
     gpkg_path,
     layer_name,
 )
@@ -36,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 def read_kind(gpkg, kind):
-    """All layers of one kind, stacked; an area clipped by several regions appears once per region."""
+    """All TerraBrasilis layers of one kind, stacked; an area clipped by several regions appears once per region."""
     frames = [gpd.read_file(gpkg, layer=layer_name(type_name)) for type_name in LAYERS[kind]]
     return pd.concat(frames, ignore_index=True)
 
@@ -75,21 +77,38 @@ def _merge(frame, keys):
     return frame.dissolve(by=keys, aggfunc="first", as_index=False, dropna=False)
 
 
+def read_funai(path):
+    """FUNAI's land polygons with their stage dates, under the names of `FUNAI_FIELDS` (EPSG:4326)."""
+    frame = gpd.read_file(f"zip://{path}", columns=list(FUNAI_FIELDS)).rename(columns=FUNAI_FIELDS)
+    return frame.to_crs(4326)
+
+
 def indigenous_lands(frame):
-    """Indigenous lands in the `AREA_COLUMNS` layout."""
-    lands = _merge(frame.dropna(subset=["terrai_cod"]), "terrai_cod")
-    stage = lands["fase_ti"].str.strip()
+    """Indigenous lands in the `AREA_COLUMNS` layout, barred from their first declaration, homologation or registry."""
+    lands = _merge(frame.dropna(subset=["code"]), "code")
+    stage = lands["stage"].str.strip()
+    dates = pd.DataFrame({
+        column: pd.to_datetime(lands[column], errors="coerce") for column in ("declared", "homologated", "registered")
+    })
+    first = dates.min(axis=1)
+    # FUNAI's stage lags its dates for a few lands (a declaration date on a land still marked Delimitada).
+    barred = stage.isin(BARRED_STAGES) | first.notna()
+    year_barred = first.dt.year.astype("Int64")
+    in_force = year_barred.le(CUTOFF_YEAR).fillna(False).astype(bool) | (first.isna() & stage.isin(ESTABLISHED_STAGES))
     return gpd.GeoDataFrame({
-        "area_id": "ti:" + lands["terrai_cod"].astype("int64").astype(str),
+        "area_id": "ti:" + lands["code"].astype("int64").astype(str),
         "kind": INDIGENOUS,
-        "name": lands["terrai_nom"],
-        "category": "Terra Indígena",
+        "name": lands["name"],
+        "category": lands["modality"],
         "group": None,
         "sphere": "federal",
         "stage": stage,
         "year_created": pd.array([pd.NA] * len(lands), dtype="Int64"),
-        "mining_barred": stage.isin(BARRED_STAGES),
-        "in_force_2012": stage.isin(ESTABLISHED_STAGES),
+        "date_declared": dates["declared"],
+        "date_homologated": dates["homologated"],
+        "year_barred": year_barred,
+        "mining_barred": barred,
+        "in_force_2012": in_force & barred,
     }, geometry=lands.geometry, crs=lands.crs)
 
 
@@ -114,15 +133,18 @@ def conservation_units(frame):
         "sphere": units["esfera"],
         "stage": None,
         "year_created": units["year_created"].astype("Int64"),
+        "date_declared": pd.NaT,
+        "date_homologated": pd.NaT,
+        "year_barred": units["year_created"].astype("Int64").where(barred),
         "mining_barred": barred,
         "in_force_2012": units["year_created"].le(CUTOFF_YEAR).fillna(False).astype(bool),
     }, geometry=units.geometry, crs=units.crs)
 
 
-def build_areas(gpkg):
-    """Indigenous lands and conservation units in one GeoDataFrame (EPSG:4326)."""
+def build_areas(gpkg, funai):
+    """FUNAI's Indigenous lands and TerraBrasilis' conservation units in one GeoDataFrame (EPSG:4326)."""
     areas = pd.concat(
-        [indigenous_lands(read_kind(gpkg, INDIGENOUS)), conservation_units(read_kind(gpkg, CONSERVATION))],
+        [indigenous_lands(read_funai(funai)), conservation_units(read_kind(gpkg, CONSERVATION))],
         ignore_index=True,
     )
     return gpd.GeoDataFrame(areas, geometry="geometry", crs=4326)[list(AREA_COLUMNS)]
@@ -171,6 +193,7 @@ def adm2_shares(areas, boundaries):
 def build_protected_areas(
     root_dir=".",
     gpkg=None,
+    funai=None,
     gadm_path=None,
     layer=None,
     adm2_id_column=None,
@@ -179,7 +202,13 @@ def build_protected_areas(
 ):
     """Write the merged protected areas and their area shares per municipality."""
     gpkg = Path(gpkg) if gpkg else gpkg_path(root_dir)
-    areas = build_areas(gpkg)
+    funai = Path(funai) if funai else funai_path(root_dir)
+    if funai is None:
+        raise FileNotFoundError(
+            "No FUNAI snapshot (raw/funai_<date>/tis_poligonais_portarias.zip) under data/protected_areas; "
+            "it is placed by hand."
+        )
+    areas = build_areas(gpkg, funai)
     logger.info(
         "Protected areas: %d Indigenous lands, %d conservation units; %d bar mining, %d of those in force by %d",
         int((areas["kind"] == INDIGENOUS).sum()), int((areas["kind"] == CONSERVATION).sum()),

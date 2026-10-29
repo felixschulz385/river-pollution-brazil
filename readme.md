@@ -228,10 +228,13 @@ The expected persisted formats are described in `src/data/output_file_formats.md
 
 ### Protected Areas
 
-Indigenous lands (FUNAI) and conservation units (CNUC) from INPE TerraBrasilis,
-merged into one polygon per area, with whether mining is barred there and
-whether the area was in force by 2012, and their area shares per municipality.
-Geology needs the merged areas, so this source runs first.
+Indigenous lands from FUNAI, with the date of each stage, and conservation units
+(CNUC) from INPE TerraBrasilis, one polygon per area, with whether mining is
+barred there, since when, and whether the area was in force by 2012, and their
+area shares per municipality. Geology needs the merged areas, so this source
+runs first. The fetch downloads the conservation units. FUNAI's GeoServer does
+not answer from the HPC, so its `tis_poligonais_portarias` layer is downloaded
+by hand over a Brazilian VPN into `data/protected_areas/raw/funai_<date>/`.
 
 ```bash
 python3 -m src.cli data fetch      --source protected_areas

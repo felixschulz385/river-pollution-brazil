@@ -77,8 +77,6 @@ relapse are counted?
 **Open before the design is final.**
 
 - A novelty check on malaria importation by miners.
-- Stage dates for the Indigenous lands, so that IGD's 2012 cutoff is exact (the
-  layer in the pipeline has the current stage only).
 - Separating the 2019 break from the enforcement collapse, with the IBAMA records
   (`enforcement`).
 
@@ -409,6 +407,8 @@ X_mt = β_13·(IGD_m × post-2013_t) + β_23·(IGD_m × post-2023_t)
     municipality and upstream along the network. In the panel (`protected_areas`,
     `geology`): never-exploited SGB gold occurrences inside Indigenous lands (declared
     onward) and integral-protection units or extractive reserves, in force by 2012.
+    Lands are dated by FUNAI's first declaration, homologation or registry act, units
+    by their creation year.
     - Thin locally: 27 Legal Amazon municipalities, 204 occurrences, mostly in Pará,
       Roraima and Amapá.
     - Upstream: 12 municipalities within 50 km, 31 within 200 km, 127 without limit, 73
@@ -765,11 +765,15 @@ demarcation is pending, attract garimpo into Indigenous lands and protected area
 
 **Data.**
 
-- **To add:**
-  - the Indigenous lands' stage and decree dates (FUNAI);
-  - permit requests over Indigenous lands (ANM microdata and SIGMINE).
-- **In the pipeline:** C11, SIVEP, Indigenous-land boundaries with current stage and
-  conservation units with creation year (`protected_areas`).
+- **To add:** permit requests over Indigenous lands (ANM microdata and SIGMINE).
+- **In the pipeline:** C11, SIVEP, conservation units with creation year, and FUNAI's
+  Indigenous lands with current stage and the date and act of each stage
+  (`protected_areas`).
+  - In the Legal Amazon states, 308 lands were homologated before 2013 and 20 from
+    2013 (none in 2019–22; 4 on 2025-11-17). 21 were declared from 2013, among them
+    Sawré Muybu and Munduruku-Taquara in the Tapajós garimpo region.
+  - Homologations cluster in 2001–06 (up to 21 a year), so a staggered design around
+    homologation has its events mostly early in C11's window.
 
 **Threats.**
 
@@ -827,7 +831,6 @@ The ADM2 panel carries:
      ([E11](#e11-garimpo-and-the-laundering-rules)). Permits respond; C11 and the
      cases do not.
    - Still needed:
-     - the Indigenous lands' stage dates (FUNAI handoff), to date IGD exactly;
      - the permit events and monthly timing (`mining`), to check that the request rise
        starts after July 2013;
      - a way to separate the 2019–20 break in garimpo cases from the enforcement
@@ -1310,7 +1313,7 @@ tables in `output/analysis/garimpo/laundering/`.*
 | Mining permits with type, ore, dates, flags | ANM Cadastro Mineiro microdata; MapBiomas Monitor da Mineração | laundering exposure, ghost permits, anticipation | in pipeline (`mining`: PLG requests, grants, PLGs in force); events and the Monitor layer to add |
 | Royalty payments (CFEM) | ANM | declared output | not usable for garimpo (E7) |
 | Fines, embargoes, seizures, destruction terms | IBAMA Fiscalização open data | enforcement shocks, relapse timing | in pipeline (`enforcement`: records and municipality × year counts, mining and garimpo classes); seizures stop in 2026-05 in the current snapshot |
-| Indigenous lands with stage and dates | FUNAI, via INPE TerraBrasilis | IGD, lead 4 | in pipeline (`protected_areas`: boundaries and current stage); stage and decree dates to add |
+| Indigenous lands with stage and dates | FUNAI GeoServer (`tis_poligonais_portarias`), by hand over a Brazilian VPN | IGD, lead 4 | in pipeline (`protected_areas`: boundaries, current stage, the date and act of each stage; snapshot 2026-10-29) |
 | Protected areas with creation dates | CNUC, via INPE TerraBrasilis | IGD, lead 4 | in pipeline (`protected_areas`: boundaries, category, creation year; units up to about 2020) |
 | Gold price | World Bank Pink Sheet × BCB BRL/USD rate | price shock | in pipeline (`commodity_prices`) |
 | Gold-buying points (DTVM/PCO) | ANM, Central Bank | laundering exposure by site | to add |

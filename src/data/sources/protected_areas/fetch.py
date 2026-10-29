@@ -32,7 +32,7 @@ def query_layer(type_name, fields):
 
 
 def fetch_protected_areas(root_dir="."):
-    """Download the Indigenous-land and conservation-unit layers into one GeoPackage, one layer per WFS layer."""
+    """Download the conservation-unit layers into one GeoPackage, one layer per WFS layer."""
     destination = gpkg_path(root_dir)
     if destination.exists():
         logger.info("Protected-area GeoPackage already present at %s, skipping download.", destination)

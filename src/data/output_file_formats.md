@@ -329,14 +329,18 @@ summary's columns as they are.
 
 ## Protected Area Outputs
 
-Produced by `src.data.sources.protected_areas` from INPE TerraBrasilis
-(`terrabrasilis.dpi.inpe.br/geoserver`, WFS), which serves FUNAI's
-Indigenous-land and the CNUC conservation-unit polygons clipped to the Legal
-Amazon and to each biome (`data/protected_areas/raw/terrabrasilis_protected_areas.gpkg`,
-one layer per WFS layer). Preprocess merges each area's pieces. The layers
-carry the Indigenous lands' current stage, without stage dates, and the
-conservation units' creation year; the unit layer includes units created up to
-about 2020.
+Produced by `src.data.sources.protected_areas` from two inputs:
+
+- **Indigenous lands:** FUNAI's `tis_poligonais_portarias` layer, placed by
+  hand in `data/protected_areas/raw/funai_<date>/` (the newest snapshot holding
+  `tis_poligonais_portarias.zip`; provenance in its `PROVENANCE.md`). One
+  polygon per land with its current stage, modality and the date and act of
+  each stage.
+- **Conservation units:** the CNUC polygons from INPE TerraBrasilis
+  (`terrabrasilis.dpi.inpe.br/geoserver`, WFS), clipped to the Legal Amazon and
+  to each biome (`data/protected_areas/raw/terrabrasilis_protected_areas.gpkg`,
+  one layer per WFS layer), with each unit's creation year. The layers include
+  units created up to about 2020.
 
 ### `data/protected_areas/processed/protected_areas.parquet`
 
@@ -344,24 +348,36 @@ GeoParquet (EPSG:4326), one row per area:
 
 - `area_id`: `ti:<FUNAI code>` or `uc:<n>` (units sorted by name).
 - `kind`: `indigenous_land` or `conservation_unit`.
-- `name`, `category`, `group` (`PI` integral protection, `US` sustainable
-  use), `sphere` (federal, state, municipal), `stage` (Indigenous lands:
-  Em Estudo, Delimitada, Declarada, Homologada, Encaminhada RI, Regularizada),
-  `year_created` (conservation units: the first year in `ano_cria`).
+- `name`, `category` (units: the CNUC category; Indigenous lands: the
+  modality, e.g. Tradicionalmente ocupada, Reserva Indígena), `group` (`PI`
+  integral protection, `US` sustainable use), `sphere` (federal, state,
+  municipal), `stage` (Indigenous lands: Em Estudo, Delimitada, Declarada,
+  Homologada, Encaminhada RI, Regularizada), `year_created` (conservation
+  units: the first year in `ano_cria`).
+- `date_declared`, `date_homologated`: Indigenous lands' declaratory ordinance
+  and homologation decree, where FUNAI records them.
+- `year_barred`: the year mining became barred. Units: the creation year.
+  Indigenous lands: the year of the first declaration, homologation or registry
+  date (many older lands were homologated without a declaratory ordinance).
+  Missing when the area is not barred or the land has none of these dates.
 - `mining_barred`: mining has no legal option. Indigenous lands from the
-  declaration onward; integral-protection units and extractive reserves (SNUC,
+  declaration onward (by stage, or by a declaration, homologation or registry
+  date where FUNAI's stage lags its dates); integral-protection units and extractive reserves (SNUC,
   art. 18 §6). APAs, national forests (where mining is licensed), RDS, ARIEs
   and RPPNs do not count.
 - `in_force_2012`: in force by the end of 2012, before the 2013 good-faith
-  rule. Units created by 2012; Indigenous lands homologated or further on. With
-  no stage dates in the layer, a land homologated after 2012 counts as in
-  force.
+  rule. Units created by 2012; barred Indigenous lands with `year_barred` up to
+  2012. Barred lands without dates count when homologated or regularised (old
+  reserves and three old Mato Grosso lands), not when a reserve is still being
+  acquired (Encaminhada RI).
 
 Semantics:
 
-- An area's pieces (one per region layer) are merged by FUNAI code
-  (Indigenous lands) or by name, category, sphere and year (units). Stray lines
-  and degenerate rings are dropped and the polygons repaired.
+- A unit's pieces (one per region layer) are merged by name, category, sphere
+  and year. Stray lines and degenerate rings are dropped and the polygons
+  repaired.
+- FUNAI's polygons overlap where a land under revision covers its original;
+  the shares below take the union, so overlaps count once.
 
 ### `data/protected_areas/processed/protected_areas_adm2.parquet`
 

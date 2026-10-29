@@ -1,16 +1,16 @@
 class ProtectedAreas:
-    """Fetch Indigenous lands and conservation units and measure their extent per ADM2 municipality."""
+    """Read Indigenous lands and conservation units and measure their extent per ADM2 municipality."""
 
     def __init__(self, root_dir="."):
         self.root_dir = root_dir
 
     def fetch(self):
-        """Download the TerraBrasilis Indigenous-land and conservation-unit layers."""
+        """Download the TerraBrasilis conservation-unit layers (FUNAI's Indigenous lands are placed by hand)."""
         from .fetch import fetch_protected_areas
 
         return fetch_protected_areas(root_dir=self.root_dir)
 
-    def preprocess(self, gpkg=None, gadm_path=None, layer=None, adm2_id_column=None, areas_output_path=None,
+    def preprocess(self, gpkg=None, funai=None, gadm_path=None, layer=None, adm2_id_column=None, areas_output_path=None,
                    adm2_output_path=None):
         """Merge the areas, flag where mining is barred and since when, and compute municipality shares."""
         from .preprocess import build_protected_areas
@@ -18,6 +18,7 @@ class ProtectedAreas:
         return build_protected_areas(
             root_dir=self.root_dir,
             gpkg=gpkg,
+            funai=funai,
             gadm_path=gadm_path,
             layer=layer,
             adm2_id_column=adm2_id_column,

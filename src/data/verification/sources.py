@@ -1084,18 +1084,20 @@ def _biomes_fingerprint_paths(root_dir) -> list[Path]:
 # --------------------------------------------------------------------------
 
 def _protected_areas_list_fetched(root_dir, force: bool = False) -> FetchListing:
-    from src.data.sources.protected_areas.constants import gpkg_path
+    from src.data.sources.protected_areas.constants import funai_path, gpkg_path
 
-    path = gpkg_path(root_dir)
-    present = 1 if path.exists() else 0
+    gpkg, funai = gpkg_path(root_dir), funai_path(root_dir)
+    present = int(gpkg.exists()) + int(funai is not None)
     return FetchListing(
-        present=present, expected=1, detail=f"Protected-area GeoPackage {'present' if present else 'missing'} at {path}."
+        present=present, expected=2,
+        detail=f"TerraBrasilis GeoPackage {'present' if gpkg.exists() else 'missing'} at {gpkg}; "
+               f"FUNAI layer {funai or 'missing (raw/funai_<date>/, placed by hand)'}.",
     )
 
 
 def _protected_area_checks(frame) -> list[CheckResult]:
-    """Columns, unique area IDs, and areas in force by 2012 only among those of known kind."""
-    from src.data.sources.protected_areas.constants import AREA_COLUMNS, KINDS
+    """Columns, unique area IDs, known kinds, and areas in force by 2012 exactly when barred by then."""
+    from src.data.sources.protected_areas.constants import AREA_COLUMNS, CUTOFF_YEAR, KINDS
 
     checks = [
         check_required_columns(frame, list(AREA_COLUMNS)),
@@ -1107,6 +1109,14 @@ def _protected_area_checks(frame) -> list[CheckResult]:
         checks.append(CheckResult(
             name="known_kinds", ok=not unknown,
             message=f"Unknown kinds: {unknown}" if unknown else "Indigenous lands and conservation units only.",
+        ))
+    if checks[0].ok:
+        barred = frame[frame["mining_barred"].astype(bool) & frame["year_barred"].notna()]
+        wrong = barred["in_force_2012"].astype(bool) != barred["year_barred"].astype("int64").le(CUTOFF_YEAR)
+        checks.append(CheckResult(
+            name="in_force_by_year_barred", ok=not wrong.any(),
+            message=f"{int(wrong.sum())} dated barred areas whose 2012 flag disagrees with their year barred."
+            if wrong.any() else f"Dated barred areas are in force exactly when barred by {CUTOFF_YEAR}.",
         ))
     return checks
 
@@ -1155,25 +1165,36 @@ def _protected_areas_check_outputs(root_dir) -> list[OutputArtifactCheck]:
 
 
 def _protected_areas_check_fetched(root_dir) -> list[OutputArtifactCheck]:
-    from src.data.sources.protected_areas.constants import LAYERS, gpkg_path, layer_name
+    from src.data.sources.protected_areas.constants import FUNAI_FILENAME, LAYERS, funai_path, gpkg_path, layer_name
 
     path = gpkg_path(root_dir)
-    if not path.exists():
-        return [_missing_artifact("protected_areas_gpkg", path)]
-    checks = [check_file_nonempty(path, min_size_bytes=1024)]
-    checks += [check_gpkg_layer_readable(path, layer_name(type_name))
-               for type_names in LAYERS.values() for type_name in type_names]
-    return [OutputArtifactCheck(label="protected_areas_gpkg", path=path, exists=True, checks=checks)]
+    if path.exists():
+        checks = [check_file_nonempty(path, min_size_bytes=1024)]
+        checks += [check_gpkg_layer_readable(path, layer_name(type_name))
+                   for type_names in LAYERS.values() for type_name in type_names]
+        results = [OutputArtifactCheck(label="protected_areas_gpkg", path=path, exists=True, checks=checks)]
+    else:
+        results = [_missing_artifact("protected_areas_gpkg", path)]
+    funai = funai_path(root_dir)
+    if funai is None:
+        results.append(_missing_artifact("protected_areas_funai", path.parent / "funai_<date>" / FUNAI_FILENAME))
+    else:
+        results.append(OutputArtifactCheck(label="protected_areas_funai", path=funai, exists=True,
+                                           checks=[check_file_nonempty(funai, min_size_bytes=1024)]))
+    return results
 
 
 def _protected_areas_fingerprint_paths(root_dir) -> list[Path]:
     from src.data.sources.protected_areas.constants import (
         DEFAULT_ADM2_OUTPUT_PATH,
         DEFAULT_AREAS_OUTPUT_PATH,
+        funai_path,
         gpkg_path,
     )
 
-    return [gpkg_path(root_dir), Path(root_dir) / DEFAULT_AREAS_OUTPUT_PATH, Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH]
+    funai = funai_path(root_dir)
+    return [gpkg_path(root_dir), *([funai] if funai else []), Path(root_dir) / DEFAULT_AREAS_OUTPUT_PATH,
+            Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH]
 
 
 # --------------------------------------------------------------------------
@@ -2071,7 +2092,7 @@ SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
         list_fetched=_protected_areas_list_fetched,
         check_outputs=_protected_areas_check_outputs,
         fingerprint_paths=_protected_areas_fingerprint_paths,
-        fetch_method="Download (INPE TerraBrasilis WFS)",
+        fetch_method="Download (TerraBrasilis WFS) + manual (FUNAI)",
         check_fetched=_protected_areas_check_fetched,
     ),
     "geology": SourceAdapter(

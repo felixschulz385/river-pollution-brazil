@@ -24,6 +24,7 @@ def configure_parser(parser, include_action=True):
         parser.add_argument("action", choices=["fetch", "preprocess"])
     parser.add_argument("--root-dir", default=".")
     parser.add_argument("--gpkg", default=None)
+    parser.add_argument("--funai", default=None, help="FUNAI tis_poligonais_portarias.zip (default: newest snapshot)")
     parser.add_argument("--gadm-path", default=None)
     parser.add_argument("--gadm-layer", default=None)
     parser.add_argument("--adm2-id-column", default=None)
@@ -40,6 +41,7 @@ def run(args):
     else:
         agent.preprocess(
             gpkg=args.gpkg,
+            funai=args.funai,
             gadm_path=args.gadm_path,
             layer=args.gadm_layer,
             adm2_id_column=args.adm2_id_column,
