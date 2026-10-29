@@ -73,6 +73,15 @@ relapse are counted?
   - C11 garimpo and garimpo cases do not follow the dates. C11 follows a smooth trend.
     Cases follow the 2019 break, which non-garimpo malaria shares, and keep rising
     after 2023 ([E11](#e11-garimpo-and-the-laundering-rules)).
+- **The 2019–20 shift is the Roraima rush plus the enforcement collapse.**
+  - In IGD municipalities the 2019 case break is mostly Roraima's Yanomami rush: 396
+    garimpo cases (2018), 11,785 (2022), 1,288 (2024) after the 2023 operation. In IGD
+    municipalities elsewhere, cases rise steadily from 2019 and do not fall back.
+  - Where IBAMA was present before 2015, fines fell 0.19 log points per SD after 2019
+    and garimpo cases rose 0.09 (p 0.03), mostly incoming cases; non-garimpo malaria
+    does not move. A 10% fall in fines goes with about 4.6% more garimpo cases.
+  - When fines recover in 2023, cases do not fall back significantly
+    ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse)).
 - **Gold geology.** The Geological Survey of Brazil's (SGB) never-exploited gold
   occurrences predict where garimpo is about as well as all occurrences. They are,
   however, thin (74 Legal Amazon municipalities) ([E6](#e6-sgb-gold-geology)).
@@ -679,7 +688,9 @@ elsewhere, where does it go, and does the health burden move with it?
   - the 2016–18 collapse in federal field enforcement (IBAMA field agents 965 → 691;
     Nunes et al. 2024; used for homicides by Hemsley, Libera & Rocha 2026);
   - the 2019 drop in enforcement credibility, including political statements against
-    destroying mining equipment;
+    destroying mining equipment. Where IBAMA was present before, fines fell and garimpo
+    cases rose from 2019
+    ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse));
 - across the border: French Guiana's garimpo cases fall from about 5,700 (2004) to about
   100–180 a year from 2020, after its military operations against gold mining.
   Venezuelan infections peak in 2016–18.
@@ -835,11 +846,10 @@ The ADM2 panel carries:
    - The IGD × post-2013 and × post-2023 estimates are run
      ([E11](#e11-garimpo-and-the-laundering-rules)). Permits respond by year but show no
      break at the 2013 rule by quarter; C11 and the cases do not respond.
-   - Still needed:
-     - a way to separate the 2019–20 break in garimpo cases from the enforcement
-       collapse (the `enforcement` counts) and from the Roraima rush;
-     - an activity measure for 2020–24 (VIIRS, step 8), since C11 stops in 2019 and
-       the cases follow the 2019 break.
+   - The 2019–20 break is the Roraima rush plus the enforcement collapse
+     ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse)).
+   - Still needed: an activity measure for 2020–24 (VIIRS, step 8), since C11 stops in
+     2019 and the cases follow the 2019 break.
 3. **Lead 2 first pass.**
    - Prediction 5: local vs. incoming cases on price × deposits and on drought.
    - Prediction 2: a downstream aggregation of mining for the spread test.
@@ -858,15 +868,22 @@ The ADM2 panel carries:
      peak, so the 2019 break in garimpo cases has no matching collapse in these counts.
      The surge starts in 2021 and is mostly from 2023, in Pará, Roraima, Mato Grosso and
      Amazonas.
+   - All IBAMA fines do collapse, and the collapse is concentrated where IBAMA was
+     present; garimpo cases rise there from 2019
+     ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse)).
    - Over 90% of garimpo seizures and destructions carry coordinates. Destruction terms
      rarely reference a fine, so they link to the rest of an operation by operation code.
    - Still to do: substitute sites, the displacement ratio and the crew logit.
 6. **Lead 4.** FUNAI stages, CNUC dates, anticipation around PL 191/2020.
 7. **Optional water outcome.** Station turbidity from 2008, or satellite river
    turbidity, as a pollution outcome of upstream garimpo ([E8](#e8-amazon-station-coverage-for-turbidity)).
-8. **Optional activity measure.** Test VIIRS night lights over C11 garimpo polygons, and
-   the C11 active-phase share, as year-to-year garimpo activity (see Sources and access,
-   "Night lights").
+8. **Activity measure.** VIIRS night lights inside protected areas and near gold
+   occurrences, and the C11 active-phase share, as year-to-year garimpo activity (see
+   Sources and access, "Night lights").
+   - The VNL v2.1 annual composites for 2012–2021 can be read from the
+     growth-and-temperature project's raw folder. VNL v2.2 (2022 onward) is downloaded
+     by hand behind EOG's login (`viirs_download_handoff.md`); then a `nightlights`
+     source.
 
 ## Evidence
 
@@ -1319,6 +1336,64 @@ tables in `output/analysis/garimpo/laundering/`.*
   - Measured garimpo does not follow the dates either. C11 follows a trend that ends
     before 2023, and the case series follows the 2019 break, which non-garimpo malaria
     shares.
+
+### E12. The 2019–20 shift: Roraima and the enforcement collapse
+
+*Code: `src/analysis/garimpo_shift.py`, `output/notebooks/garimpo/04_shift_2019.ipynb`;
+tables in `output/analysis/garimpo/shift_2019/`.*
+
+- **Question.** Garimpo cases, gold PLG requests and non-garimpo malaria all break
+  around 2019–20 in IGD municipalities (E11). Is that the Roraima rush, the collapse of
+  IBAMA enforcement, or both?
+- **Roraima.** Totals and lead 1's IGD event study split into IGD municipalities in
+  Roraima (6) and elsewhere (21), relative to 2018:
+  - *Roraima:* garimpo cases were already rising before 2019 (9–55 a year in 2012–17,
+    396 in 2018), jump to 2,261 (2019) and 11,785 (2022), and fall to 5,977 (2023) and
+    1,288 (2024) with the Yanomami operation (garimpo enforcement +2.2 in 2023–24).
+    Non-garimpo malaria rises steadily from 2,044 (2012) to 26,897 (2024), without a
+    2019 break: Indigenous people infected in the rush need not carry the garimpo code,
+    so E11's outcome placebo is contaminated in Roraima.
+  - *Elsewhere:* cases are flat in 2013–18 and rise steadily from 2019 (+0.45) to 2024
+    (+1.20), with no reversal after 2023; non-garimpo malaria moves less (+0.27 to
+    +0.43). The post-2023 fall in gold PLG requests (−0.28, −0.38) is here.
+- **Enforcement presence** (lead 3's 2019 shock).
+  - *Design:* presence is the log mean yearly IBAMA fines of 2010–2014 (any infraction),
+    standardised over the Legal Amazon. On 2015–2024, presence × post-2019 and
+    × post-2023, with the price × deposits control, municipality and year FE, Otto-3
+    clusters (143) and the wild-cluster bootstrap.
+  - *Checks:* presence from non-mining fines or from 2005–2010; state×year, IGD×year and
+    gold×year FE; without Roraima; gold municipalities only.
+- **Estimates** (per SD of presence; Otto-3 p; bootstrap p):
+
+  | Outcome | × post-2019 | × post-2023 |
+  |---|---|---|
+  | IBAMA fines (first stage) | −0.192 (<0.001; <0.001) | +0.126 (<0.001; <0.001) |
+  | Garimpo cases | +0.089 (0.03; 0.03) | −0.022 (0.32) |
+  | Incoming garimpo cases | +0.080 (0.015; 0.014) | −0.014 (0.48) |
+  | Local garimpo cases | +0.063 (0.09; 0.10) | −0.028 (0.33) |
+  | Gold PLG requests | +0.049 (0.046; 0.045) | −0.031 (0.27) |
+  | Non-garimpo malaria (placebo) | +0.028 (0.47; 0.51) | −0.080 (0.014) |
+
+  - *Event study:* fines are 0.13–0.18 above 2018 in 2015–17 and −0.14 in 2020; cases are
+    flat in 2015–17 (within ±0.025) and rise from +0.065 (2019) to +0.124 (2022).
+  - *Cases:* +0.075 to +0.089 with the presence variants and the IGD×year and gold×year
+    FE; +0.066 (p 0.09) with state×year FE and +0.069 (p 0.09) without Roraima; +0.24
+    (p 0.035) within gold municipalities.
+  - *Requests:* +0.03 to +0.06 in the checks, p 0.05–0.28.
+- **Reading.**
+  - The 2019 break in IGD municipalities is mostly the Roraima rush, which was building
+    before 2019 and ended with the 2023 operation. Outside Roraima, IGD cases rise from
+    2019 and keep rising.
+  - Across the Legal Amazon, garimpo rose where the enforcement collapse removed the
+    most deterrence: a 10% fall in fines goes with about 4.6% more garimpo cases, mostly
+    incoming crews. The placebo does not move.
+  - Fines in high-presence municipalities already drop from 2017 to 2018; cases rise
+    from 2019, the first year of the new federal government, so signals may have mattered
+    as much as the fines.
+  - The recovery of fines after 2023 has not yet brought cases down significantly, and
+    the placebo falls after 2023, so the post-2023 term is not clean.
+  - Presence is not random: IBAMA was present on the deforestation frontier. The design
+    rests on parallel trends in 2015–18, which hold for cases, requests and the placebo.
 
 ## Data inventory
 
