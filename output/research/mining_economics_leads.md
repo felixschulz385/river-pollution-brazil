@@ -409,7 +409,7 @@ X_mt = β_13·(IGD_m × post-2013_t) + β_23·(IGD_m × post-2023_t)
     onward) and integral-protection units or extractive reserves, in force by 2012.
     Lands are dated by FUNAI's first declaration, homologation or registry act, units
     by their creation year.
-    - Thin locally: 27 Legal Amazon municipalities, 204 occurrences, mostly in Pará,
+    - Thin locally: 27 Legal Amazon municipalities, 205 occurrences, mostly in Pará,
       Roraima and Amapá.
     - Upstream: 12 municipalities within 50 km, 31 within 200 km, 127 without limit, 73
       by the Otto-4 rule.
@@ -1251,6 +1251,8 @@ tables in `output/analysis/garimpo/laundering/`.*
     municipalities, rebuilding every IGD term.
 - **Exposure.** 27 of 772 municipalities, in 19 Otto-3 basins (Pará 9, Roraima 6,
   Amapá 6). They hold 42% of garimpo cases and 14% of gold PLG requests.
+  - The same 27 are exposed whether Indigenous lands are dated by FUNAI's acts or
+    counted as in force from homologation onward by their current stage.
 - **Event study** (IGD vs. other municipalities, relative to 2012):
   - *C11 garimpo:* the gap falls smoothly from +0.05 pp (2004) to −0.03 pp (2019), with
     no step in 2013.
