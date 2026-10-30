@@ -85,6 +85,13 @@ relapse are counted?
     sits in the top presence quintile, mostly Pará and Mato Grosso.
   - When fines recover in 2023, cases do not fall back significantly
     ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse)).
+- **Single raids show no displacement within a year.**
+  - IBAMA's garimpo raids of 2019–2023 (103 episodes) come where malaria is rising,
+    garimpo and other malaria alike.
+  - Against other malaria, garimpo cases at the raided municipality fall slightly
+    (−0.03 to −0.05, not significant), and bordering municipalities do not gain cases.
+  - Monthly SIVEP allows falls of up to about 15–20% at the raid site
+    ([E14](#e14-raids-and-displacement)).
 - **Night lights do not measure garimpo.** In VIIRS annual composites, barred areas near
   gold are dark: none of 36,911 such pixels in Roraima's IGD municipalities is lit
   during the rush. Light near gold does not move with garimpo cases, and the composites
@@ -883,7 +890,16 @@ The ADM2 panel carries:
      survives the deforestation-frontier controls and permutation inference.
    - Over 90% of garimpo seizures and destructions carry coordinates. Destruction terms
      rarely reference a fine, so they link to the rest of an operation by operation code.
-   - Still to do: substitute sites, the displacement ratio and the crew logit.
+   - Raids and displacement by month ([E14](#e14-raids-and-displacement)): single raids
+     in 2019–2023 neither measurably reduce garimpo cases where they happen within a year,
+     nor raise them in bordering municipalities, so the displacement ratio is not
+     identified.
+   - Still to do:
+     - SIVEP's preliminary 2025–26 data (Zenodo 20706949), to cover the 2024 surge in
+       raids;
+     - substitute sites farther away, by river distance or from the residence flows;
+     - the large operations (Yanomami 2023, the Madeira dredges) as separate events;
+     - the crew logit.
 6. **Lead 4.** FUNAI stages, CNUC dates, anticipation around PL 191/2020.
 7. **Optional water outcome.** Station turbidity from 2008, or satellite river
    turbidity, as a pollution outcome of upstream garimpo ([E8](#e8-amazon-station-coverage-for-turbidity)).
@@ -1501,6 +1517,45 @@ tables in `output/analysis/garimpo/nightlights/`.*
       lights;
     - light at C11 garimpo polygons rather than at gold occurrences;
     - the C11 active-phase share, to 2019.
+
+### E14. Raids and displacement
+
+*Code: `src/analysis/garimpo_raids.py`, `output/notebooks/garimpo/06_raids.ipynb`; tables
+in `output/analysis/garimpo/raids/`. Monthly cases: `malaria_adm2_monthly.parquet`.*
+
+- **Question.** Do IBAMA's garimpo raids reduce garimpo where they happen, and does it
+  move next door (lead 3's displacement ratio)?
+- **Design.**
+  - *Raids:* garimpo destruction and seizure terms (`enforcement`).
+  - *Cases:* SIVEP garimpo cases by infection municipality and notification month, to
+    2024.
+  - *Episode:* a municipality's first raid month after 12 months without one, 2019–2023.
+    There are 103 episodes in 79 municipalities: 44 large (3+ terms), and 43
+    malaria-visible (12+ garimpo cases in the year before).
+  - *Stacked event study* over months −12 to +12, for the raided municipality and for
+    its unraided bordering municipalities. Controls: sample municipalities neither
+    raided in the window nor bordering. Episode × municipality and episode × month FE;
+    clustered by municipality.
+- **Raids follow malaria.**
+  - In the year before a visible raid, garimpo cases rise by 0.35 log points into the
+    raid month. Non-garimpo malaria rises as much (0.34).
+  - Both stay at that level after the raid. Raids are timed to local malaria peaks, so
+    the plain event study cannot isolate a raid effect.
+- **Against other malaria** (triple difference; flat before the raid, −0.06 to +0.04):
+  - *At the raid:* −0.05 (p 0.34) for all raids, −0.03 (p 0.78) for visible ones. The
+    95% intervals reach about −0.15 and −0.20.
+  - *Bordering municipalities:* −0.02 to −0.10 (p ≥ 0.10). No raid sample shows a gain
+    next door, so the displacement ratio is not defined.
+- **Reading.**
+  - A single raid of the size IBAMA ran in 2019–2023 does not measurably reduce garimpo
+    malaria where it happens within a year, and crews do not show up in bordering
+    municipalities.
+  - Displacement may go farther than the next municipality, or out of the region. A
+    raid may also stop operations without stopping infection among those who stay, or
+    SIVEP may be too coarse for one raid.
+  - The 2024 surge in raids (1,080 terms) lies beyond SIVEP's 2024 end. Together with
+    E12, the evidence so far is that the level of deterrence matters (the 2019
+    collapse), more than any single raid.
 
 ## Data inventory
 

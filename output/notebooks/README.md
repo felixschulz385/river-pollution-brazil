@@ -57,6 +57,10 @@ Other notebooks:
   C11 area, the composites' brightness-specific jumps, and E12's IGD and presence dates
   on light with brightness class × year FE (Evidence E13;
   `src/analysis/garimpo_nightlights.py`).
+- `garimpo/06_raids.ipynb`: do IBAMA's garimpo raids reduce garimpo malaria where they
+  happen and move it next door? A stacked monthly event study of 2019–2023 raid episodes
+  for the raided and the bordering municipalities, with a triple difference against
+  non-garimpo malaria (Evidence E14; `src/analysis/garimpo_raids.py`).
 - `health/upstream_mining_municipality_map.ipynb`: municipality upstream-deforestation
   map (moved from `src/analysis/notebooks/`; its `land_cover.feather` input is stale).
 - `pollution/maps.ipynb`: upstream drainage-area maps for four example sensors
@@ -121,7 +125,9 @@ is 2019Q3). C11 garimpo and garimpo cases do not follow either date.
 Roraima rush, and that across the Legal Amazon garimpo cases rose from 2019 where IBAMA
 had been present and its fines fell. `garimpo/05_nightlights` finds that VIIRS annual
 composites do not see garimpo: barred areas near gold are dark, and light near gold does
-not track garimpo cases. Results are recorded in
+not track garimpo cases. `garimpo/06_raids` finds that single raids in 2019–2023 neither
+reduce garimpo malaria measurably within a year nor move it to bordering municipalities.
+Results are recorded in
 `output/research/mining_economics_leads.md` (Evidence).
 
 ## Sub-basins (Otto Pfafstetter)
