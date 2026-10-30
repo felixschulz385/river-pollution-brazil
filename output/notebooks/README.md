@@ -62,6 +62,9 @@ Other notebooks:
   to April 2025
   for the raided and the bordering municipalities, with a triple difference against
   non-garimpo malaria (Evidence E14; `src/analysis/garimpo_raids.py`).
+- `garimpo/07_groups.ipynb`: who responds to what? Local and incoming garimpo cases, and
+  their difference, on drought, upstream garimpo, the gold price × deposits and
+  enforcement presence (lead 2's prediction 5; Evidence E15; `src/analysis/garimpo_groups.py`).
 - `health/upstream_mining_municipality_map.ipynb`: municipality upstream-deforestation
   map (moved from `src/analysis/notebooks/`; its `land_cover.feather` input is stale).
 - `pollution/maps.ipynb`: upstream drainage-area maps for four example sensors
@@ -114,8 +117,8 @@ nor Moreno-Louzada's gold price × upstream deposits design (`health/04`) gives 
 health effect: both fail the injury placebo. Coefficients are exported to
 `output/analysis/health/`; see [`health/README.md`](health/README.md).
 
-**Garimpo: initial evidence for leads 1 and 3.** Results are recorded in
-`output/research/mining_economics_leads.md` (Summary and Evidence E3–E14).
+**Garimpo: initial evidence for leads 1–3.** Results are recorded in
+`output/research/mining_economics_leads.md` (Summary and Evidence E3–E15).
 - `garimpo/01_measurement`: C11, SIVEP-Malária and the SGB geology as measures of
   garimpo.
 - `garimpo/02_price_supply`: garimpo in gold-geology municipalities does not follow the
@@ -131,6 +134,9 @@ health effect: both fail the injury placebo. Coefficients are exported to
 - `garimpo/05_nightlights`: VIIRS annual composites do not see garimpo.
 - `garimpo/06_raids`: a single raid (2019 to April 2025) neither reduces garimpo malaria
   measurably within a year nor moves it to bordering municipalities.
+- `garimpo/07_groups`: drought and upstream garimpo do not move local workers more than
+  incoming ones. Incoming workers gain on local ones in deposit municipalities as the
+  price rises, which cannot be told from a trend.
 
 ## Sub-basins (Otto Pfafstetter)
 

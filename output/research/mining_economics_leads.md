@@ -26,7 +26,7 @@ relapse are counted?
   - mining permits from the National Mining Agency (ANM).
 - **Health** is a consequence, not the headline.
 - **Framing.** Which lever carries the paper is decided once every lead has initial
-  evidence. Leads 1 and 3 have it; leads 2 and 4 do not yet.
+  evidence. Leads 1–3 have it; lead 4 does not yet.
 
 **Where each part stands.**
 
@@ -37,7 +37,7 @@ relapse are counted?
 | Lead 1: laundering rules | done | Permits move by year, but not when the 2013 rule starts; garimpo follows neither date | E11 |
 | Lead 3: enforcement collapse | done | Where IBAMA had been present, fines fell after 2019 and garimpo cases rose, mostly incoming crews | E12 |
 | Lead 3: raids and displacement | first pass | A single raid has no measurable effect at the site or next door within a year | E14 |
-| Lead 2: crews and residents | measurement only | Incoming cases carry the response to enforcement; the residents' side is untested | E5, E12 |
+| Lead 2: crews and residents | first pass | Drought and upstream garimpo do not move local workers more than incoming ones; incoming workers gain on local ones in deposit municipalities as the price rises, which cannot be told from a trend | E5, E12, E15 |
 | Lead 4: demarcation | not started | Data in the pipeline | — |
 | Pollution and health arms | done | No credible downstream health effect of mining; metal violations rise with upstream pasture and mining; mercury is not measured in the Amazon | E1, E2, E4, E9 |
 
@@ -89,6 +89,16 @@ relapse are counted?
     Bordering municipalities do not gain cases.
   - From 2023 IBAMA raids the same municipalities month after month, which a design on
     first raids does not capture.
+- **Residents do not respond to the shocks the model gives them** ([E15](#e15-who-responds-to-what-local-and-incoming-workers)).
+  - This year's drought raises local and incoming garimpo cases alike (+0.03 per SD),
+    as it raises other malaria: transmission.
+  - Last year's drought raises incoming cases more than local ones (−0.019, p 0.02), the
+    opposite of the prediction; nothing survives state × year FE.
+  - Upstream garimpo moves neither group, but it barely varies within municipalities.
+  - In deposit municipalities, local cases fall relative to incoming ones as the gold
+    price rises (−0.20 per log point, p 0.02; also before 2019 and without Roraima).
+    The price in reais moves almost like a trend, so this is a shift in who mines
+    there rather than a price response.
 - **Pollution and health.**
   - *Pollution:* upstream pasture raises lead and cadmium violations and agriculture
     raises COD; mining raises lead violations. The stations have almost no mercury
@@ -103,8 +113,8 @@ relapse are counted?
 
 **Open before the framing call.**
 
-- Initial evidence for lead 2 (residents' response to drought and fishing; the
-  downstream-spread test) and lead 4 (demarcation stages).
+- Initial evidence for lead 4 (demarcation stages).
+- Lead 2: the downstream-spread test, and fishing dependence for the residents' side.
 - A novelty check on malaria importation by miners.
 - Lead 3: raid intensity for the sustained campaigns, displacement beyond bordering
   municipalities, and E12 through 2025 (the panel stops in 2024).
@@ -534,14 +544,20 @@ shock of opposite sign.
 by locals turning to mining as their traditional economy erodes, and how do the two
 interact?
 
-**Evidence so far.** Measurement, and one response.
+**Evidence so far.**
 
 - SIVEP splits garimpo cases into local and incoming workers, who are different
   populations ([E5](#e5-sivep-as-a-measure-of-garimpo-workers)).
-- The response to the enforcement collapse is mostly among incoming workers (+0.080 per
-  SD of presence, against +0.063 for local cases), as the model predicts for crews
-  ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse)).
-- The residents' side (drought, fishing, relapse) and the spread test are untested.
+- Prediction 5, first pass ([E15](#e15-who-responds-to-what-local-and-incoming-workers)):
+  - *Crews:* incoming workers respond to the enforcement collapse about as much as local
+    ones (+0.098 against +0.080 per SD of presence; the difference is not significant).
+    In deposit municipalities they gain on local workers as the gold price rises
+    (−0.20 per log point), which cannot be told from a trend.
+  - *Residents:* drought raises both groups alike (transmission), last year's drought
+    raises incoming cases more, and upstream garimpo moves neither. The residents'
+    side shows no response.
+- The downstream-spread test (prediction 2), fishing dependence and relapse are
+  untested.
 
 **Model.**
 
@@ -896,17 +912,15 @@ substitute sites of lead 3.
 
 **Next, toward initial evidence for every lead.**
 
-1. **Lead 2, first pass.**
-   - Prediction 5: local vs. incoming cases on drought (ERA5-Land) and on upstream
-     mining.
-   - Prediction 2: a downstream aggregation of mining, for the spread test.
-   - To add for the residents' side: registered fishers and seguro-defeso, Bolsa
-     Família.
-2. **Lead 4, first pass.**
+1. **Lead 4, first pass.**
    - FUNAI stages and dates (in `protected_areas`) and CNUC dates.
    - Anticipation around PL 191/2020.
    - Permit requests over Indigenous lands (ANM microdata, SIGMINE).
-3. **Malaria importation.** Novelty check first, then the test with the flow table.
+2. **Malaria importation.** Novelty check first, then the test with the flow table.
+3. **Lead 2, continued.** Prediction 5 has a first pass ([E15](#e15-who-responds-to-what-local-and-incoming-workers)).
+   - Prediction 2: a downstream aggregation of mining, for the spread test.
+   - The residents' side with fishing dependence: registered fishers and seguro-defeso,
+     Bolsa Família.
 4. **Lead 3, continued.**
    - Raid intensity: monthly raid terms or operations as a continuous treatment, for the
      sustained campaigns of 2023–25.
@@ -1572,6 +1586,56 @@ in `output/analysis/garimpo/raids/`. Monthly cases: `malaria_adm2_monthly.parque
   - Together with E12, the evidence so far is that the level of deterrence matters (the
     2019 collapse) more than any single raid. The sustained campaigns of 2023–25 need a
     design on raid intensity.
+
+### E15. Who responds to what: local and incoming workers
+
+*Code: `src/analysis/garimpo_groups.py`, `output/notebooks/garimpo/07_groups.ipynb`;
+tables in `output/analysis/garimpo/groups/`.*
+
+- **Question.** Lead 2's prediction 5: do outside crews respond to the returns to a site
+  (the gold price, enforcement) and local residents to the erosion of their traditional
+  economy (drought, mining upstream)?
+- **Design.**
+  - *Sample:* the 437 Legal Amazon municipalities with a garimpo case in 2004–2024.
+  - *Outcomes:* log(1 + local) and log(1 + incoming) garimpo cases by infection
+    municipality, and their difference. Both groups are infected in the same place, so a
+    shock to transmission that scales both alike drops out of the difference.
+    Non-garimpo malaria is the comparison.
+  - *Residents' shocks:*
+    - drought: the precipitation deficit of the municipality's own catchment
+      (ERA5-Land), standardised within the municipality, this year and last;
+    - upstream garimpo: the C11 garimpo share within 200 km or 50 km upstream, with the
+      municipality's own share as a control, 2004–2019.
+  - *Crews' shocks:* the gold price × never-exploited deposits (E10), and enforcement
+    presence × post-2019 (E12).
+  - Municipality and year FE, unweighted, Otto-3 clusters and the wild-cluster bootstrap.
+- **Drought.** The share of garimpo municipalities more than 1 SD dry is 62% in 2015,
+  64% in 2023 and 60% in 2024.
+  - *This year:* local and incoming cases both rise about 0.03 per SD (p 0.05–0.09), as
+    does other malaria. That is transmission, and the difference is zero.
+  - *Last year:* incoming cases rise more than local ones (difference −0.019, p 0.02;
+    −0.020 without Roraima), the opposite of the prediction.
+  - With state × year FE every drought term vanishes (p ≥ 0.2).
+- **Upstream garimpo.** No response in either group (−0.25 to −0.34 per pp at 200 km,
+  p ≥ 0.27). Its within-municipality SD is only 0.048 pp, so the test has little power.
+- **Gold price × deposits.**
+  - Local minus incoming is −0.20 per log point (p 0.02); −0.12 without Roraima (p 0.04);
+    −0.20 in 2004–2018 (p 0.047).
+  - Before 2019 it comes from local cases falling (−0.20, ns), not incoming cases
+    rising (0.00). The price in reais moves almost like a trend, so this is a shift in
+    who mines in deposit municipalities that cannot be told from a deposit-specific
+    trend.
+- **Enforcement presence × post-2019.** Incoming +0.098 (p 0.017), local +0.080 (p 0.10);
+  the difference is not significant.
+- **Reading.**
+  - There is no sign that residents turn to mining after drought or upstream mining.
+    The shocks either move both groups alike or favour incoming workers.
+  - The crew side is consistent with the model (incoming workers gain where the gold
+    is, and respond to the enforcement collapse), but neither result separates crews
+    from residents cleanly.
+  - Annual precipitation may be the wrong measure of a livelihood shock: fishing
+    depends on the flood pulse and river level, not annual rainfall. Fishing dependence
+    (registered fishers, seguro-defeso) is the missing piece of the residents' test.
 
 ## Data inventory
 
