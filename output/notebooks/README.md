@@ -65,6 +65,10 @@ Other notebooks:
 - `garimpo/07_groups.ipynb`: who responds to what? Local and incoming garimpo cases, and
   their difference, on drought, upstream garimpo, the gold price × deposits and
   enforcement presence (lead 2's prediction 5; Evidence E15; `src/analysis/garimpo_groups.py`).
+- `garimpo/08_demarcation.ipynb`: does pending protection attract garimpo into
+  Indigenous lands? C11 garimpo inside each Legal Amazon land from the river trenches, by
+  stage, and stacked event studies around declaration and homologation (lead 4; Evidence
+  E16; `src/analysis/garimpo_demarcation.py`).
 - `health/upstream_mining_municipality_map.ipynb`: municipality upstream-deforestation
   map (moved from `src/analysis/notebooks/`; its `land_cover.feather` input is stale).
 - `pollution/maps.ipynb`: upstream drainage-area maps for four example sensors
@@ -117,8 +121,8 @@ nor Moreno-Louzada's gold price × upstream deposits design (`health/04`) gives 
 health effect: both fail the injury placebo. Coefficients are exported to
 `output/analysis/health/`; see [`health/README.md`](health/README.md).
 
-**Garimpo: initial evidence for leads 1–3.** Results are recorded in
-`output/research/mining_economics_leads.md` (Summary and Evidence E3–E15).
+**Garimpo: initial evidence for every lead.** Results are recorded in
+`output/research/mining_economics_leads.md` (Summary and Evidence E3–E16).
 - `garimpo/01_measurement`: C11, SIVEP-Malária and the SGB geology as measures of
   garimpo.
 - `garimpo/02_price_supply`: garimpo in gold-geology municipalities does not follow the
@@ -137,6 +141,9 @@ health effect: both fail the injury placebo. Coefficients are exported to
 - `garimpo/07_groups`: drought and upstream garimpo do not move local workers more than
   incoming ones. Incoming workers gain on local ones in deposit municipalities as the
   price rises, which cannot be told from a trend.
+- `garimpo/08_demarcation`: declaration and homologation do not move garimpo inside
+  Indigenous lands. Garimpo sits in a few large, long-regularised lands and surges after
+  2019.
 
 ## Sub-basins (Otto Pfafstetter)
 

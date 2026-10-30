@@ -26,7 +26,7 @@ relapse are counted?
   - mining permits from the National Mining Agency (ANM).
 - **Health** is a consequence, not the headline.
 - **Framing.** Which lever carries the paper is decided once every lead has initial
-  evidence. Leads 1–3 have it; lead 4 does not yet.
+  evidence. All four leads now have it.
 
 **Where each part stands.**
 
@@ -38,7 +38,7 @@ relapse are counted?
 | Lead 3: enforcement collapse | done | Where IBAMA had been present, fines fell after 2019 and garimpo cases rose, mostly incoming crews | E12 |
 | Lead 3: raids and displacement | first pass | A single raid has no measurable effect at the site or next door within a year | E14 |
 | Lead 2: crews and residents | first pass | Drought and upstream garimpo do not move local workers more than incoming ones; incoming workers gain on local ones in deposit municipalities as the price rises, which cannot be told from a trend | E5, E12, E15 |
-| Lead 4: demarcation | not started | Data in the pipeline | — |
+| Lead 4: demarcation | first pass | Declaration and homologation do not move garimpo inside lands; garimpo sits in a few large, long-regularised lands and surges after 2019 | E16 |
 | Pollution and health arms | done | No credible downstream health effect of mining; metal violations rise with upstream pasture and mining; mercury is not measured in the Amazon | E1, E2, E4, E9 |
 
 **Findings.**
@@ -99,6 +99,14 @@ relapse are counted?
     price rises (−0.20 per log point, p 0.02; also before 2019 and without Roraima).
     The price in reais moves almost like a trend, so this is a shift in who mines
     there rather than a price response.
+- **Demarcation stages do not move garimpo** ([E16](#e16-demarcation-and-garimpo-inside-indigenous-lands)).
+  - C11 garimpo inside Legal Amazon Indigenous lands grows from 9,879 ha (2010) to
+    17,974 (2019) and 41,503 (2025).
+  - Kayapó, Munduruku and Yanomami hold 82% of it in 2019, and regularised lands 98%.
+    Pending lands have almost none.
+  - Neither declaration nor homologation changes garimpo inside a land (all lands:
+    pooled −0.011 to +0.022 log ha, p ≥ 0.12). Most stage events fall in 1991–2004,
+    before garimpo grew.
 - **Pollution and health.**
   - *Pollution:* upstream pasture raises lead and cadmium violations and agriculture
     raises COD; mining raises lead violations. The stations have almost no mercury
@@ -113,7 +121,6 @@ relapse are counted?
 
 **Open before the framing call.**
 
-- Initial evidence for lead 4 (demarcation stages).
 - Lead 2: the downstream-spread test, and fishing dependence for the residents' side.
 - A novelty check on malaria importation by miners.
 - Lead 3: raid intensity for the sustained campaigns, displacement beyond bordering
@@ -833,7 +840,17 @@ its borders, with the workers' origins observed. It directly tests prediction 1 
 **Question.** Does the gap between legal protection and actual control, especially while
 demarcation is pending, attract garimpo into Indigenous lands and protected areas?
 
-**Evidence so far.** None; the data are in the pipeline (below).
+**Evidence so far** ([E16](#e16-demarcation-and-garimpo-inside-indigenous-lands)).
+
+- C11 garimpo inside each land is measured from the river trenches. Kayapó's 2020 area
+  (11,582 ha) matches MapBiomas's published figure.
+- Garimpo inside lands sits in a few large lands regularised long ago (Kayapó,
+  Munduruku, Yanomami), and it surges after 2019. Pending lands hold almost none.
+- Neither declaration nor homologation moves garimpo inside a land. The stage events
+  fall mostly in 1991–2004, when garimpo inside lands was small, so the test has little
+  power for the lands that matter.
+- So far the evidence points to protection without control (lead 3), not to pending
+  status. Anticipation of PL 191/2020 is untested.
 
 **Mechanism.**
 
@@ -912,10 +929,12 @@ substitute sites of lead 3.
 
 **Next, toward initial evidence for every lead.**
 
-1. **Lead 4, first pass.**
-   - FUNAI stages and dates (in `protected_areas`) and CNUC dates.
-   - Anticipation around PL 191/2020.
-   - Permit requests over Indigenous lands (ANM microdata, SIGMINE).
+1. **Lead 4, continued.** The stages have a first pass ([E16](#e16-demarcation-and-garimpo-inside-indigenous-lands)).
+   - Anticipation around PL 191/2020: permit requests over Indigenous lands (ANM
+     microdata, SIGMINE polygons), and garimpo inside lands from 2020 with C11's step
+     absorbed by year FE.
+   - Garimpo inside lands against enforcement presence and the 2019 collapse (E12 at
+     the land level).
 2. **Malaria importation.** Novelty check first, then the test with the flow table.
 3. **Lead 2, continued.** Prediction 5 has a first pass ([E15](#e15-who-responds-to-what-local-and-incoming-workers)).
    - Prediction 2: a downstream aggregation of mining, for the spread test.
@@ -1637,6 +1656,49 @@ tables in `output/analysis/garimpo/groups/`.*
     depends on the flood pulse and river level, not annual rainfall. Fishing dependence
     (registered fishers, seguro-defeso) is the missing piece of the residents' test.
 
+### E16. Demarcation and garimpo inside Indigenous lands
+
+*Code: `src/analysis/garimpo_demarcation.py`, `output/notebooks/garimpo/08_demarcation.ipynb`;
+tables in `output/analysis/garimpo/demarcation/`. Overlaps:
+`protected_areas_trenches.parquet`.*
+
+- **Question.** Lead 4: does pending protection attract garimpo into Indigenous lands,
+  and does completing demarcation push it out?
+- **Measure.** C11 garimpo (gold, unknown substance, other) inside each land, from the
+  river trenches. Each trench's pixels count in proportion to the share of its drainage
+  polygon inside the land.
+  - Kayapó's 2020 area (11,582 ha) matches MapBiomas's published figure (about
+    11,500 ha).
+  - Lands: 407 Indigenous lands with their centroid in the Legal Amazon; 25 have an SGB
+    gold occurrence inside.
+- **Where garimpo is.**
+  - Inside lands: 2,191 ha (1985), 9,180 (2000), 9,879 (2010), 17,974 (2019), 41,503
+    (2025).
+  - Kayapó 9,217 ha, Munduruku 3,538 and Yanomami 2,041 in 2019: 82% of the total. They
+    reach 18,440, 8,741 and 5,240 ha in 2025, and Sararé 3,489.
+  - By current stage: 18 of 331 regularised lands have garimpo in 2019, holding 98% of
+    it; 3 of 27 declared lands hold 258 ha (mostly Sawré Muybu); lands delimited, under
+    study or awaiting homologation or registry hold almost none.
+- **Design.** Stacked event studies around each land's declaration and homologation year
+  (event years 1990–2012, years −5 to +7, 1985–2019). The comparison is lands without
+  the event in the window. Episode × land and episode × year FE; clustered by land.
+  - Declarations: 20 cohorts, 185 lands. Homologations: 21 cohorts, 263 lands.
+- **Results.**
+  - *All lands:* the garimpo share, any garimpo and log hectares stay flat. Pooled
+    effects are −0.011 to +0.022 (p ≥ 0.12).
+  - *Lands with gold inside* (12–17 treated lands): after homologation, log hectares are
+    −0.10 to −0.19 below the year before (pooled −0.21, p 0.21). Before declaration,
+    garimpo rises into the event.
+- **Reading.**
+  - Garimpo inside Indigenous lands is not drawn to pending lands, and completing
+    demarcation does not visibly push it out.
+  - It concentrates in large, long-regularised lands with gold and river access, and
+    surges after 2019 with the enforcement collapse (E12). That is protection without
+    control.
+  - The stage events fall mostly in 1991–2004, when garimpo inside lands was small, so
+    the test has little power for the lands that matter. The recent declarations (2016,
+    2024–25) need C11 after its 2020 step.
+
 ## Data inventory
 
 | Data | Source | Use | Status |
@@ -1651,7 +1713,7 @@ tables in `output/analysis/garimpo/groups/`.*
 | Mining permits with type, ore, dates, flags | ANM Cadastro Mineiro microdata; MapBiomas Monitor da Mineração | laundering exposure, ghost permits, anticipation | in pipeline (`mining`: PLG requests, grants, PLGs in force); events and the Monitor layer to add |
 | Royalty payments (CFEM) | ANM | declared output | not usable for garimpo (E7) |
 | Fines, embargoes, seizures, destruction terms | IBAMA Fiscalização open data | enforcement shocks, relapse timing | in pipeline (`enforcement`: records and municipality × year counts, mining and garimpo classes); seizures stop in 2026-05 in the current snapshot |
-| Indigenous lands with stage and dates | FUNAI GeoServer (`tis_poligonais_portarias`), by hand over a Brazilian VPN | IGD, lead 4 | in pipeline (`protected_areas`: boundaries, current stage, the date and act of each stage; snapshot 2026-10-29) |
+| Indigenous lands with stage and dates | FUNAI GeoServer (`tis_poligonais_portarias`), by hand over a Brazilian VPN | IGD, lead 4 | in pipeline (`protected_areas`: boundaries, current stage, the date and act of each stage, and the share of each river trench inside each land; snapshot 2026-10-29) |
 | Protected areas with creation dates | CNUC, via INPE TerraBrasilis | IGD, lead 4 | in pipeline (`protected_areas`: boundaries, category, creation year; units up to about 2020) |
 | Gold price | World Bank Pink Sheet × BCB BRL/USD rate | price shock | in pipeline (`commodity_prices`) |
 | Gold-buying points (DTVM/PCO) | ANM, Central Bank | laundering exposure by site | to add |
