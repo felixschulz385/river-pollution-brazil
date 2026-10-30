@@ -49,7 +49,9 @@ Other notebooks:
 - `garimpo/04_shift_2019.ipynb`: is the 2019–20 shift in garimpo the Roraima rush or the
   collapse of IBAMA enforcement? Totals and the IGD event study by state, and IBAMA
   presence before 2015 × post-2019 and × post-2023 on fines, garimpo cases, gold PLG
-  requests and non-garimpo malaria (Evidence E12; `src/analysis/garimpo_shift.py`).
+  requests and non-garimpo malaria, with deforestation-frontier controls, forest loss as an
+  outcome, permutation inference and presence quintiles (Evidence E12;
+  `src/analysis/garimpo_shift.py`).
 - `garimpo/05_nightlights.ipynb`: do VIIRS night lights measure garimpo activity? Light
   in the whole municipality, near gold and inside barred areas against garimpo cases and
   C11 area, the composites' brightness-specific jumps, and E12's IGD and presence dates

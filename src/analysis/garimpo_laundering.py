@@ -146,8 +146,10 @@ def spec_data(frame, outcome, exposure=IGD, years=None, law_year=LAW_YEAR, colla
     return data, exposure_terms, controls, periods
 
 
-def permutation_p(data, exposure, exposure_terms, controls, periods, fe=FE, draws=RI_DRAWS, seed=M.SEED):
-    """Two-sided permutation p-values of the exposure terms, permuting the exposure across municipalities.
+def permutation_p(data, exposure, exposure_terms, controls, periods, fe=FE, draws=RI_DRAWS, seed=M.SEED,
+                  strata=None):
+    """Two-sided permutation p-values of the exposure terms, permuting the exposure across municipalities
+    (within the groups of `strata`, a column constant within municipalities, if given).
 
     Each draw reassigns the municipalities' exposure values at random, rebuilds
     every exposure term, and recomputes the coefficients by FWL net of the FE
@@ -156,6 +158,17 @@ def permutation_p(data, exposure, exposure_terms, controls, periods, fe=FE, draw
     weights = np.ones(len(data))
     municipalities, position = np.unique(data["mun_id"].to_numpy(), return_inverse=True)
     exposure_by_mun = data.groupby("mun_id")[exposure].first().reindex(municipalities).to_numpy(dtype=np.float64)
+    groups = [np.arange(len(municipalities))] if strata is None else [
+        np.flatnonzero(labels == label)
+        for labels in [data.groupby("mun_id")[strata].first().reindex(municipalities).to_numpy()]
+        for label in np.unique(labels)
+    ]
+
+    def permute(rng):
+        permuted = exposure_by_mun.copy()
+        for group in groups:
+            permuted[group] = rng.permutation(exposure_by_mun[group])
+        return permuted
     period_values = np.column_stack([
         periods[name.split("__x__")[1]](data["year"]).to_numpy(dtype=np.float64) for name in exposure_terms
     ])
@@ -189,7 +202,7 @@ def permutation_p(data, exposure, exposure_terms, controls, periods, fe=FE, draw
     simulated = []
     for start in range(0, draws, RI_CHUNK):
         n = min(RI_CHUNK, draws - start)
-        permuted = np.column_stack([rng.permutation(exposure_by_mun) for _ in range(n)])
+        permuted = np.column_stack([permute(rng) for _ in range(n)])
         simulated.append(betas(permuted))
     simulated = np.concatenate(simulated)
     p_values = (1 + (np.abs(simulated) >= np.abs(observed)).sum(axis=0)) / (1 + draws)

@@ -20,6 +20,12 @@ candidate causes.
   and gold PLG requests are the reduced forms; non-garimpo malaria is the
   placebo. Presence covers most municipalities, so Otto-3 clustering and the
   wild-cluster bootstrap apply without the few-treated problem of IGD.
+
+Presence marks the deforestation frontier, and clearing also surged from 2019.
+The checks add the frontier (forest loss in 2010-2014 and forest cover in 2014,
+each x post-2019 and x post-2023), current forest loss (a bad control, as a
+bound), a presence trend, forest loss as an outcome, permutation inference
+(all municipalities and within states) and presence quintiles x the periods.
 """
 
 from __future__ import annotations
@@ -33,6 +39,8 @@ from src.analysis.inference import wild_cluster_bootstrap
 
 YEARS = (2015, 2024)
 PRESENCE_YEARS = (2010, 2014)
+FRONTIER_YEARS = (2010, 2014)
+FRONTIER = ("frontier_loss", "forest_2014")  # standardised, x post-2019 and x post-2023
 EARLY_PRESENCE_YEARS = (2005, 2010)
 SHIFT_YEAR = 2019  # IBAMA fines fall from 2019 (new federal government, January 2019)
 RECOVERY_YEAR = 2023  # and recover in 2023
@@ -53,7 +61,13 @@ OUTCOMES = {
     "log1p_garimpo_incoming": "log(1 + incoming garimpo cases)",
     "log1p_plg_requests_gold": "log(1 + gold PLG requests)",
     "log1p_other_malaria": "log(1 + other malaria cases), placebo",
+    "forest_loss": "forest loss, own trenches (pp)",
 }
+PERIODS = {
+    "post2019": lambda year: (year >= SHIFT_YEAR).astype(float),
+    "post2023": lambda year: (year >= RECOVERY_YEAR).astype(float),
+}
+DOSE_BINS = 5
 
 IGD_RORAIMA = "igd_roraima"
 IGD_OTHER = "igd_other_states"
@@ -74,6 +88,10 @@ def standardised_presence(frame, column, years):
     return frame["mun_id"].map((pre - pre.mean()) / pre.std())
 
 
+def standardised(values):
+    return (values - values.mean()) / values.std()
+
+
 def build_frame(path=None):
     """Lead 1's Legal Amazon panel with enforcement presence, the extra outcomes, groups and FE keys."""
     frame = L.build_frame(path)
@@ -83,6 +101,11 @@ def build_frame(path=None):
     frame["presence_early"] = standardised_presence(frame, "ibama_fines_all", EARLY_PRESENCE_YEARS)
     frame["log1p_fines_all"] = np.log1p(frame["ibama_fines_all"])
     frame["other_malaria"] = (frame["inf_cases"] - frame["inf_garimpo"]).clip(lower=0)
+    frame = frame.sort_values(["mun_id", "year"]).reset_index(drop=True)
+    frame["forest_loss"] = -100 * frame.groupby("mun_id")["local_lc_forest"].diff()
+    early = frame[frame["year"].between(*FRONTIER_YEARS)].groupby("mun_id")
+    frame["frontier_loss"] = frame["mun_id"].map(standardised(early["forest_loss"].mean()))
+    frame["forest_2014"] = frame["mun_id"].map(standardised(early["local_lc_forest"].last()))
 
     roraima = frame["mun_id"].str[:2].eq(RORAIMA)
     igd = frame[L.IGD] > 0
@@ -108,8 +131,13 @@ def term(exposure, period):
     return f"{exposure}__x__{period}"
 
 
-def spec_data(frame, outcome, exposure=PRESENCE, years=YEARS, drop_states=(), gold_only=False, sample=None):
-    """Estimation rows of one presence spec: (data, exposure terms, other controls)."""
+def spec_data(frame, outcome, exposure=PRESENCE, years=YEARS, drop_states=(), gold_only=False, sample=None,
+              frontier=False, deforestation=False, trend=False):
+    """Estimation rows of one presence spec: (data, exposure terms, other controls).
+
+    `frontier` adds the frontier measures x the periods, `deforestation` current forest loss, and `trend` the
+    exposure x a linear trend.
+    """
     data = frame[frame["year"].between(*years) & ~frame["mun_id"].str[:2].isin(drop_states)].copy()
     if gold_only:
         data = data[data[L.S.ALL_GOLD_EXPOSURE] > 0]
@@ -117,13 +145,26 @@ def spec_data(frame, outcome, exposure=PRESENCE, years=YEARS, drop_states=(), go
         data = data[data[sample] > 0]
     data["y"] = data[outcome]
     data["weight"] = 1.0
-    data = data.dropna(subset=["y", exposure, CLUSTER, L.PRICE]).reset_index(drop=True)
+    required = ["y", exposure, CLUSTER, L.PRICE, *(FRONTIER if frontier else ()),
+                *(("forest_loss",) if deforestation else ())]
+    data = data.dropna(subset=required).reset_index(drop=True)
     terms = []
-    for period, start in (("post2019", SHIFT_YEAR), ("post2023", RECOVERY_YEAR)):
-        data[term(exposure, period)] = data[exposure] * (data["year"] >= start)
+    for period, active in PERIODS.items():
+        data[term(exposure, period)] = data[exposure] * active(data["year"])
         terms.append(term(exposure, period))
     data[M.interaction(L.DEPOSITS, L.PRICE)] = data[L.DEPOSITS] * data[L.PRICE]
-    return data, terms, [M.interaction(L.DEPOSITS, L.PRICE)]
+    controls = [M.interaction(L.DEPOSITS, L.PRICE)]
+    if frontier:
+        for measure in FRONTIER:
+            for period, active in PERIODS.items():
+                data[term(measure, period)] = data[measure] * active(data["year"])
+                controls.append(term(measure, period))
+    if deforestation:
+        controls.append("forest_loss")
+    if trend:
+        data[term(exposure, "trend")] = data[exposure] * (data["year"] - years[0])
+        controls.append(term(exposure, "trend"))
+    return data, terms, controls
 
 
 def specs():
@@ -137,6 +178,10 @@ def specs():
         "gold x year FE": ({}, "mun_id + gold_year"),
         "without Roraima": ({"drop_states": (RORAIMA,)}, FE),
         "gold municipalities only": ({"gold_only": True}, FE),
+        "frontier x periods": ({"frontier": True}, FE),
+        "frontier x periods, state x year FE": ({"frontier": True}, "mun_id + state_year"),
+        "+ current forest loss": ({"deforestation": True}, FE),
+        "presence trend": ({"trend": True}, FE),
     }
 
 
@@ -203,3 +248,30 @@ def event_study(frame, outcome, exposures=(PRESENCE,), years=YEARS, base_year=BA
     rows += [{"exposure": exposure, "year": year, "estimate": tidy.loc[name, "Estimate"],
               "se": tidy.loc[name, "Std. Error"]} for name, (exposure, year) in terms.items()]
     return pd.DataFrame(rows).sort_values(["exposure", "year"]).assign(outcome=outcome).reset_index(drop=True)
+
+
+def randomization(frame, outcome, strata=None, draws=L.RI_DRAWS, **kwargs):
+    """Permutation p-values of presence x post-2019 and x post-2023, presence permuted across municipalities
+    (within `strata`, a municipality-level column, if given)."""
+    data, terms, controls = spec_data(frame, outcome, **kwargs)
+    observed, p_values = L.permutation_p(data, terms[0].split("__x__")[0], terms, controls, PERIODS, draws=draws,
+                                         strata=strata)
+    return [{"outcome": outcome, "term": name.split("__x__")[1], "estimate": estimate, "p_ri": p,
+             "strata": strata or "none"} for name, estimate, p in zip(terms, observed, p_values)]
+
+
+def dose_response(frame, outcome, bins=DOSE_BINS, years=YEARS):
+    """Presence quantile x post-2019 and x post-2023 (lowest quantile omitted), municipality and year FE."""
+    data, _, controls = spec_data(frame, outcome, years=years)
+    quantile = data["mun_id"].map(pd.qcut(data.groupby("mun_id")[PRESENCE].first(), bins, labels=False))
+    terms = []
+    for q in range(1, bins):
+        for period, active in PERIODS.items():
+            name = f"q{q}__x__{period}"
+            data[name] = (quantile == q) * active(data["year"])
+            terms.append(name)
+    tidy = M.estimate(data, terms + controls, fe=FE, weighted=False).tidy()
+    rows = [{"quantile": 0, "term": period, "estimate": 0.0, "se": 0.0} for period in PERIODS]
+    rows += [{"quantile": int(name[1:].split("__")[0]), "term": name.split("__x__")[1],
+              "estimate": tidy.loc[name, "Estimate"], "se": tidy.loc[name, "Std. Error"]} for name in terms]
+    return pd.DataFrame(rows).assign(outcome=outcome).sort_values(["term", "quantile"]).reset_index(drop=True)

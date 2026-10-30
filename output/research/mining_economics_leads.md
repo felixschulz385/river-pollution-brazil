@@ -80,6 +80,9 @@ relapse are counted?
   - Where IBAMA was present before 2015, fines fell 0.19 log points per SD after 2019
     and garimpo cases rose 0.09 (p 0.03), mostly incoming cases; non-garimpo malaria
     does not move. A 10% fall in fines goes with about 4.6% more garimpo cases.
+  - The response survives controls for the deforestation frontier and current clearing,
+    and permutation inference. It is weakest with state×year FE (+0.06, p 0.09), and it
+    sits in the top presence quintile, mostly Pará and Mato Grosso.
   - When fines recover in 2023, cases do not fall back significantly
     ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse)).
 - **Night lights do not measure garimpo.** In VIIRS annual composites, barred areas near
@@ -876,7 +879,8 @@ The ADM2 panel carries:
      Amazonas.
    - All IBAMA fines do collapse, and the collapse is concentrated where IBAMA was
      present; garimpo cases rise there from 2019
-     ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse)).
+     ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse)). The response
+     survives the deforestation-frontier controls and permutation inference.
    - Over 90% of garimpo seizures and destructions carry coordinates. Destruction terms
      rarely reference a fine, so they link to the rest of an operation by operation code.
    - Still to do: substitute sites, the displacement ratio and the crew logit.
@@ -1390,6 +1394,40 @@ tables in `output/analysis/garimpo/shift_2019/`.*
     FE; +0.066 (p 0.09) with state×year FE and +0.069 (p 0.09) without Roraima; +0.24
     (p 0.035) within gold municipalities.
   - *Requests:* +0.03 to +0.06 in the checks, p 0.05–0.28.
+- **The deforestation frontier.** IBAMA was present where forest was being cleared, and
+  clearing also surged from 2019. The frontier does not explain the case response.
+  - *Correlation:* presence is barely correlated with forest loss in 2010–2014 (−0.05)
+    and weakly with forest cover in 2014 (+0.19; own trenches, MapBiomas C10).
+  - *Clearing:* forest loss rose with presence in 2019–21 only (+0.10, +0.07 and
+    +0.06 pp a year against 2018), so the enforcement collapse also shows in clearing.
+  - *Cases × post-2019* (baseline +0.089):
+    - with the frontier measures × the periods: +0.085 (p 0.035);
+    - with state×year FE as well: +0.061 (p 0.09);
+    - with current forest loss as a control: +0.090 (p 0.03);
+    - with a presence trend: +0.071 (p 0.08, bootstrap 0.04).
+  - *Incoming cases:* +0.054 to +0.079 across these checks (p 0.016–0.06).
+  - *Placebo:* non-garimpo malaria stays at 0.00 to +0.05 (p ≥ 0.2).
+- **Permutation inference.** Permuting presence across municipalities (999 draws):
+  - post-2019 cases p 0.001, and 0.002 within states;
+  - incoming 0.002, local 0.003 and gold PLG requests 0.013 within states;
+  - placebo 0.26 (0.36 within states).
+
+  Single-municipality permutation ignores the spatial clustering of presence and
+  outcomes. The Otto-3 and bootstrap p-values stay the conservative inference.
+- **Dose.**
+  - The fall in fines grows with presence: −0.09, −0.15, −0.26 and −0.56 in quintiles
+    1–4 against quintile 0.
+  - Cases respond in the top quintile only (+0.25, incoming +0.22). The bottom three
+    quintiles have almost no garimpo.
+  - The top quintile (154 municipalities, 40% with gold occurrences) goes from about
+    2,350–2,800 garimpo cases a year in 2015–18 to 10,000–12,500 in 2020–24. Most are in
+    Pará (2,000–2,300 to 6,700–9,400). Mato Grosso goes from 13–80 to 625–2,697 in
+    2019–21.
+- **The first stage's pre-trend.** Fines in high-presence municipalities were already
+  falling in 2015–18.
+  - With a presence trend the first stage shrinks to −0.07 (p 0.06).
+  - The pre-trend is not only mean reversion from the presence window: with presence
+    from 2005–2010, fines are +0.13 to +0.20 above 2018 in 2015–17.
 - **Reading.**
   - The 2019 break in IGD municipalities is mostly the Roraima rush, which was building
     before 2019 and ended with the 2023 operation. Outside Roraima, IGD cases rise from
@@ -1402,8 +1440,15 @@ tables in `output/analysis/garimpo/shift_2019/`.*
     as much as the fines.
   - The recovery of fines after 2023 has not yet brought cases down significantly, and
     the placebo falls after 2023, so the post-2023 term is not clean.
-  - Presence is not random: IBAMA was present on the deforestation frontier. The design
-    rests on parallel trends in 2015–18, which hold for cases, requests and the placebo.
+  - Presence is not random: IBAMA was present on the deforestation frontier and where
+    garimpo is. The design rests on parallel trends in 2015–18, which hold for cases,
+    requests and the placebo.
+    - The case response survives frontier × period controls, current clearing and a
+      presence trend.
+    - It is weakest with state×year FE (+0.06, p 0.09), and is carried by the top
+      presence quintile, mostly Pará and Mato Grosso.
+    - The fines' own decline starts before 2019, so the timing of the case response
+      (2019) points to the change in federal signals as much as to the fines.
 
 ### E13. Night lights as a garimpo activity measure
 

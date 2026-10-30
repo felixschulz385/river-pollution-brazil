@@ -29,12 +29,15 @@ def _frame(n_municipalities=80, years=range(2010, 2025), seed=5):
         igd = float(i % 5 == 0)
         for year in years:
             rows.append({
-                "mun_id": f"{state}{i:04d}", "year": year, G.CLUSTER: f"b{i % 16}", L.IGD: igd,
+                "mun_id": f"{state}{i:04d}", "year": year, "state": state, G.CLUSTER: f"b{i % 16}", L.IGD: igd,
                 L.DEPOSITS: float(i % 3 == 0), L.S.ALL_GOLD_EXPOSURE: 1.0, L.PRICE: price[year],
                 "ibama_fines_all": rng.poisson(fines[i]),
             })
     frame = pd.DataFrame(rows)
     frame[G.PRESENCE] = G.standardised_presence(frame, "ibama_fines_all", G.PRESENCE_YEARS)
+    for measure in G.FRONTIER:
+        frame[measure] = frame["mun_id"].map(dict(zip(frame["mun_id"].unique(), rng.normal(size=n_municipalities))))
+    frame["forest_loss"] = rng.normal(0.4, 0.2, len(frame))
     roraima = frame["mun_id"].str[:2].eq(G.RORAIMA)
     frame[G.IGD_RORAIMA] = frame[L.IGD] * roraima
     frame[G.IGD_OTHER] = frame[L.IGD] * ~roraima
@@ -76,3 +79,30 @@ def test_split_event_study_separates_igd_in_roraima_from_igd_elsewhere():
     assert wide.loc[2019, G.IGD_RORAIMA] == pytest.approx(1.0, abs=0.25)
     assert abs(wide.loc[2019, G.IGD_OTHER]) < 0.25  # elsewhere the step comes in 2020
     assert wide.loc[2021, G.IGD_OTHER] == pytest.approx(0.5, abs=0.25)
+
+
+def test_frontier_and_trend_checks_add_controls_and_keep_the_shift():
+    frame = _frame()
+    data, terms, controls = G.spec_data(frame, "log1p_garimpo_cases", frontier=True, deforestation=True, trend=True)
+    assert len(controls) == 1 + 2 * len(G.FRONTIER) + 2
+    rows = {row["term"]: row for row in G.run_spec(frame, "log1p_garimpo_cases", bootstrap=False, frontier=True)}
+    assert rows["post2019"]["estimate"] == pytest.approx(0.3, abs=0.05)
+
+
+def test_dose_response_rises_with_presence_quintiles():
+    dose = G.dose_response(_frame(), "log1p_garimpo_cases")
+    post2019 = dose[dose["term"] == "post2019"].set_index("quantile")["estimate"]
+
+    assert post2019.index.tolist() == list(range(G.DOSE_BINS))
+    assert post2019.is_monotonic_increasing
+    assert post2019.iloc[-1] > 0.5  # top quintile about 2.5 SD above the bottom one
+
+
+def test_randomization_rejects_the_shift_and_permutes_within_strata():
+    frame = _frame()
+    rows = {row["term"]: row for row in G.randomization(frame, "log1p_garimpo_cases", strata="state", draws=199)}
+    assert rows["post2019"]["p_ri"] < 0.02
+    # With one exposure value per stratum, permuting within strata changes nothing.
+    frame["presence_stratum"] = frame[G.PRESENCE]
+    rows = G.randomization(frame, "log1p_garimpo_cases", strata="presence_stratum", draws=49)
+    assert all(row["p_ri"] == 1.0 for row in rows)
