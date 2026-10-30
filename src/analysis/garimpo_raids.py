@@ -2,12 +2,14 @@
 
 IBAMA's garimpo destruction and seizure terms are dated to the day and carry the
 municipality where they took place (`enforcement`). SIVEP gives garimpo cases
-by infection municipality and notification month (`malaria`, to 2024). Does
-garimpo fall where IBAMA raids, and does it move next door?
+by infection municipality and notification month (`malaria`, with the
+preliminary months from 2025). Does garimpo fall where IBAMA raids, and does it
+move next door?
 
 - *Episodes.* A municipality's first month with at least `MIN_TERMS` garimpo
   destruction or seizure terms after `CLEAN_MONTHS` months without any, from
-  2019 to 2023 (so the 12 months after it are observed).
+  2019 until 12 months before SIVEP's last month (so the 12 months after it
+  are observed).
 - *Stacked event study.* Each episode is a stack of months -12 to +12 around the
   raid month. The treated unit is the raided municipality (`own`) or each
   bordering municipality not itself raided in the window (`neighbours`). The
@@ -41,9 +43,9 @@ from src.data.sources.enforcement.constants import DEFAULT_RECORDS_OUTPUT_PATH
 from src.data.sources.land_cover.constants import derive_mun_id_from_adm2_id
 from src.data.sources.malaria.constants import DEFAULT_MONTHLY_OUTPUT_PATH
 
-MONTHS = ("2018-01", "2024-12")  # SIVEP runs to 2024
+MONTHS = ("2018-01", "2024-12")  # defaults; `load_inputs` runs to SIVEP's last month
 EPISODE_MONTHS = ("2019-01", "2023-12")
-SAMPLE_YEARS = (2016, 2024)
+SAMPLE_YEARS = (2016, 2025)
 WINDOW = (-12, 12)
 BASE = -1
 CLEAN_MONTHS = 12
@@ -125,6 +127,12 @@ def episode_samples(episode_table, panel):
     }
 
 
+def episode_window(panel, after=WINDOW[1]):
+    """Episode months: from `EPISODE_MONTHS[0]` until `after` months before the panel's last month."""
+    last = panel["month"].max() - pd.DateOffset(months=after)
+    return EPISODE_MONTHS[0], last.strftime("%Y-%m")
+
+
 def borders(boundaries, buffer_m=BORDER_BUFFER_M):
     """Municipality -> the set of municipalities bordering it (within `buffer_m`)."""
     projected = boundaries[["mun_id", "geometry"]].to_crs(BRAZIL_PROJECTED_CRS)
@@ -204,13 +212,15 @@ def displacement_ratio(own, neighbours):
     return -neighbours["estimate"] * per_episode / own["estimate"]
 
 
-def load_inputs(root_dir=M.PROJECT_ROOT, months=MONTHS, sample_years=SAMPLE_YEARS):
-    """The monthly case panel of the sample municipalities, the raid months and the border map."""
+def load_inputs(root_dir=M.PROJECT_ROOT, sample_years=SAMPLE_YEARS):
+    """The monthly case panel of the sample municipalities (from `MONTHS[0]` to SIVEP's last month), the raid
+    months and the border map."""
     root = Path(root_dir)
+    cases = pd.read_parquet(root / DEFAULT_MONTHLY_OUTPUT_PATH)
+    months = (MONTHS[0], cases["month"].max().strftime("%Y-%m"))
     records = pd.read_parquet(root / DEFAULT_RECORDS_OUTPUT_PATH,
                               columns=["action", "date", "mun_id", "garimpo", "operation_code"])
     raids = raid_months(records, months=months)
-    cases = pd.read_parquet(root / DEFAULT_MONTHLY_OUTPUT_PATH)
     amazon = set(M.legal_amazon())
     in_years = cases["month"].dt.year.between(*sample_years)
     garimpo = set(cases.loc[in_years & cases["inf_garimpo"].gt(0), "mun_id"])

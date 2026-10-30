@@ -109,3 +109,8 @@ def test_episode_samples_select_large_and_malaria_visible_raids():
     assert len(samples["all raids"]) == 2
     assert samples[f"large raids ({R.LARGE_TERMS}+ terms)"]["mun_id"].tolist() == ["150005"]
     assert samples[f"malaria-visible ({R.MIN_PRE_CASES}+ cases before)"]["mun_id"].tolist() == ["150005"]
+
+
+def test_episode_window_ends_a_window_before_the_last_month():
+    panel, _, _ = _inputs()
+    assert R.episode_window(panel) == ("2019-01", "2023-12")
