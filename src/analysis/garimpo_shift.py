@@ -108,11 +108,13 @@ def term(exposure, period):
     return f"{exposure}__x__{period}"
 
 
-def spec_data(frame, outcome, exposure=PRESENCE, years=YEARS, drop_states=(), gold_only=False):
+def spec_data(frame, outcome, exposure=PRESENCE, years=YEARS, drop_states=(), gold_only=False, sample=None):
     """Estimation rows of one presence spec: (data, exposure terms, other controls)."""
     data = frame[frame["year"].between(*years) & ~frame["mun_id"].str[:2].isin(drop_states)].copy()
     if gold_only:
         data = data[data[L.S.ALL_GOLD_EXPOSURE] > 0]
+    if sample is not None:
+        data = data[data[sample] > 0]
     data["y"] = data[outcome]
     data["weight"] = 1.0
     data = data.dropna(subset=["y", exposure, CLUSTER, L.PRICE]).reset_index(drop=True)
@@ -171,14 +173,17 @@ def run_table(frame, outcomes=tuple(OUTCOMES), spec_table=None, bootstrap=True):
 
 
 def event_study(frame, outcome, exposures=(PRESENCE,), years=YEARS, base_year=BASE_YEAR, controls=True,
-                gold_only=False):
+                gold_only=False, fe=FE, sample=None):
     """Coefficients of each exposure x year (base year omitted), jointly, municipality and year FE, Otto-3 SEs.
 
-    With `exposures=(IGD_RORAIMA, IGD_OTHER)` it splits lead 1's IGD event study by state.
+    With `exposures=(IGD_RORAIMA, IGD_OTHER)` it splits lead 1's IGD event study by state. `sample` is a
+    boolean column restricting the rows.
     """
     data = frame[frame["year"].between(*years)].copy()
     if gold_only:
         data = data[data[L.S.ALL_GOLD_EXPOSURE] > 0]
+    if sample is not None:
+        data = data[data[sample] > 0]
     data["y"] = data[outcome]
     data["weight"] = 1.0
     data = data.dropna(subset=["y", *exposures, CLUSTER, L.PRICE])
@@ -193,7 +198,7 @@ def event_study(frame, outcome, exposures=(PRESENCE,), years=YEARS, base_year=BA
     if controls:
         data[M.interaction(L.DEPOSITS, L.PRICE)] = data[L.DEPOSITS] * data[L.PRICE]
         other = [M.interaction(L.DEPOSITS, L.PRICE)]
-    tidy = M.estimate(data, list(terms) + other, weighted=False).tidy()
+    tidy = M.estimate(data, list(terms) + other, fe=fe, weighted=False).tidy()
     rows = [{"exposure": exposure, "year": base_year, "estimate": 0.0, "se": 0.0} for exposure in exposures]
     rows += [{"exposure": exposure, "year": year, "estimate": tidy.loc[name, "Estimate"],
               "se": tidy.loc[name, "Std. Error"]} for name, (exposure, year) in terms.items()]

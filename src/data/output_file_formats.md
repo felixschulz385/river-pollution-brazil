@@ -711,6 +711,9 @@ Semantics:
 - v2.2 changes the method at the 2021/2022 boundary: a month needs only one
   cloud-free observation for the median (v2.1: three), and cells without a
   median are left out of the background threshold. NOAA-20 enters in 2022.
-  Compare across 2021/2022 with year effects, not levels.
+- The composites jump in some years, and most in dim municipalities. In 2023,
+  the first NPP-only v2.2 year, log radiance rises 0.27 in the dimmest fifth of
+  Legal Amazon municipalities and 0.13 in the brightest. Compare across years
+  with year effects by brightness class, not levels or common year effects.
 - 2012 and 2013 are not corrected for stray light (`vcmcfg`); later years are
   (`vcmslcfg`).

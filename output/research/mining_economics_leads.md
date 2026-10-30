@@ -1,6 +1,6 @@
 # Garimpo supply in the Brazilian Amazon: research design
 
-*Living document; status as of 2026-10-29. It builds on the project's pollution and
+*Living document; status as of 2026-10-30. It builds on the project's pollution and
 health arms (`output/notebooks/pollution/memo.md`, `output/notebooks/health/memo.md`).
 The evidence behind each claim is collected in the [Evidence](#evidence) section, with
 the location of its code.*
@@ -82,6 +82,11 @@ relapse are counted?
     does not move. A 10% fall in fines goes with about 4.6% more garimpo cases.
   - When fines recover in 2023, cases do not fall back significantly
     ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse)).
+- **Night lights do not measure garimpo.** In VIIRS annual composites, barred areas near
+  gold are dark: none of 36,911 such pixels in Roraima's IGD municipalities is lit
+  during the rush. Light near gold does not move with garimpo cases, and the composites
+  jump most in dim places in some years. The dates show nothing in light once
+  those jumps are absorbed ([E13](#e13-night-lights-as-a-garimpo-activity-measure)).
 - **Gold geology.** The Geological Survey of Brazil's (SGB) never-exploited gold
   occurrences predict where garimpo is about as well as all occurrences. They are,
   however, thin (74 Legal Amazon municipalities) ([E6](#e6-sgb-gold-geology)).
@@ -89,8 +94,8 @@ relapse are counted?
 **Open before the design is final.**
 
 - A novelty check on malaria importation by miners.
-- Separating the 2019 break from the enforcement collapse, with the IBAMA records
-  (`enforcement`).
+- A yearly activity measure for 2020–24: the VIIRS annual composites fail (E13);
+  monthly composites, the unmasked annual layers and the C11 active phase are untried.
 
 ## The paper
 
@@ -848,8 +853,9 @@ The ADM2 panel carries:
      break at the 2013 rule by quarter; C11 and the cases do not respond.
    - The 2019–20 break is the Roraima rush plus the enforcement collapse
      ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse)).
-   - Still needed: an activity measure for 2020–24 (VIIRS, step 8), since C11 stops in
-     2019 and the cases follow the 2019 break.
+   - Still needed: an activity measure for 2020–24, since C11 stops in 2019 and the cases
+     follow the 2019 break. The VIIRS annual composites fail as one
+     ([E13](#e13-night-lights-as-a-garimpo-activity-measure); step 8).
 3. **Lead 2 first pass.**
    - Prediction 5: local vs. incoming cases on price × deposits and on drought.
    - Prediction 2: a downstream aggregation of mining for the spread test.
@@ -877,13 +883,17 @@ The ADM2 panel carries:
 6. **Lead 4.** FUNAI stages, CNUC dates, anticipation around PL 191/2020.
 7. **Optional water outcome.** Station turbidity from 2008, or satellite river
    turbidity, as a pollution outcome of upstream garimpo ([E8](#e8-amazon-station-coverage-for-turbidity)).
-8. **Activity measure.** VIIRS night lights inside protected areas and near gold
-   occurrences, and the C11 active-phase share, as year-to-year garimpo activity (see
-   Sources and access, "Night lights").
-   - The VNL v2.1 annual composites for 2012–2021 can be read from the
-     growth-and-temperature project's raw folder. VNL v2.2 (2022 onward) is downloaded
-     by hand behind EOG's login (`viirs_download_handoff.md`); then a `nightlights`
-     source.
+8. **Activity measure.** Year-to-year garimpo activity (see Sources and access, "Night
+   lights").
+   - The `nightlights` source holds EOG's annual VIIRS composites (2012–2025) per
+     municipality: in the whole municipality, near gold, inside barred areas, and both.
+     They fail the measurement check ([E13](#e13-night-lights-as-a-garimpo-activity-measure)).
+   - Untried:
+     - monthly composites (EOG's VNL monthly, NASA Black Marble VNP46A3), which keep dim
+       and short-lived lights;
+     - the unmasked annual layers;
+     - light at C11 garimpo polygons rather than at gold occurrences;
+     - the C11 active-phase share (to 2019).
 
 ## Evidence
 
@@ -1395,6 +1405,58 @@ tables in `output/analysis/garimpo/shift_2019/`.*
   - Presence is not random: IBAMA was present on the deforestation frontier. The design
     rests on parallel trends in 2015–18, which hold for cases, requests and the placebo.
 
+### E13. Night lights as a garimpo activity measure
+
+*Code: `src/analysis/garimpo_nightlights.py`, `output/notebooks/garimpo/05_nightlights.ipynb`;
+tables in `output/analysis/garimpo/nightlights/`.*
+
+- **Question.** C11 stops in 2019 and SIVEP counts infections. Do VIIRS night lights
+  show where garimpo is worked in a given year?
+- **Data.** `nightlights` holds EOG's annual VNL composites, masked average radiance:
+  v2.1 for 2012–2021, and v2.2 from 2022 (2022 adds NOAA-20). Radiance and lit pixels
+  are measured per municipality and year in four zones:
+  - the whole municipality;
+  - within 5 km of SGB gold occurrences;
+  - inside barred areas in force by 2012;
+  - both.
+- **Barred areas near gold are dark.**
+  - In the Legal Amazon, 110–180 of 103,000 pixels near gold inside barred areas are lit
+    in a year (0.11–0.17%). Near gold generally, 2.9–5.0% of pixels are lit.
+  - Roraima's IGD municipalities have 36,911 such pixels, and none is lit in any year,
+    including the rush (11,785 garimpo cases in 2022).
+- **Shocks to the composites.** The composites jump most in dim municipalities:
+  - 2023, the first NPP-only v2.2 year, raises log radiance 0.27 in the dimmest fifth and
+    0.13 in the brightest;
+  - lit pixels rise 0.28 in the dimmest fifth in 2021 and fall 0.12 there in 2022.
+
+  Garimpo municipalities are dim, so the light specs add brightness class × year FE: the
+  quintile of radiance per pixel in 2012–2014.
+- **Measurement check** (183 municipalities with pixels near gold; municipality FE, with
+  year or brightness × year FE):
+  - *Garimpo cases:* light near gold moves 0.01–0.04 per log point of cases (p
+    0.33–0.79). It moves about as much with non-garimpo malaria.
+  - *C11 garimpo area (2012–2019):* light near gold moves +0.10 per pp (p 0.07), and
+    whole-municipality radiance +0.13 to +0.15 (p 0.001). Cleared land and towns both
+    accumulate, so this is a shared trend as much as activity.
+- **Dates** (E12's designs on light):
+  - *IGD elsewhere:* light near gold falls from 2020 (−0.30 by 2024 with brightness FE),
+    while cases rise.
+  - *Roraima's IGD:* light does not rise with the rush.
+  - *IGD × post-2023, near gold:* −0.22 (p 0.024) with year FE, −0.14 (p 0.21) with
+    brightness × year FE.
+  - *Presence × post-2019:* +0.02 near gold (p 0.6). Every light outcome is within
+    ±0.07.
+- **Reading.**
+  - The annual masked composites do not see garimpo. Dredges and camps inside protected
+    areas fall below the background mask, and light near gold follows towns rather than
+    crews.
+  - The nulls on the dates are therefore uninformative.
+  - What remains to try:
+    - monthly composites, or the unmasked annual layers, which keep dim and short-lived
+      lights;
+    - light at C11 garimpo polygons rather than at gold occurrences;
+    - the C11 active-phase share, to 2019.
+
 ## Data inventory
 
 | Data | Source | Use | Status |
@@ -1419,7 +1481,7 @@ tables in `output/analysis/garimpo/shift_2019/`.*
 | Garimpeiro occupation; formal mining employment | Census 2010/2022; RAIS | wage proxy | to add |
 | River stage | ANA HidroWeb gauges | drought | optional |
 | Mining alerts | INPE DETER | re-entry within a year | optional |
-| Night lights | VIIRS DNB annual composites (2012 on) | garimpo activity, lit dredges and camps | idea, untested; see Sources and access |
+| Night lights | EOG VIIRS annual composites (VNL v2.1, v2.2) | garimpo activity, lit dredges and camps | in pipeline (`nightlights`: municipality × year, 2012–2025, whole municipality, near gold, barred areas); fails the measurement check (E13) |
 
 ### Sources and access
 
@@ -1519,8 +1581,9 @@ tables in `output/analysis/garimpo/shift_2019/`.*
   - *Documentation:* dictionary `metadados-microdados-scm.ods`; entity-relationship
     diagrams `mer-microdados-scm.pdf`.
   - *Polygons including inactive processes and garimpo reserves:* SIGMINE on dados.gov.br.
-- **Night lights (VIIRS), not fetched.** A possible activity measure: mined area says
-  where garimpo is; light says whether it is worked in a given year. The price and
+- **Night lights (VIIRS), tested ([E13](#e13-night-lights-as-a-garimpo-activity-measure)).** A
+  possible activity measure: mined area says where garimpo is; light says whether it is
+  worked in a given year. The price and
   policy designs need exactly that year-to-year activity ([E10](#e10-garimpo-supply-and-the-gold-price)).
   - *Why it might work:*
     - dredges and rafts run around the clock on generators with work lights;
@@ -1539,17 +1602,16 @@ tables in `output/analysis/garimpo/shift_2019/`.*
   - *Coverage:* VIIRS from 2012. DMSP (1992–2013) is coarse and saturates, and
     harmonized DMSP–VIIRS series splice in 2013, where the price and policy variation
     sits.
-  - *Access:* Google Earth Engine (annual VIIRS composites, or Black Marble), the
-    route already used for the C11 export. It must be downloaded from the session proxy
-    or transfer12, not from compute nodes.
-  - *Test first, as a measurement check (as E5 and E6):*
-    1. Annual radiance 2012–2024 inside and within 1–2 km of C11 garimpo polygons, and
-       in the river trenches.
-    2. Whether lit garimpo area tracks SIVEP garimpo cases and the C11 active-phase share
-       better than area alone.
-    3. Whether known dredge rivers (Tapajós, Madeira, Uraricoera) show lights.
-
-    About a day; drop it if lit area adds nothing over area.
+  - *Access:* EOG's annual composites (VNL), downloaded by hand behind EOG's login:
+    - v2.1 (2012–2021) is read from the growth-and-temperature project's copies;
+    - v2.2 (2022 onward) is in `data/nightlights/raw/eog_vnl_2026-10-29/`.
+    - Black Marble is on Google Earth Engine, the route used for the C11 export.
+  - *Result:* the annual masked composites fail the check. Barred areas near gold are
+    dark, and light near gold does not track garimpo cases (E13).
+  - *Not yet tried:*
+    - light at C11 garimpo polygons and in river trenches;
+    - known dredge rivers (Tapajós, Madeira, Uraricoera);
+    - monthly or unmasked composites.
   - *Daytime alternative already in the panel:* C11 splits each mining class into an
     active phase (exposed soil) and revegetation (`local_c11_garimpo_gold_active`,
     `c11_garimpo_gold_active_<reach>`). It has not been used as an activity measure yet.

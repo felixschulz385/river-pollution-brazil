@@ -50,6 +50,11 @@ Other notebooks:
   collapse of IBAMA enforcement? Totals and the IGD event study by state, and IBAMA
   presence before 2015 × post-2019 and × post-2023 on fines, garimpo cases, gold PLG
   requests and non-garimpo malaria (Evidence E12; `src/analysis/garimpo_shift.py`).
+- `garimpo/05_nightlights.ipynb`: do VIIRS night lights measure garimpo activity? Light
+  in the whole municipality, near gold and inside barred areas against garimpo cases and
+  C11 area, the composites' brightness-specific jumps, and E12's IGD and presence dates
+  on light with brightness class × year FE (Evidence E13;
+  `src/analysis/garimpo_nightlights.py`).
 - `health/upstream_mining_municipality_map.ipynb`: municipality upstream-deforestation
   map (moved from `src/analysis/notebooks/`; its `land_cover.feather` input is stale).
 - `pollution/maps.ipynb`: upstream drainage-area maps for four example sensors
@@ -83,7 +88,7 @@ Other notebooks:
 The maintained CLI regression pipeline (`python -m src.cli analysis sensor-data`) lives
 in `src/analysis/sensor_data/` and is separate from these notebooks.
 
-## Status (as of 2026-10-28)
+## Status (as of 2026-10-30)
 
 **Pollution: active.** The model setup is decided (§11 of `pollution/01_descriptives.ipynb`)
 and implemented in `pollution/02_analysis.ipynb`, with standard errors clustered on Otto
@@ -112,7 +117,9 @@ by year, but by quarter they do not move when the rule starts (the best-fitting 
 is 2019Q3). C11 garimpo and garimpo cases do not follow either date.
 `garimpo/04_shift_2019` finds that the 2019 case break in IGD municipalities is mostly the
 Roraima rush, and that across the Legal Amazon garimpo cases rose from 2019 where IBAMA
-had been present and its fines fell. Results are recorded in
+had been present and its fines fell. `garimpo/05_nightlights` finds that VIIRS annual
+composites do not see garimpo: barred areas near gold are dark, and light near gold does
+not track garimpo cases. Results are recorded in
 `output/research/mining_economics_leads.md` (Evidence).
 
 ## Sub-basins (Otto Pfafstetter)
