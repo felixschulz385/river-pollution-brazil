@@ -1,6 +1,7 @@
 import argparse
 import logging
 
+from .constants import AREAS_PRODUCT, PRODUCTS, TRENCHES_PRODUCT
 from .core import ProtectedAreas
 
 
@@ -30,6 +31,15 @@ def configure_parser(parser, include_action=True):
     parser.add_argument("--adm2-id-column", default=None)
     parser.add_argument("--areas-output", default=None)
     parser.add_argument("--adm2-output", default=None)
+    parser.add_argument(
+        "--product",
+        default=AREAS_PRODUCT,
+        choices=PRODUCTS,
+        help="'areas' (default): the merged areas and municipality shares; 'trenches': the share of each river "
+        "trench's drainage polygon inside each area (needs the areas and river_network).",
+    )
+    parser.add_argument("--drainage-path", default=None, help="Drainage polygons (default: river_network output)")
+    parser.add_argument("--trenches-output", default=None)
     return parser
 
 
@@ -38,6 +48,9 @@ def run(args):
     agent = ProtectedAreas(root_dir=args.root_dir)
     if args.action == "fetch":
         agent.fetch()
+    elif args.product == TRENCHES_PRODUCT:
+        agent.preprocess_trenches(areas_path=args.areas_output, drainage_path=args.drainage_path,
+                                  output_path=args.trenches_output)
     else:
         agent.preprocess(
             gpkg=args.gpkg,

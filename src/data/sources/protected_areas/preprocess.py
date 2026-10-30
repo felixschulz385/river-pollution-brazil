@@ -20,14 +20,17 @@ from .constants import (
     CUTOFF_YEAR,
     DEFAULT_ADM2_OUTPUT_PATH,
     DEFAULT_AREAS_OUTPUT_PATH,
+    DEFAULT_TRENCHES_OUTPUT_PATH,
     ESTABLISHED_STAGES,
     FUNAI_FIELDS,
     INDIGENOUS,
     INDIGENOUS_SHARE_COLUMN,
     LAYERS,
+    MIN_TRENCH_SHARE,
     MUN_ID_COLUMN,
     PROTECTED_2012_SHARE_COLUMN,
     PROTECTED_SHARE_COLUMN,
+    TRENCH_COLUMNS,
     funai_path,
     gpkg_path,
     layer_name,
@@ -231,3 +234,40 @@ def build_protected_areas(
     logger.info("Wrote %d protected areas to %s and ADM2 shares %s to %s", len(areas), outputs[0], shares.shape,
                 outputs[1])
     return areas, shares
+
+
+def trench_overlaps(areas, drainage):
+    """Share of each trench's drainage polygon inside each Indigenous land (any stage) or barred unit."""
+    selected = areas[(areas["kind"] == INDIGENOUS) | areas["mining_barred"]]
+    selected = selected[["area_id", "geometry"]].to_crs(BRAZIL_PROJECTED_CRS).reset_index(drop=True)
+    drainage = drainage[["trench_id", "geometry"]].to_crs(BRAZIL_PROJECTED_CRS).reset_index(drop=True)
+    pairs = gpd.sjoin(drainage, selected, predicate="intersects", how="inner")
+    # Reprojection can leave self-intersections, so both sides are repaired before intersecting.
+    trench_geometry = shapely.make_valid(drainage.geometry.loc[pairs.index].to_numpy())
+    area_geometry = shapely.make_valid(selected.geometry.loc[pairs["index_right"]].to_numpy())
+    inside = shapely.area(shapely.intersection(trench_geometry, area_geometry))
+    overlaps = pd.DataFrame({
+        "area_id": pairs["area_id"].to_numpy(),
+        "trench_id": pairs["trench_id"].to_numpy(),
+        "trench_share": inside / shapely.area(trench_geometry),
+    })
+    overlaps["trench_share"] = overlaps["trench_share"].clip(upper=1.0)
+    overlaps = overlaps[overlaps["trench_share"] >= MIN_TRENCH_SHARE]
+    return overlaps.sort_values(["area_id", "trench_id"]).reset_index(drop=True)[list(TRENCH_COLUMNS)]
+
+
+def build_trench_overlaps(root_dir=".", areas_path=None, drainage_path=None, output_path=None):
+    """Write the share of each trench's drainage polygon inside each area (the `trenches` product)."""
+    from src.data.shared.spatial_tabular import deduplicate_drainage_polygons
+    from src.data.sources.river_network.constants import DRAINAGE_AREAS_FILENAME, PROCESSED_DIR
+
+    areas = load_protected_areas(root_dir, areas_path)
+    drainage_path = Path(root_dir) / (drainage_path or Path(PROCESSED_DIR) / DRAINAGE_AREAS_FILENAME)
+    drainage = deduplicate_drainage_polygons(gpd.read_parquet(drainage_path, columns=["trench_id", "geometry"]))
+    overlaps = trench_overlaps(areas, drainage)
+    resolved = Path(root_dir) / (output_path or DEFAULT_TRENCHES_OUTPUT_PATH)
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    overlaps.to_parquet(resolved, index=False)
+    logger.info("Wrote %d trench overlaps for %d areas (%d trenches) to %s", len(overlaps),
+                overlaps["area_id"].nunique(), overlaps["trench_id"].nunique(), resolved)
+    return overlaps

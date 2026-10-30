@@ -104,6 +104,15 @@ jobs:
     cpus_per_task: 2
     mem: 32G
 
+  # `--product trenches`: drainage polygons of every trench (464k, ~1 GB) x the
+  # Indigenous lands and barred units, intersected pair by pair.
+  protected_areas.preprocess.trenches:
+    job_name: preprocess_protected_areas_trenches
+    time: "0-02:00:00"
+    qos: 6hours
+    cpus_per_task: 2
+    mem: 64G
+
   geology.preprocess:
     job_name: preprocess_geology
     time: "0-01:00:00"

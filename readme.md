@@ -239,10 +239,13 @@ by hand over a Brazilian VPN into `data/protected_areas/raw/funai_<date>/`.
 ```bash
 python3 -m src.cli data fetch      --source protected_areas
 python3 -m src.cli data preprocess --source protected_areas --slurm
+python3 -m src.cli data preprocess --source protected_areas --slurm --product trenches
 ```
 
-Outputs: `data/protected_areas/processed/protected_areas.parquet` and
-`data/protected_areas/processed/protected_areas_adm2.parquet`.
+Outputs: `data/protected_areas/processed/protected_areas.parquet`,
+`data/protected_areas/processed/protected_areas_adm2.parquet` and, with
+`--product trenches`, the share of each river trench inside each area
+(`protected_areas_trenches.parquet`).
 
 ### Geology
 

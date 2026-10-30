@@ -1154,13 +1154,42 @@ def _protected_areas_adm2_checks(frame) -> list[CheckResult]:
     return checks
 
 
+def _protected_areas_trench_checks(frame, areas=None) -> list[CheckResult]:
+    """Keys unique, shares in (0, 1], every area in the areas table."""
+    from src.data.sources.protected_areas.constants import TRENCH_COLUMNS
+
+    checks = [check_required_columns(frame, list(TRENCH_COLUMNS)), _non_empty_check(frame)]
+    if not set(TRENCH_COLUMNS) <= set(frame.columns):
+        return checks
+    duplicates = int(frame.duplicated(["area_id", "trench_id"]).sum())
+    checks.append(CheckResult(
+        name="unique:area_id,trench_id", ok=duplicates == 0,
+        message="All (area_id, trench_id) keys unique." if duplicates == 0 else f"{duplicates} duplicate keys.",
+    ))
+    checks.append(check_value_range(frame, "trench_share", lo=1e-9, hi=1.0))
+    if areas is not None and "area_id" in areas.columns:
+        unknown = sorted(set(frame["area_id"]) - set(areas["area_id"]))
+        checks.append(CheckResult(
+            name="areas_known", ok=not unknown,
+            message="Every area is in the areas table." if not unknown else f"Unknown areas: {unknown[:5]}",
+        ))
+    return checks
+
+
 def _protected_areas_check_outputs(root_dir) -> list[OutputArtifactCheck]:
-    from src.data.sources.protected_areas.constants import DEFAULT_ADM2_OUTPUT_PATH, DEFAULT_AREAS_OUTPUT_PATH
+    from src.data.sources.protected_areas.constants import (
+        DEFAULT_ADM2_OUTPUT_PATH,
+        DEFAULT_AREAS_OUTPUT_PATH,
+        DEFAULT_TRENCHES_OUTPUT_PATH,
+    )
 
     return [
         _artifact_check("protected_areas", Path(root_dir) / DEFAULT_AREAS_OUTPUT_PATH, _protected_area_checks),
         _artifact_check("protected_areas_adm2", Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH,
                         _protected_areas_adm2_checks),
+        _artifact_check("protected_areas_trenches", Path(root_dir) / DEFAULT_TRENCHES_OUTPUT_PATH,
+                        lambda frame: _protected_areas_trench_checks(
+                            frame, _safe_read_parquet(Path(root_dir) / DEFAULT_AREAS_OUTPUT_PATH))),
     ]
 
 
@@ -1188,13 +1217,14 @@ def _protected_areas_fingerprint_paths(root_dir) -> list[Path]:
     from src.data.sources.protected_areas.constants import (
         DEFAULT_ADM2_OUTPUT_PATH,
         DEFAULT_AREAS_OUTPUT_PATH,
+        DEFAULT_TRENCHES_OUTPUT_PATH,
         funai_path,
         gpkg_path,
     )
 
     funai = funai_path(root_dir)
     return [gpkg_path(root_dir), *([funai] if funai else []), Path(root_dir) / DEFAULT_AREAS_OUTPUT_PATH,
-            Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH]
+            Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH, Path(root_dir) / DEFAULT_TRENCHES_OUTPUT_PATH]
 
 
 # --------------------------------------------------------------------------

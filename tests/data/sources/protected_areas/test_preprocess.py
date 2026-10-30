@@ -9,8 +9,12 @@ from shapely.geometry import GeometryCollection, LineString, MultiPolygon, Point
 
 from src.data.sources.protected_areas import preprocess
 from src.data.sources.protected_areas.constants import AREA_COLUMNS, ADM2_COLUMNS
-from src.data.sources.protected_areas.preprocess import build_protected_areas, protected_mask
-from src.data.verification.sources import _protected_area_checks, _protected_areas_adm2_checks
+from src.data.sources.protected_areas.preprocess import build_protected_areas, protected_mask, trench_overlaps
+from src.data.verification.sources import (
+    _protected_area_checks,
+    _protected_areas_adm2_checks,
+    _protected_areas_trench_checks,
+)
 
 
 LAYERS = {"conservation_unit": ("ws:conservation_units_legal_amazon", "ws:conservation_units_amazon_biome")}
@@ -132,3 +136,27 @@ def test_protected_mask_and_verification(built):
     assert protected_mask(points, areas.reset_index()).tolist() == [True, False, False]
     assert all(check.ok for check in _protected_area_checks(areas.reset_index()))
     assert all(check.ok for check in _protected_areas_adm2_checks(shares.reset_index()))
+
+
+def test_trench_overlaps_cover_lands_at_any_stage_and_barred_units(built):
+    areas, _ = built
+    drainage = gpd.GeoDataFrame({
+        "trench_id": ["a", "b", "c", "d"],
+        "geometry": [
+            box(-56, -6, -55.5, -5.5),  # inside land 101; its west half also in land 103
+            box(-55.5, -6, -55.0, -5.5),  # half in the park, half in the RESEX
+            box(-54.5, -6, -54.0, -5.5),  # land 102 (under study) and the APA (not barred)
+            box(-50, -6, -49, -5),  # outside every area
+        ],
+    }, crs=4674)
+    overlaps = trench_overlaps(areas.reset_index(), drainage)
+    names = areas.reset_index().set_index("area_id")["name"]
+    shares = overlaps.assign(name=overlaps["area_id"].map(names)).set_index(["trench_id", "name"])["trench_share"]
+
+    assert shares[("a", "A")] == pytest.approx(1.0, abs=0.01)
+    assert shares[("a", "C")] == pytest.approx(0.5, abs=0.01)
+    assert shares[("b", "Parque P")] == pytest.approx(0.5, abs=0.01)
+    assert shares[("b", "Resex R")] == pytest.approx(0.5, abs=0.01)
+    assert shares[("c", "B")] == pytest.approx(1.0, abs=0.01)
+    assert "APA Q" not in set(shares.index.get_level_values("name")) and "d" not in set(overlaps["trench_id"])
+    assert all(check.ok for check in _protected_areas_trench_checks(overlaps, areas.reset_index()))

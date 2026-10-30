@@ -392,6 +392,20 @@ mining:
 `adm2_panel` carries every column, constant across years. The deposits inside
 these areas (lead 1's IGD) are counted in the geology outputs.
 
+### `data/protected_areas/processed/protected_areas_trenches.parquet`
+
+Written by `data preprocess --source protected_areas --product trenches` (after
+the areas, with `river_network`'s drainage polygons). One row per (`area_id`,
+`trench_id`) for every Indigenous land at any stage (pending ones included) and
+every conservation unit that bars mining:
+
+- `trench_share`: the share of the trench's drainage polygon inside the area
+  (pairs below 10⁻⁶ dropped).
+
+A trench table's counts (e.g. C11 mining pixels in `land_cover_mining.parquet`)
+times `trench_share`, summed by area, give the measure inside each area. This
+assumes the counts are spread evenly within a trench.
+
 ## Geology Outputs
 
 ### `data/geology/processed/geology_adm2.parquet`

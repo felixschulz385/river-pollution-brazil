@@ -71,8 +71,19 @@ ADM2_COLUMNS = (
     PROTECTED_2012_SHARE_COLUMN,
 )
 
+# The `trenches` product: the share of each river trench's drainage polygon
+# inside each Indigenous land (at any stage, pending ones included) and each
+# conservation unit that bars mining, for measures by area from the trench
+# tables (e.g. C11 garimpo inside a land).
+AREAS_PRODUCT = "areas"
+TRENCHES_PRODUCT = "trenches"
+PRODUCTS = (AREAS_PRODUCT, TRENCHES_PRODUCT)
+TRENCH_COLUMNS = ("area_id", "trench_id", "trench_share")
+MIN_TRENCH_SHARE = 1e-6
+
 DEFAULT_AREAS_OUTPUT_PATH = str(processed_dir(".", "protected_areas") / "protected_areas.parquet")
 DEFAULT_ADM2_OUTPUT_PATH = str(processed_dir(".", "protected_areas") / "protected_areas_adm2.parquet")
+DEFAULT_TRENCHES_OUTPUT_PATH = str(processed_dir(".", "protected_areas") / "protected_areas_trenches.parquet")
 
 
 def protected_areas_dir(root_dir: str | Path = ".") -> Path:

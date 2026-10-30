@@ -26,5 +26,12 @@ class ProtectedAreas:
             adm2_output_path=adm2_output_path,
         )
 
+    def preprocess_trenches(self, areas_path=None, drainage_path=None, output_path=None):
+        """Share of each river trench's drainage polygon inside each Indigenous land or barred unit."""
+        from .preprocess import build_trench_overlaps
+
+        return build_trench_overlaps(root_dir=self.root_dir, areas_path=areas_path, drainage_path=drainage_path,
+                                     output_path=output_path)
+
 
 __all__ = ["ProtectedAreas"]
