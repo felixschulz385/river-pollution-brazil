@@ -1328,11 +1328,50 @@ def _malaria_list_fetched(root_dir, force: bool = False) -> FetchListing:
     )
 
 
+def _malaria_monthly_checks(frame, yearly=None) -> list[CheckResult]:
+    """Keys unique, every row with a case, garimpo within cases, and months summing to the yearly counts."""
+    from src.data.sources.malaria.constants import MONTH_COLUMN, MONTHLY_COLUMNS, MUN_ID_COLUMN, YEAR_COLUMN
+
+    checks = [check_required_columns(frame, list(MONTHLY_COLUMNS)), _non_empty_check(frame)]
+    if not set(MONTHLY_COLUMNS) <= set(frame.columns):
+        return checks
+    duplicates = int(frame.duplicated([MUN_ID_COLUMN, MONTH_COLUMN]).sum())
+    checks.append(CheckResult(
+        name="unique:mun_id,month", ok=duplicates == 0,
+        message="All (mun_id, month) keys unique." if duplicates == 0 else f"{duplicates} duplicate keys.",
+    ))
+    sparse = bool((frame["inf_cases"] > 0).all())
+    checks.append(CheckResult(
+        name="every_row_a_case", ok=sparse,
+        message="Every row has a case." if sparse else "Rows without a case.",
+    ))
+    nested = bool((frame["inf_garimpo"] <= frame["inf_cases"]).all() and (
+        frame["inf_garimpo_local"] + frame["inf_garimpo_incoming"] <= frame["inf_garimpo"]).all())
+    checks.append(CheckResult(
+        name="garimpo_within_cases", ok=nested,
+        message="Garimpo within cases; local and incoming within garimpo." if nested else "Counts not nested.",
+    ))
+    counts = ["inf_cases", "inf_garimpo"]
+    if yearly is not None and set(counts) <= set(yearly.columns):
+        by_year = frame.groupby([frame[MUN_ID_COLUMN], frame[MONTH_COLUMN].dt.year.rename(YEAR_COLUMN)])[counts].sum()
+        expected = yearly.set_index([MUN_ID_COLUMN, YEAR_COLUMN])[counts]
+        expected = expected[expected.sum(axis=1) > 0]
+        aligned = by_year.reindex(expected.index.union(by_year.index), fill_value=0)
+        mismatched = int((aligned != expected.reindex(aligned.index, fill_value=0)).any(axis=1).sum())
+        checks.append(CheckResult(
+            name="months_sum_to_years", ok=mismatched == 0,
+            message="Monthly cases sum to the yearly table." if mismatched == 0
+            else f"{mismatched} municipality-years whose months do not sum to the yearly cases.",
+        ))
+    return checks
+
+
 def _malaria_check_outputs(root_dir) -> list[OutputArtifactCheck]:
     from src.data.sources.malaria.constants import (
         ADM2_COLUMNS,
         DEFAULT_ADM2_OUTPUT_PATH,
         DEFAULT_FLOWS_OUTPUT_PATH,
+        DEFAULT_MONTHLY_OUTPUT_PATH,
         FLOW_CASES_COLUMN,
         FLOW_COLUMNS,
         MUN_ID_COLUMN,
@@ -1361,6 +1400,9 @@ def _malaria_check_outputs(root_dir) -> list[OutputArtifactCheck]:
     return [
         _artifact_check("malaria_adm2", Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH, adm2_checks),
         _artifact_check("malaria_garimpo_flows", Path(root_dir) / DEFAULT_FLOWS_OUTPUT_PATH, flow_checks),
+        _artifact_check("malaria_adm2_monthly", Path(root_dir) / DEFAULT_MONTHLY_OUTPUT_PATH,
+                        lambda frame: _malaria_monthly_checks(
+                            frame, _safe_read_parquet(Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH))),
     ]
 
 
@@ -1382,6 +1424,7 @@ def _malaria_fingerprint_paths(root_dir) -> list[Path]:
     from src.data.sources.malaria.constants import (
         DEFAULT_ADM2_OUTPUT_PATH,
         DEFAULT_FLOWS_OUTPUT_PATH,
+        DEFAULT_MONTHLY_OUTPUT_PATH,
         YEARS,
         year_path,
     )
@@ -1390,6 +1433,7 @@ def _malaria_fingerprint_paths(root_dir) -> list[Path]:
         *(year_path(root_dir, year) for year in YEARS),
         Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH,
         Path(root_dir) / DEFAULT_FLOWS_OUTPUT_PATH,
+        Path(root_dir) / DEFAULT_MONTHLY_OUTPUT_PATH,
     ]
 
 

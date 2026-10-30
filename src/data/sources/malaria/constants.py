@@ -16,7 +16,7 @@ METADATA_FILENAMES = ("sivep_malaria_metadata_csv.zip", "sivep_malaria_full_meth
 READ_COLUMNS = (
     "notification_year", "res_exam", "id_lvc", "tipo_lam", "cod_ocup", "pais_inf",
     "mun_infe_code", "mun_infe_nome", "mun_resi_code", "mun_resi_nome",
-    "mun_noti_code", "mun_noti_nome",
+    "mun_noti_code", "mun_noti_nome", "dt_notif",
 )
 NEGATIVE_RESULT = "Negativo"
 # `id_lvc` is the consistent cure-verification (LVC) flag; `tipo_lam`'s LVC
@@ -31,6 +31,7 @@ UNMAPPED_NAME_PREFIX = "Unmapped"
 
 MUN_ID_COLUMN = "mun_id"
 YEAR_COLUMN = "year"
+MONTH_COLUMN = "month"  # first day of the notification month
 # Three perspectives on the same positives (LVC dropped): where the case was
 # infected (`inf_`, Brazil only), where the patient lives (`res_`), and where
 # it was notified (`noti_`, the only one negatives can be placed by).
@@ -50,6 +51,12 @@ RESIDENCE_COLUMNS = (
 NOTIFICATION_COLUMNS = ("noti_exams", "noti_positives")
 ADM2_COLUMNS = (MUN_ID_COLUMN, YEAR_COLUMN, *INFECTION_COLUMNS, *RESIDENCE_COLUMNS, *NOTIFICATION_COLUMNS)
 
+# Positives by infection municipality and notification month, for timing
+# around dated events (raids). Months without a case are absent.
+MONTHLY_COLUMNS = (
+    MUN_ID_COLUMN, MONTH_COLUMN, "inf_cases", "inf_garimpo", "inf_garimpo_local", "inf_garimpo_incoming",
+)
+
 FLOW_RESIDENCE_COLUMN = "res_mun_id"
 FLOW_INFECTION_COLUMN = "inf_mun_id"  # missing when infected abroad
 FLOW_COUNTRY_COLUMN = "inf_country"
@@ -58,6 +65,7 @@ FLOW_COLUMNS = (YEAR_COLUMN, FLOW_RESIDENCE_COLUMN, FLOW_INFECTION_COLUMN, FLOW_
 
 DEFAULT_ADM2_OUTPUT_PATH = str(processed_dir(".", "malaria") / "malaria_adm2.parquet")
 DEFAULT_FLOWS_OUTPUT_PATH = str(processed_dir(".", "malaria") / "malaria_garimpo_flows.parquet")
+DEFAULT_MONTHLY_OUTPUT_PATH = str(processed_dir(".", "malaria") / "malaria_adm2_monthly.parquet")
 
 
 def malaria_dir(root_dir: str | Path = ".") -> Path:

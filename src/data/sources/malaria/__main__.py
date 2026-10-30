@@ -25,6 +25,7 @@ def configure_parser(parser, include_action=True):
     parser.add_argument("--root-dir", default=".")
     parser.add_argument("--adm2-output", default=None)
     parser.add_argument("--flows-output", default=None)
+    parser.add_argument("--monthly-output", default=None)
     return parser
 
 
@@ -34,7 +35,8 @@ def run(args):
     if args.action == "fetch":
         agent.fetch()
     else:
-        agent.preprocess(adm2_output_path=args.adm2_output, flows_output_path=args.flows_output)
+        agent.preprocess(adm2_output_path=args.adm2_output, flows_output_path=args.flows_output,
+                         monthly_output_path=args.monthly_output)
 
 
 def main():

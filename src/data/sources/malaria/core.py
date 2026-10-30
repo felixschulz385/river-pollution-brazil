@@ -10,14 +10,15 @@ class Malaria:
 
         return fetch_sivep(root_dir=self.root_dir)
 
-    def preprocess(self, adm2_output_path=None, flows_output_path=None):
-        """Build the ADM2 case counts and the garimpo residence-to-infection flows."""
+    def preprocess(self, adm2_output_path=None, flows_output_path=None, monthly_output_path=None):
+        """Build the ADM2 case counts (by year and by month) and the garimpo residence-to-infection flows."""
         from .preprocess import build_malaria_panels
 
         return build_malaria_panels(
             root_dir=self.root_dir,
             adm2_output_path=adm2_output_path,
             flows_output_path=flows_output_path,
+            monthly_output_path=monthly_output_path,
         )
 
 

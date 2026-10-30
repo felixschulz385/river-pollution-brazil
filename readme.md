@@ -273,8 +273,9 @@ python3 -m src.cli data fetch      --source malaria
 python3 -m src.cli data preprocess --source malaria
 ```
 
-Outputs: `data/malaria/processed/malaria_adm2.parquet` and the garimpo flow
-table `data/malaria/processed/malaria_garimpo_flows.parquet`.
+Outputs: `data/malaria/processed/malaria_adm2.parquet`, cases by infection
+municipality and notification month `data/malaria/processed/malaria_adm2_monthly.parquet`,
+and the garimpo flow table `data/malaria/processed/malaria_garimpo_flows.parquet`.
 
 ### Commodity Prices
 

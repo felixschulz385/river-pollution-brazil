@@ -8,6 +8,7 @@ from .constants import (
     BRAZIL,
     DEFAULT_ADM2_OUTPUT_PATH,
     DEFAULT_FLOWS_OUTPUT_PATH,
+    DEFAULT_MONTHLY_OUTPUT_PATH,
     FLOW_CASES_COLUMN,
     FLOW_COLUMNS,
     FLOW_COUNTRY_COLUMN,
@@ -17,6 +18,8 @@ from .constants import (
     INFECTION_COLUMNS,
     LVC_DETECTION,
     LVC_NOTIFICATION,
+    MONTH_COLUMN,
+    MONTHLY_COLUMNS,
     MUN_ID_COLUMN,
     NEGATIVE_RESULT,
     NOTIFICATION_COLUMNS,
@@ -54,6 +57,7 @@ def classify_records(frame):
     return pd.DataFrame(
         {
             YEAR_COLUMN: frame["notification_year"].astype("int64"),
+            MONTH_COLUMN: pd.to_datetime(frame["dt_notif"]).dt.to_period("M").dt.to_timestamp().to_numpy(),
             "exam": (~lvc).to_numpy(),
             "case": (positive & ~lvc).to_numpy(),
             "garimpo": frame["cod_ocup"].eq(GARIMPO_OCCUPATION).to_numpy(),
@@ -98,6 +102,23 @@ def aggregate_adm2(records):
     return result.reset_index()
 
 
+def aggregate_monthly(records):
+    """Case counts per infection municipality and notification month (months with a case only)."""
+    infected = records[records["case"] & records["inf"].notna() & records[MONTH_COLUMN].notna()]
+    garimpo = infected["garimpo"]
+    local = infected["res"].notna() & infected["inf"].eq(infected["res"])
+    incoming = infected["res"].notna() & ~local
+    counts = pd.DataFrame({
+        MUN_ID_COLUMN: infected["inf"],
+        MONTH_COLUMN: infected[MONTH_COLUMN],
+        "inf_cases": 1,
+        "inf_garimpo": garimpo.astype("int64"),
+        "inf_garimpo_local": (garimpo & local).astype("int64"),
+        "inf_garimpo_incoming": (garimpo & incoming).astype("int64"),
+    })
+    return counts.groupby([MUN_ID_COLUMN, MONTH_COLUMN], as_index=False).sum()[list(MONTHLY_COLUMNS)]
+
+
 def aggregate_flows(records):
     """Garimpo cases by residence municipality and infection municipality (or country abroad)."""
     garimpo = records[records["case"] & records["garimpo"] & records["res"].notna()]
@@ -112,14 +133,16 @@ def aggregate_flows(records):
     return flows[list(FLOW_COLUMNS)]
 
 
-def build_malaria_panels(root_dir=".", years=YEARS, adm2_output_path=None, flows_output_path=None):
-    """Write the ADM2 malaria counts and the garimpo residence-to-infection flows."""
-    adm2, flows = [], []
+def build_malaria_panels(root_dir=".", years=YEARS, adm2_output_path=None, flows_output_path=None,
+                         monthly_output_path=None):
+    """Write the ADM2 malaria counts (by year and by month) and the garimpo residence-to-infection flows."""
+    adm2, flows, monthly = [], [], []
     for year in years:
         frame = pd.read_parquet(year_path(root_dir, year), columns=list(READ_COLUMNS))
         records = classify_records(frame)
         adm2.append(aggregate_adm2(records))
         flows.append(aggregate_flows(records))
+        monthly.append(aggregate_monthly(records))
         logger.info(
             "SIVEP %d: %d records, %d cases, %d garimpo cases",
             year,
@@ -130,13 +153,16 @@ def build_malaria_panels(root_dir=".", years=YEARS, adm2_output_path=None, flows
 
     adm2 = pd.concat(adm2, ignore_index=True)[list(ADM2_COLUMNS)].sort_values([MUN_ID_COLUMN, YEAR_COLUMN])
     flows = pd.concat(flows, ignore_index=True).sort_values(list(FLOW_COLUMNS[:4]))
+    # A few notifications fall in another year's file; sum them into one row per month.
+    monthly = pd.concat(monthly, ignore_index=True).groupby([MUN_ID_COLUMN, MONTH_COLUMN], as_index=False).sum()
     outputs = (
         (adm2, adm2_output_path or DEFAULT_ADM2_OUTPUT_PATH),
         (flows, flows_output_path or DEFAULT_FLOWS_OUTPUT_PATH),
+        (monthly, monthly_output_path or DEFAULT_MONTHLY_OUTPUT_PATH),
     )
     for frame, output_path in outputs:
         resolved = Path(root_dir) / output_path
         resolved.parent.mkdir(parents=True, exist_ok=True)
         frame.reset_index(drop=True).to_parquet(resolved, index=False)
         logger.info("Wrote %s (shape=%s)", resolved, frame.shape)
-    return adm2.reset_index(drop=True), flows.reset_index(drop=True)
+    return adm2.reset_index(drop=True), flows.reset_index(drop=True), monthly

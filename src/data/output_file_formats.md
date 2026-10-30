@@ -498,6 +498,18 @@ Semantics:
 - "Local" cannot be verified without a patient identifier: for local cases
   residence, infection and notification site usually coincide.
 
+### `data/malaria/processed/malaria_adm2_monthly.parquet`
+
+Positives by infection municipality (`mun_id`) and `month` (the first day of
+the notification month, from `dt_notif`), for timing around dated events such
+as IBAMA raids. Only municipality-months with a case are listed.
+
+- `inf_cases`, `inf_garimpo`, `inf_garimpo_local`, `inf_garimpo_incoming`: as
+  in `malaria_adm2.parquet` (incoming: living in another Brazilian
+  municipality).
+- Notifications are dated when notified, typically days after symptoms start
+  and up to about two weeks after infection.
+
 ### `data/malaria/processed/malaria_garimpo_flows.parquet`
 
 Garimpo cases by `year`, residence municipality `res_mun_id`, infection

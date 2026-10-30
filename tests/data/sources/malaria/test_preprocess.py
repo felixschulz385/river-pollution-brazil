@@ -12,9 +12,11 @@ ITAITUBA, JACAREACANGA, BOA_VISTA, ALTO_ALEGRE = 150360, 150375, 140010, 140005
 
 
 def _record(res_exam="Vivax", occupation="Garimpagem", infection=ITAITUBA, residence=ITAITUBA,
-            notification=None, country="Brasil", lvc="Notificacao nao e de LVC", detection="Deteccao ativa"):
+            notification=None, country="Brasil", lvc="Notificacao nao e de LVC", detection="Deteccao ativa",
+            date="2020-03-17"):
     return {
         "notification_year": 2020,
+        "dt_notif": pd.Timestamp(date).date(),
         "res_exam": res_exam,
         "id_lvc": lvc,
         "tipo_lam": detection,
@@ -60,11 +62,12 @@ def test_build_malaria_panels_splits_local_incoming_and_abroad(tmp_path: Path):
         ],
     )
 
-    adm2, flows = build_malaria_panels(
+    adm2, flows, monthly = build_malaria_panels(
         root_dir=tmp_path,
         years=(2020,),
         adm2_output_path="adm2.parquet",
         flows_output_path="flows.parquet",
+        monthly_output_path="monthly.parquet",
     )
     adm2 = adm2.set_index("mun_id")
 
@@ -91,3 +94,29 @@ def test_build_malaria_panels_splits_local_incoming_and_abroad(tmp_path: Path):
     assert abroad["inf_mun_id"].isna().all()
     assert flows["cases"].sum() == 5
     assert (tmp_path / "adm2.parquet").exists() and (tmp_path / "flows.parquet").exists()
+
+
+def test_monthly_counts_by_infection_municipality_sum_to_the_year(tmp_path: Path):
+    _write_year(
+        tmp_path,
+        [
+            _record(date="2020-03-02"),  # local garimpo case in Itaituba, March
+            _record(residence=JACAREACANGA, date="2020-03-30"),  # incoming, March
+            _record(residence=JACAREACANGA, date="2020-07-01"),  # incoming, July
+            _record(occupation="Agricultura", date="2020-07-15"),  # non-garimpo case, July
+            _record(infection=None, country="Guiana Francesa", residence=JACAREACANGA),  # abroad: no row
+            _record(res_exam="Negativo", occupation=None, infection=None, residence=None, notification=ITAITUBA),
+        ],
+    )
+
+    adm2, _, monthly = build_malaria_panels(root_dir=tmp_path, years=(2020,), adm2_output_path="adm2.parquet",
+                                            flows_output_path="flows.parquet", monthly_output_path="monthly.parquet")
+    itaituba = monthly[monthly["mun_id"] == str(ITAITUBA)].set_index("month")
+
+    assert itaituba.index.tolist() == [pd.Timestamp("2020-03-01"), pd.Timestamp("2020-07-01")]
+    assert itaituba[["inf_cases", "inf_garimpo", "inf_garimpo_local", "inf_garimpo_incoming"]].values.tolist() == [
+        [2, 2, 1, 1], [2, 1, 0, 1]]
+    yearly = adm2.set_index("mun_id").loc[str(ITAITUBA)]
+    assert (itaituba.sum()[["inf_cases", "inf_garimpo", "inf_garimpo_incoming"]]
+            == yearly[["inf_cases", "inf_garimpo", "inf_garimpo_incoming"]]).all()
+    assert (tmp_path / "monthly.parquet").exists()
