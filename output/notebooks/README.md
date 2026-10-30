@@ -58,7 +58,8 @@ Other notebooks:
   on light with brightness class × year FE (Evidence E13;
   `src/analysis/garimpo_nightlights.py`).
 - `garimpo/06_raids.ipynb`: do IBAMA's garimpo raids reduce garimpo malaria where they
-  happen and move it next door? A stacked monthly event study of 2019–2023 raid episodes
+  happen and move it next door? A stacked monthly event study of raid episodes from 2019
+  to April 2025
   for the raided and the bordering municipalities, with a triple difference against
   non-garimpo malaria (Evidence E14; `src/analysis/garimpo_raids.py`).
 - `health/upstream_mining_municipality_map.ipynb`: municipality upstream-deforestation
@@ -113,22 +114,23 @@ nor Moreno-Louzada's gold price × upstream deposits design (`health/04`) gives 
 health effect: both fail the injury placebo. Coefficients are exported to
 `output/analysis/health/`; see [`health/README.md`](health/README.md).
 
-**Garimpo: measurement and supply.** `garimpo/01_measurement` checks the C11 layer,
-SIVEP-Malária and the SGB geology as measures of garimpo. `garimpo/02_price_supply` finds
-that garimpo in gold-geology municipalities does not follow the gold price: C11 garimpo
-grows on a trend, and garimpo cases break upward in 2019, mostly in Roraima.
-`garimpo/03_laundering` finds that, where gold lies inside protected areas, gold PLG
-requests are higher after the 2013 good-faith rule and lower after its 2023 suspension
-by year, but by quarter they do not move when the rule starts (the best-fitting break
-is 2019Q3). C11 garimpo and garimpo cases do not follow either date.
-`garimpo/04_shift_2019` finds that the 2019 case break in IGD municipalities is mostly the
-Roraima rush, and that across the Legal Amazon garimpo cases rose from 2019 where IBAMA
-had been present and its fines fell. `garimpo/05_nightlights` finds that VIIRS annual
-composites do not see garimpo: barred areas near gold are dark, and light near gold does
-not track garimpo cases. `garimpo/06_raids` finds that single raids in 2019–2023 neither
-reduce garimpo malaria measurably within a year nor move it to bordering municipalities.
-Results are recorded in
-`output/research/mining_economics_leads.md` (Evidence).
+**Garimpo: initial evidence for leads 1 and 3.** Results are recorded in
+`output/research/mining_economics_leads.md` (Summary and Evidence E3–E14).
+- `garimpo/01_measurement`: C11, SIVEP-Malária and the SGB geology as measures of
+  garimpo.
+- `garimpo/02_price_supply`: garimpo in gold-geology municipalities does not follow the
+  gold price. C11 garimpo grows on a trend, and garimpo cases break upward in 2019, mostly
+  in Roraima.
+- `garimpo/03_laundering`: where gold lies inside protected areas, gold PLG requests are
+  higher after the 2013 good-faith rule and lower after its 2023 suspension by year.
+  - By quarter they do not move when the rule starts (the best-fitting break is 2019Q3).
+  - C11 garimpo and garimpo cases follow neither date.
+- `garimpo/04_shift_2019`: the 2019 case break in IGD municipalities is mostly the
+  Roraima rush. Across the Legal Amazon, garimpo cases rose from 2019 where IBAMA had been
+  present and its fines fell. This survives the deforestation-frontier checks.
+- `garimpo/05_nightlights`: VIIRS annual composites do not see garimpo.
+- `garimpo/06_raids`: a single raid (2019 to April 2025) neither reduces garimpo malaria
+  measurably within a year nor moves it to bordering municipalities.
 
 ## Sub-basins (Otto Pfafstetter)
 

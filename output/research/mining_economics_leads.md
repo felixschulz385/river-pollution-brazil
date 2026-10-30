@@ -15,97 +15,99 @@ relapse are counted?
   - Outside crews are mobile and choose sites by expected profit.
   - Local residents choose between mining and a traditional economy that mining itself
     erodes.
-- **Three policy shocks**, each identifying one parameter of that model:
-  - laundering policy and the gold price received (lead 1, the main design);
-  - enforcement (lead 3, a section on displacement);
-  - Indigenous-land demarcation (lead 4, a section or a separate paper).
+- **Three levers,** each a shock to one part of the model:
+  - laundering policy and the gold price received (lead 1);
+  - enforcement (lead 3);
+  - Indigenous-land demarcation (lead 4).
 - **Outcomes:**
-  - garimpo area from MapBiomas Collection 11 (C11);
-  - malaria cases from SIVEP among garimpo workers, split into local and incoming
-    workers and infections abroad;
+  - garimpo area from MapBiomas Collection 11 (C11, to 2019);
+  - SIVEP malaria cases among garimpo workers, split into local and incoming workers
+    and infections abroad, by year and by month;
   - mining permits from the National Mining Agency (ANM).
-- **Health as a consequence, not the headline.** Three pieces:
-  - a downstream null for mapped gold mining;
-  - Moreno-Louzada's price × geology design, which does not hold up in this data;
-  - malaria carried home by mining crews.
+- **Health** is a consequence, not the headline.
+- **Framing.** Which lever carries the paper is decided once every lead has initial
+  evidence. Leads 1 and 3 have it; leads 2 and 4 do not yet.
 
-**What the project's evidence shows so far.**
+**Where each part stands.**
 
-- **Pollution.** Upstream pasture raises lead and cadmium violations and agriculture
-  raises COD. Mining raises lead violations. The mercury result does not survive a
-  unit-coding correction, and the stations have almost no mercury readings in the Amazon
-  ([E1](#e1-pollution-arm-and-mercury-data)).
-- **Health.** There is no effect of upstream pasture or agriculture.
-  - *Mapped garimpo gold:* no credible downstream health effect. The upstream gold
-    share fails the injury placebo, and at 50 km it rests on one municipality
-    ([E4](#e4-gate-upstream-garimpo-gold-share-and-health)).
-  - *The earlier Amazon result:* infant deaths rise where mining appears within 50 km
-    upstream (+23%). The result is robust but not about gold: it survives dropping every
-    municipality with gold upstream, and C11 assigns its onsets to non-gold mining
-    ([E2](#e2-the-amazon-mining-presence-result), [E4](#e4-gate-upstream-garimpo-gold-share-and-health)).
-  - *Moreno-Louzada's design:* gold upstream × the gold price does not reproduce his
-    anomaly result (+0.84 per 1,000 births per log point, SE 0.98, against +2.28). Only
-    congenital infant deaths respond, and not with state×year FE. The injury placebo
-    fails, and the interaction does not move garimpo upstream
-    ([E9](#e9-moreno-louzadas-design)).
-- **Garimpo is measurable in SIVEP.**
-  - The split between local and incoming workers is feasible ([E5](#e5-sivep-as-a-measure-of-garimpo-workers)).
-  - One in five garimpo cases was infected abroad.
-  - SIVEP sees mining that MapBiomas misses, but only where malaria is transmitted.
-    C11 garimpo gold fits garimpo cases no better than C10 mining (Spearman 0.36 vs.
-    0.37), and 80% of case municipalities have none.
-- **Garimpo does not follow the gold price.**
-  - Municipalities with never-exploited gold hold 85% of garimpo cases, but within
-    them garimpo does not track the price in reais.
-  - C11 garimpo grows on a smooth trend.
-  - Garimpo cases are flat through 2018, while the price rises by 1.3 log points, then
-    break upward in 2019, mostly in Roraima.
-  - The price lever is therefore not identified from price × geology; the policy dates
-    are ([E10](#e10-garimpo-supply-and-the-gold-price)).
-- **The 2013 laundering rule shows no break; its 2023 suspension may show in permits.**
+| Part | Status | Main result so far | Evidence |
+|---|---|---|---|
+| Measurement of garimpo | done | SIVEP measures garimpo workers where malaria is transmitted; C11 area grows on a smooth trend and steps in 2020; never-exploited SGB gold locates garimpo; VIIRS annual composites do not see it | E3, E5, E6, E13 |
+| Lead 1: gold price | done | Garimpo does not follow the price within municipalities | E10 |
+| Lead 1: laundering rules | done | Permits move by year, but not when the 2013 rule starts; garimpo follows neither date | E11 |
+| Lead 3: enforcement collapse | done | Where IBAMA had been present, fines fell after 2019 and garimpo cases rose, mostly incoming crews | E12 |
+| Lead 3: raids and displacement | first pass | A single raid has no measurable effect at the site or next door within a year | E14 |
+| Lead 2: crews and residents | measurement only | Incoming cases carry the response to enforcement; the residents' side is untested | E5, E12 |
+| Lead 4: demarcation | not started | Data in the pipeline | — |
+| Pollution and health arms | done | No credible downstream health effect of mining; metal violations rise with upstream pasture and mining; mercury is not measured in the Amazon | E1, E2, E4, E9 |
+
+**Findings.**
+
+- **Garimpo is measurable, imperfectly.**
+  - *SIVEP:* 60% of Brazil-infected garimpo cases are local and 40% incoming, and one
+    in five garimpo cases was infected abroad. SIVEP sees garimpo only where malaria is
+    transmitted ([E5](#e5-sivep-as-a-measure-of-garimpo-workers)).
+  - *C11:* garimpo gold fits garimpo cases no better than C10 mining (Spearman 0.36 vs.
+    0.37), and 80% of case municipalities have none. It steps up in 2020 with a
+    reclassification, so area-based designs stop in 2019 ([E3](#e3-the-c11-mining-substances-layer), [E5](#e5-sivep-as-a-measure-of-garimpo-workers)).
+  - *Geology:* the 74 municipalities with never-exploited SGB gold hold 85% of garimpo
+    cases ([E6](#e6-sgb-gold-geology), [E10](#e10-garimpo-supply-and-the-gold-price)).
+  - *Night lights:* VIIRS annual composites do not see garimpo. Barred areas near gold
+    are dark (none of 36,911 such pixels in Roraima's IGD municipalities is lit during
+    the rush), and light near gold does not move with garimpo cases ([E13](#e13-night-lights-as-a-garimpo-activity-measure)).
+  - So after 2019 there is no yearly activity measure besides SIVEP.
+- **Garimpo does not follow the gold price** ([E10](#e10-garimpo-supply-and-the-gold-price)). Garimpo cases are flat through
+  2018 while the price in reais rises 1.3 log points, then break upward in 2019; C11
+  grows on a smooth trend. The price lever is not identified from price × geology.
+- **The laundering rules leave little trace** ([E11](#e11-garimpo-and-the-laundering-rules)).
   - IGD is thin: 27 Legal Amazon municipalities have never-exploited gold inside
     protected areas in force by 2012. They hold 42% of garimpo cases.
-  - By year, gold PLG requests there are higher after the 2013 good-faith rule (+0.49
+  - By year, their gold PLG requests are higher after the 2013 good-faith rule (+0.49
     log points) and lower after its 2023 suspension (−0.48).
-  - By quarter, the requests do not move when the rule starts. IGD's share of Legal
-    Amazon requests is lowest in the law's quarter, the gap already rises before it,
-    and the best-fitting break is 2019Q3. The post-2023 fall is the clearer date.
-  - C11 garimpo and garimpo cases do not follow the dates. C11 follows a smooth trend.
-    Cases follow the 2019 break, which non-garimpo malaria shares, and keep rising
-    after 2023 ([E11](#e11-garimpo-and-the-laundering-rules)).
-- **The 2019–20 shift is the Roraima rush plus the enforcement collapse.**
+  - By quarter, nothing moves when the 2013 rule starts, and the best-fitting break is
+    2019Q3. The 2023 fall starts with the Yanomami emergency and coincides with the
+    electronic gold invoice.
+  - C11 garimpo and garimpo cases follow neither date.
+- **The 2019–20 shift is the Roraima rush plus the enforcement collapse** ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse)).
   - In IGD municipalities the 2019 case break is mostly Roraima's Yanomami rush: 396
     garimpo cases (2018), 11,785 (2022), 1,288 (2024) after the 2023 operation. In IGD
-    municipalities elsewhere, cases rise steadily from 2019 and do not fall back.
+    municipalities elsewhere, cases rise from 2019 and do not fall back.
   - Where IBAMA was present before 2015, fines fell 0.19 log points per SD after 2019
-    and garimpo cases rose 0.09 (p 0.03), mostly incoming cases; non-garimpo malaria
+    and garimpo cases rose 0.09 (p 0.03), mostly incoming cases. Non-garimpo malaria
     does not move. A 10% fall in fines goes with about 4.6% more garimpo cases.
-  - The response survives controls for the deforestation frontier and current clearing,
-    and permutation inference. It is weakest with state×year FE (+0.06, p 0.09), and it
-    sits in the top presence quintile, mostly Pará and Mato Grosso.
-  - When fines recover in 2023, cases do not fall back significantly
-    ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse)).
-- **Single raids show no displacement within a year.**
-  - IBAMA's garimpo raids of 2019–2023 (103 episodes) come where malaria is rising,
-    garimpo and other malaria alike.
+  - The response survives controls for the deforestation frontier and current
+    clearing, and permutation inference. It is weakest with state×year FE (+0.06,
+    p 0.09), and it sits in the top presence quintile, mostly Pará and Mato Grosso.
+  - Fines were already falling before 2019, so the federal government's signals may
+    have mattered as much as the fines. When fines recover in 2023, cases do not fall
+    back significantly.
+- **A single raid shows no effect within a year** ([E14](#e14-raids-and-displacement)).
+  - IBAMA's garimpo raids (129 episodes, 2019 to April 2025) come where malaria is
+    rising, garimpo and other malaria alike.
   - Against other malaria, garimpo cases at the raided municipality fall slightly
-    (−0.03 to −0.05, not significant), and bordering municipalities do not gain cases.
-  - Monthly SIVEP allows falls of up to about 15–20% at the raid site
-    ([E14](#e14-raids-and-displacement)).
-- **Night lights do not measure garimpo.** In VIIRS annual composites, barred areas near
-  gold are dark: none of 36,911 such pixels in Roraima's IGD municipalities is lit
-  during the rush. Light near gold does not move with garimpo cases, and the composites
-  jump most in dim places in some years. The dates show nothing in light once
-  those jumps are absorbed ([E13](#e13-night-lights-as-a-garimpo-activity-measure)).
-- **Gold geology.** The Geological Survey of Brazil's (SGB) never-exploited gold
-  occurrences predict where garimpo is about as well as all occurrences. They are,
-  however, thin (74 Legal Amazon municipalities) ([E6](#e6-sgb-gold-geology)).
+    (−0.03 to −0.05, not significant; the intervals reach −0.12 to −0.17).
+    Bordering municipalities do not gain cases.
+  - From 2023 IBAMA raids the same municipalities month after month, which a design on
+    first raids does not capture.
+- **Pollution and health.**
+  - *Pollution:* upstream pasture raises lead and cadmium violations and agriculture
+    raises COD; mining raises lead violations. The stations have almost no mercury
+    readings in the Amazon ([E1](#e1-pollution-arm-and-mercury-data)).
+  - *Mapped garimpo gold:* no credible downstream health effect; the injury placebo
+    fails ([E4](#e4-gate-upstream-garimpo-gold-share-and-health)).
+  - *The Amazon mining-presence result:* infant deaths rise where mining appears within
+    50 km upstream (+23%). It is robust but not about gold ([E2](#e2-the-amazon-mining-presence-result), [E4](#e4-gate-upstream-garimpo-gold-share-and-health)).
+  - *Moreno-Louzada's design:* gold upstream × the gold price does not reproduce his
+    anomaly result (+0.84 per 1,000 births per log point, SE 0.98, against +2.28). The
+    injury placebo fails, and there is no first stage on garimpo ([E9](#e9-moreno-louzadas-design)).
 
-**Open before the design is final.**
+**Open before the framing call.**
 
+- Initial evidence for lead 2 (residents' response to drought and fishing; the
+  downstream-spread test) and lead 4 (demarcation stages).
 - A novelty check on malaria importation by miners.
-- A yearly activity measure for 2020–24: the VIIRS annual composites fail (E13);
-  monthly composites, the unmasked annual layers and the C11 active phase are untried.
+- Lead 3: raid intensity for the sustained campaigns, displacement beyond bordering
+  municipalities, and E12 through 2025 (the panel stops in 2024).
 
 ## The paper
 
@@ -121,12 +123,15 @@ The paper asks which one reduces garimpo per unit of effort, net of displacement
 other sites and of relapse. The model explains why the answer differs by group: crews
 move, while residents whose livelihoods have collapsed relapse.
 
+The tables below give the planned roles. Which lever carries the paper is decided once
+every lead has initial evidence (see the Summary).
+
 ### Structure
 
 | Part | Role | What it identifies | Main data |
 |---|---|---|---|
 | Lead 2: crews and residents | Model and mechanism tests | Which group responds to what; downstream spread; relapse | SIVEP local, incoming and abroad cases; flow table; C11 |
-| Lead 1: laundering policy and the gold price | Main design | Supply response to the price received, by group | C11 garimpo area, SIVEP, permits, SGB deposits |
+| Lead 1: laundering policy and the gold price | Planned main design | Supply response to the price received, by group | C11 garimpo area, SIVEP, permits, SGB deposits |
 | Lead 3: enforcement | Section | Enforcement response; displacement ratio, including across the border | IBAMA, SIVEP flows, C11 |
 | Lead 4: demarcation | Section or separate paper | Where crews go when protection is pending | FUNAI, CNUC, permits |
 | Consequences: health | Section | Downstream null; price × geology test; malaria importation | DATASUS, SIVEP |
@@ -382,8 +387,9 @@ Rocha & Soares (2023, *ReStud*), which this project also uses.
 - **Directed river network.** Every 25 km river stretch is linked to the municipalities
   and stations downstream of it. That makes the downstream-spread test (lead 2),
   substitute sites along rivers (lead 3) and downstream consequences possible.
-- **Record-level malaria data.** SIVEP 2004–2024 with occupation, residence and
-  infection site, processed into local, incoming and abroad counts and a flow table.
+- **Record-level malaria data.** SIVEP 2004–2024, plus the preliminary releases from
+  2025, with occupation, residence and infection site, processed into local, incoming
+  and abroad counts by year and by month, and a flow table.
 - **Pipeline already built.** Every dataset is a module of the data pipeline with fetch,
   preprocess and verification steps. Health outcomes (SIH, SINASC, SIM) and few-cluster
   inference (Otto-3 basins, wild-cluster bootstrap for OLS and PPML) are in place.
@@ -392,6 +398,25 @@ Rocha & Soares (2023, *ReStud*), which this project also uses.
 
 **Question.** Does making illegal gold easier or harder to sell change how much garimpo
 happens, where, and who does it?
+
+**Evidence so far** ([E10](#e10-garimpo-supply-and-the-gold-price), [E11](#e11-garimpo-and-the-laundering-rules)).
+
+- *The price:* within municipalities, garimpo does not follow the gold price in reais.
+  C11 grows on a trend, and the cases break in 2019. So γ below is not a supply
+  elasticity, and price × deposits stays a control.
+- *The dates:*
+  - Legal Amazon gold PLG requests: 779 (2012), 1,706 (2013), 894 (2014), 1,693 (2020),
+    819 (2023), 484 (2024).
+  - In IGD municipalities, the requests are higher after 2013 and lower after 2023 by
+    year. By quarter, nothing moves when the 2013 rule starts (the best-fitting break is
+    2019Q3). The 2023 fall starts with the Yanomami emergency and coincides with the
+    electronic invoice.
+  - C11 garimpo and the cases follow neither date.
+- *So:* the 2013 rule is not identified as a break in any outcome, and the 2019–20 shift
+  is the event the data show
+  ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse)). Whether output
+  responded to the 2023 suspension needs an activity measure after 2019, which is
+  missing ([E13](#e13-night-lights-as-a-garimpo-activity-measure)).
 
 **Mechanism.**
 
@@ -444,25 +469,6 @@ X_mt = β_13·(IGD_m × post-2013_t) + β_23·(IGD_m × post-2023_t)
     Occurrences recorded at garimpos or mines are not predetermined ([E6](#e6-sgb-gold-geology)).
 - **By group.** The same equation on local and on incoming cases gives the model's
   prediction 5.
-- **The price term, tested** ([E10](#e10-garimpo-supply-and-the-gold-price)).
-  - Within municipalities, garimpo does not follow the price: C11 garimpo grows on a
-    smooth trend in deposit municipalities, and SIVEP garimpo cases break upward in 2019,
-    mostly in Roraima.
-  - So γ is not a usable supply elasticity, and price × deposits stays a control.
-  - The design rests on the policy dates, which is where the cases move. The 2019–20
-    break has to be read against the enforcement collapse (lead 3) as well as the
-    price.
-- **The policy dates, tested** ([E11](#e11-garimpo-and-the-laundering-rules)).
-  - Gold PLG requests in IGD municipalities are higher after 2013 and lower after 2023
-    by year. By quarter, they do not move when the 2013 rule starts: the gap rises
-    before it, and the best-fitting break is 2019Q3. The fall from 2023 is the clearer
-    date, though in the full sample it starts in 2023Q1, before the April suspension.
-  - C11 garimpo and SIVEP garimpo cases do not follow the dates. The case series is
-    dominated by the 2019 break, and the outcome placebo moves with it.
-  - So the 2013 rule is not identified as a break in any outcome. IGD municipalities
-    diverge from 2019, together with the case break and the enforcement collapse, so
-    the 2019–20 shift is the event to explain. Whether output responded to the 2023
-    suspension needs an activity measure that is not driven by the 2019 malaria break.
 - **Ghost permits as heterogeneity.** Permit area that declares gold sales but shows
   little mining footprint before 2013 is a mechanism test.
   - The Monitor da Mineração's MEND flag (mining expected but not detected) is a
@@ -479,14 +485,14 @@ X_mt = β_13·(IGD_m × post-2013_t) + β_23·(IGD_m × post-2023_t)
   - With few exposed municipalities in few basins and an outcome that is zero
     elsewhere, the restricted wild-cluster bootstrap over-rejects. For C11 shares it
     gives p ≈ 0.005 whatever the sign of the coefficient ([E10](#e10-garimpo-supply-and-the-gold-price)).
-    IGD will have the same structure, so it needs randomization over municipalities as
-    well.
+    IGD has the same structure, so E11 adds a permutation of IGD across
+    municipalities.
 
 **Threats and checks.**
 
-- **Deposits proxy for mining in general.** Run a placebo with deposits of other garimpo
-  minerals inside protected areas, as Pereira & Pucci do. Keep the price × deposits
-  control.
+- **Deposits proxy for mining in general.** The placebo with tin inside protected
+  areas, as in Pereira & Pucci, also raises gold PLG requests after 2013 (+0.41, E11),
+  so part of the post-2013 rise is not gold-specific. The price × deposits control stays.
 - **2023 coincides with Lula's enforcement surge.** The surge targeted Indigenous lands
   and specific rivers. It overlaps with IGD exposure more than the 2013 law did, so the
   2023 coefficient is a joint laundering-plus-enforcement shock unless lead 3's
@@ -497,8 +503,8 @@ X_mt = β_13·(IGD_m × post-2013_t) + β_23·(IGD_m × post-2023_t)
   - Oliveira's deforestation event study is also largest in 2016–18, and his Indigenous
     land × year FE do not absorb enforcement weakening that differs by distance to
     deposits within a territory.
-  - Here: report the event study by year, read the law from 2013–15, and add IGD ×
-    post-2016 or Nunes et al.'s IBAMA field-agent series × IGD.
+  - E11 reports the event study by year and IGD × post-2016; E12 separates the 2019
+    shift.
   - The 2023 reversal is the cleaner shock, because the law and enforcement both tighten.
 - **The 2020 step.** C11 garimpo gold rises 15.1% in 2020, against 4.0–9.7% a year in
   2016–2023, and industrial gold rises 12.8%, against 1.7–2.9% in 2016–19. That is hard
@@ -513,7 +519,8 @@ X_mt = β_13·(IGD_m × post-2013_t) + β_23·(IGD_m × post-2023_t)
 - **SIVEP is not gold-specific.** "Garimpagem" covers every substance. The Rondônia
   cluster around Ariquemes is probably cassiterite (tin). Use the gold geology to
   restrict or interact.
-- **Pre-trends.** Check for trends before 2013.
+- **Pre-trends.** In IGD municipalities the gap in gold PLG requests was already closing
+  before 2013, from −0.38 (2009) to −0.13 (2013) (E11).
 
 **Contribution.** Pereira & Pucci establish the 2013 law's effect on local violence, with
 an imprecise first stage. Oliveira (2025) establishes its effect on mining deforestation
@@ -526,6 +533,15 @@ shock of opposite sign.
 **Question.** Is garimpo driven by outside crews moving to where enforcement is weak, or
 by locals turning to mining as their traditional economy erodes, and how do the two
 interact?
+
+**Evidence so far.** Measurement, and one response.
+
+- SIVEP splits garimpo cases into local and incoming workers, who are different
+  populations ([E5](#e5-sivep-as-a-measure-of-garimpo-workers)).
+- The response to the enforcement collapse is mostly among incoming workers (+0.080 per
+  SD of presence, against +0.063 for local cases), as the model predicts for crews
+  ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse)).
+- The residents' side (drought, fishing, relapse) and the spread test are untested.
 
 **Model.**
 
@@ -631,7 +647,7 @@ ratio for lead 3 directly.
 - **Block 1 (crews):**
   - crew presence: incoming garimpo cases [in the pipeline, `malaria`];
   - p_t: gold price in reais [in the pipeline, `commodity_prices`];
-  - λ_t: policy dates [to verify], plus gold-buying points (DTVM/PCO) for variation
+  - λ_t: policy dates [tested, E11], plus gold-buying points (DTVM/PCO) for variation
     across sites [to add];
   - q_i: SGB gold occurrences [in the pipeline, `geology`];
   - e_it: IBAMA seizures and equipment destruction [in the pipeline, `enforcement`];
@@ -642,8 +658,8 @@ ratio for lead 3 directly.
   - fish: upstream mining H_it [C11, in the pipeline]; fishers and seguro-defeso [to add];
   - forest: MapBiomas C10 [in the pipeline];
   - transfers: Bolsa Família [to add];
-  - heterogeneity in κ: FUNAI lands [in the pipeline, `protected_areas`] and the Census Indigenous and riverine
-    population shares [to add].
+  - heterogeneity in κ: FUNAI lands [in the pipeline, `protected_areas`] and the Census
+    Indigenous and riverine population shares [to add].
 - **Block 3 (wage):** no series exists for informal garimpo work. Census 2010/2022
   garimpeiro occupation counts and formal mining employment in RAIS are proxies;
   otherwise test only the sign of the complementarity, through cross-responses.
@@ -694,6 +710,17 @@ ratio for lead 3 directly.
 **Question.** When enforcement shuts down mining in one territory, how much moves
 elsewhere, where does it go, and does the health burden move with it?
 
+**Evidence so far.**
+
+- *The enforcement collapse* ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse)): where IBAMA was present before 2015, fines fell
+  after 2019 and garimpo cases rose, mostly among incoming crews. The result holds with
+  deforestation-frontier controls, and is weakest with state×year FE.
+- *Single raids* ([E14](#e14-raids-and-displacement)): no measurable effect at the raided municipality or in
+  bordering ones within a year. The displacement ratio is not identified from single
+  raids.
+- *So far:* the level of deterrence moves garimpo; single raids do not. Displacement
+  beyond bordering municipalities and the sustained campaigns of 2023–25 are untested.
+
 **Shocks.**
 
 - the Yanomami health emergency and enforcement operation (2023);
@@ -726,9 +753,23 @@ elsewhere, where does it go, and does the health burden move with it?
 
 **Data.**
 
-- **In the pipeline:** IBAMA fines, embargoes, seizures and destruction terms
-  (`enforcement`: dated, mostly geocoded, with operation codes and names), C11, SIVEP
-  (counts and flows), the river network for travel distances.
+- **In the pipeline:**
+  - IBAMA fines, embargoes, seizures and destruction terms (`enforcement`). They are
+    dated, and over 90% of garimpo seizures and destructions carry coordinates. They
+    have operation codes and names; destruction terms rarely reference a fine, so they
+    link to the rest of an operation by operation code.
+  - Legal Amazon garimpo actions:
+    - seizures: 8–71 a year in 2008–16, 124 (2017), 46 (2019), 87 (2020), 207 (2021),
+      404 (2023), 572 (2024), 517 (2025);
+    - destruction terms (recorded from 2014): 28 (2019), 158 (2021), 322 (2023), 508
+      (2024), 487 (2025);
+    - garimpo fines: 25 (2019), 216 (2023), 293 (2024).
+
+    Recorded garimpo enforcement is small before 2021 and surges from 2023, in Pará,
+    Roraima, Mato Grosso and Amazonas. The 2019 collapse shows in all IBAMA fines, not
+    in these counts.
+  - C11, SIVEP (yearly and monthly counts, and flows), the river network for travel
+    distances.
 - **To add:** operation dates and areas from official reporting, to group records into
   operations where the operation code is missing.
 
@@ -775,6 +816,8 @@ its borders, with the workers' origins observed. It directly tests prediction 1 
 
 **Question.** Does the gap between legal protection and actual control, especially while
 demarcation is pending, attract garimpo into Indigenous lands and protected areas?
+
+**Evidence so far.** None; the data are in the pipeline (below).
 
 **Mechanism.**
 
@@ -832,88 +875,56 @@ substitute sites of lead 3.
 
 ## Work plan
 
-The evidence behind E2–E6 and E9 is in the repo (`src/analysis`, `output/notebooks/`).
-The ADM2 panel carries:
+**In place.**
 
-- the C11 shares, upstream and local;
-- the SGB geology, local and upstream;
-- the malaria cases;
-- the SINASC anomaly and APGAR counts and the infant deaths by ICD-10 chapter;
-- the gold price in reais;
-- the PLG permits (`mining`) and the IBAMA enforcement counts (`enforcement`);
-- the protected-area shares (`protected_areas`) and IGD, the gold and tin occurrences
-  inside protected areas in force by 2012, local and upstream (`geology`).
+- *The ADM2 panel* (`data/assembly/adm2_panel.parquet`, 1985–2024). It carries:
+  - C11 shares, local and upstream;
+  - the SGB geology and IGD, local and upstream;
+  - SIVEP cases by group;
+  - the health outcomes;
+  - the gold price in reais;
+  - PLG permits;
+  - IBAMA enforcement counts;
+  - protected-area shares;
+  - night lights.
+- *Monthly tables:*
+  - PLG requests by protocol month (`mining_requests_monthly`);
+  - malaria cases by notification month, through the last complete month
+    (`malaria_adm2_monthly`).
+- *Record-level tables:* the IBAMA records and the SIVEP flow table.
+- *Formats:* `src/data/output_file_formats.md`.
 
-1. **Mining permits.** The `mining` source counts PLG requests, first grants and PLGs
-   in force (with areas) by municipality and year, for all substances, gold and tin,
-   from the ANM Cadastro Mineiro microdata; `adm2_panel` carries them.
-   - Legal Amazon gold PLG requests: 779 (2012), 1,706 (2013), 894 (2014); 1,693 in 2020;
-     819 (2023), 484 (2024). Both policy dates show in the requests.
-   - Still to add:
-     - the dated events (`ProcessoEvento`, 1.1 GB): rejections, cancellations and
-       forfeitures (requests by protocol month are in `mining_requests_monthly`);
-     - the Monitor da Mineração layer: polygons, and the MEND flag for ghost permits.
-2. **Lead 1 supply estimates.** The gold price in reais (`commodity_prices`), the
-   upstream-reach geology (`geology --product upstream`), IGD (`protected_areas` and
-   `geology`, local and upstream) and the price × deposits test
-   ([E10](#e10-garimpo-supply-and-the-gold-price)) are in place. Price × deposits does
-   not identify a supply elasticity, so the estimates rest on the policy dates.
-   - The IGD × post-2013 and × post-2023 estimates are run
-     ([E11](#e11-garimpo-and-the-laundering-rules)). Permits respond by year but show no
-     break at the 2013 rule by quarter; C11 and the cases do not respond.
-   - The 2019–20 break is the Roraima rush plus the enforcement collapse
-     ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse)).
-   - Still needed: an activity measure for 2020–24, since C11 stops in 2019 and the cases
-     follow the 2019 break. The VIIRS annual composites fail as one
-     ([E13](#e13-night-lights-as-a-garimpo-activity-measure); step 8).
-3. **Lead 2 first pass.**
-   - Prediction 5: local vs. incoming cases on price × deposits and on drought.
-   - Prediction 2: a downstream aggregation of mining for the spread test.
-4. **Malaria importation.** Novelty check first, then the test with the flow table.
-5. **Lead 3.** The `enforcement` source holds IBAMA's fines, embargoes, seizures and
-   destruction terms as dated records (no personal data) and as municipality × year
-   counts in `adm2_panel`. Each record is classed as mining or garimpo from its
-   description and its items.
-   - Legal Amazon garimpo actions:
-     - seizures: 8–71 a year in 2008–16, 124 (2017), 46 (2019), 87 (2020), then 207
-       (2021), 404 (2023), 572 (2024) and 517 (2025);
-     - destruction terms (recorded from 2014): 28 (2019), 158 (2021), 322 (2023), 508 (2024),
-       487 (2025);
-     - garimpo fines are fewer: 25 (2019), 216 (2023), 293 (2024).
-   - Recorded garimpo enforcement is small before 2021 and falls only from the 2017
-     peak, so the 2019 break in garimpo cases has no matching collapse in these counts.
-     The surge starts in 2021 and is mostly from 2023, in Pará, Roraima, Mato Grosso and
-     Amazonas.
-   - All IBAMA fines do collapse, and the collapse is concentrated where IBAMA was
-     present; garimpo cases rise there from 2019
-     ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse)). The response
-     survives the deforestation-frontier controls and permutation inference.
-   - Over 90% of garimpo seizures and destructions carry coordinates. Destruction terms
-     rarely reference a fine, so they link to the rest of an operation by operation code.
-   - Raids and displacement by month ([E14](#e14-raids-and-displacement)): single raids
-     in 2019–2023 neither measurably reduce garimpo cases where they happen within a year,
-     nor raise them in bordering municipalities, so the displacement ratio is not
-     identified.
-   - Still to do:
-     - SIVEP's preliminary 2025–26 data (Zenodo 20706949), to cover the 2024 surge in
-       raids;
-     - substitute sites farther away, by river distance or from the residence flows;
-     - the large operations (Yanomami 2023, the Madeira dredges) as separate events;
-     - the crew logit.
-6. **Lead 4.** FUNAI stages, CNUC dates, anticipation around PL 191/2020.
+**Next, toward initial evidence for every lead.**
+
+1. **Lead 2, first pass.**
+   - Prediction 5: local vs. incoming cases on drought (ERA5-Land) and on upstream
+     mining.
+   - Prediction 2: a downstream aggregation of mining, for the spread test.
+   - To add for the residents' side: registered fishers and seguro-defeso, Bolsa
+     Família.
+2. **Lead 4, first pass.**
+   - FUNAI stages and dates (in `protected_areas`) and CNUC dates.
+   - Anticipation around PL 191/2020.
+   - Permit requests over Indigenous lands (ANM microdata, SIGMINE).
+3. **Malaria importation.** Novelty check first, then the test with the flow table.
+4. **Lead 3, continued.**
+   - Raid intensity: monthly raid terms or operations as a continuous treatment, for the
+     sustained campaigns of 2023–25.
+   - Substitute sites beyond bordering municipalities (river distance, residence flows),
+     the large operations (Yanomami 2023, the Madeira dredges) as events, and the crew
+     logit.
+   - E12 through 2025: the panel's spine (land cover) stops in 2024, while SIVEP and
+     IBAMA run to 2025.
+5. **Lead 1, if it stays in.** Permit events (`ProcessoEvento`: rejections,
+   cancellations, forfeitures) and the Monitor da Mineração layer (polygons, the MEND
+   flag for ghost permits).
+6. **Activity measure.** Still untried:
+   - monthly VIIRS composites (EOG's VNL monthly, NASA Black Marble VNP46A3);
+   - the unmasked annual layers;
+   - light at C11 garimpo polygons;
+   - the C11 active-phase share (to 2019).
 7. **Optional water outcome.** Station turbidity from 2008, or satellite river
    turbidity, as a pollution outcome of upstream garimpo ([E8](#e8-amazon-station-coverage-for-turbidity)).
-8. **Activity measure.** Year-to-year garimpo activity (see Sources and access, "Night
-   lights").
-   - The `nightlights` source holds EOG's annual VIIRS composites (2012–2025) per
-     municipality: in the whole municipality, near gold, inside barred areas, and both.
-     They fail the measurement check ([E13](#e13-night-lights-as-a-garimpo-activity-measure)).
-   - Untried:
-     - monthly composites (EOG's VNL monthly, NASA Black Marble VNP46A3), which keep dim
-       and short-lived lights;
-     - the unmasked annual layers;
-     - light at C11 garimpo polygons rather than at gold occurrences;
-     - the C11 active-phase share (to 2019).
 
 ## Evidence
 
@@ -950,8 +961,8 @@ and 2020 diagnostics in `src/analysis/garimpo_gold.py` and
 `output/notebooks/health/03_garimpo_gold.ipynb`.*
 
 - **Result.** Where mining (C10, class 30) appears within 50 km upstream, Amazon infant
-  deaths rise by 0.21 log points, about 23% (bootstrap p = 0.0015). It rests on 36 onsets in 18
-  basins, and the injury placebo is flat.
+  deaths rise by 0.21 log points, about 23% (bootstrap p = 0.0015). It rests on 36
+  onsets in 18 basins, and the injury placebo is flat.
 - **Where the onsets are.**
   - 13 of the 36 are in Maranhão and 5 on the northeast Pará coast.
   - 11 fall in 2020, the year of a national C10 mapping step: 41 first-time upstream
@@ -1009,8 +1020,9 @@ checks in `output/notebooks/garimpo/01_measurement.ipynb`.*
 
 *Code: `src/analysis/garimpo_gold.py`, `output/notebooks/health/03_garimpo_gold.ipynb`;
 tables in `output/analysis/health/garimpo_gold/`.* Municipality and state×year FE,
-clustered by Otto-3 basin (38–57 clusters), wild-cluster bootstrap. Controls: other upstream mining, the local C10 mining
-terms, the health arm's controls. Sample: 2000–2019.
+clustered by Otto-3 basin (38–57 clusters), wild-cluster bootstrap. Controls: other
+upstream mining, the local C10 mining terms, the health arm's controls. Sample:
+2000–2019.
 
 - **Identifying variation.** Among municipalities with gold upstream at some point:
   - 32 Amazon municipalities gain at least 0.01 pp of gold share at 50 km, and 39 at
@@ -1211,8 +1223,8 @@ tables in `output/analysis/health/moreno_louzada/`.*
   fall to 0.07 unweighted and to 0.18 on 2004–2023 (p 0.06), and are insignificant for
   never-exploited deposits.
 - **The placebo fails.** Injury hospitalizations fall significantly in most
-  specifications (bootstrap p 0.03–0.07 in seven of twelve). Congenital hospitalizations fall too,
-  opposite in sign to congenital deaths.
+  specifications (bootstrap p 0.03–0.07 in seven of twelve). Congenital
+  hospitalizations fall too, opposite in sign to congenital deaths.
 - **No first stage.**
   - Upstream C11 garimpo gold: +0.001 pp per log point (p 0.20–0.21; 2007–19, mean
     0.005–0.008 pp).
@@ -1528,34 +1540,38 @@ in `output/analysis/garimpo/raids/`. Monthly cases: `malaria_adm2_monthly.parque
 - **Design.**
   - *Raids:* garimpo destruction and seizure terms (`enforcement`).
   - *Cases:* SIVEP garimpo cases by infection municipality and notification month, to
-    2024.
-  - *Episode:* a municipality's first raid month after 12 months without one, 2019–2023.
-    There are 103 episodes in 79 municipalities: 44 large (3+ terms), and 43
-    malaria-visible (12+ garimpo cases in the year before).
+    April 2026 (2025 onward from the preliminary release).
+  - *Episode:* a municipality's first raid month after 12 months without one, from 2019
+    to April 2025. There are 129 episodes in 89 municipalities: 53 large (3+ terms),
+    and 51 malaria-visible (12+ garimpo cases in the year before).
   - *Stacked event study* over months −12 to +12, for the raided municipality and for
-    its unraided bordering municipalities. Controls: sample municipalities neither
-    raided in the window nor bordering. Episode × municipality and episode × month FE;
-    clustered by municipality.
+    its unraided bordering municipalities.
+    - Controls: sample municipalities neither raided in the window nor bordering.
+    - Episode × municipality and episode × month FE; clustered by municipality.
 - **Raids follow malaria.**
-  - In the year before a visible raid, garimpo cases rise by 0.35 log points into the
-    raid month. Non-garimpo malaria rises as much (0.34).
-  - Both stay at that level after the raid. Raids are timed to local malaria peaks, so
-    the plain event study cannot isolate a raid effect.
-- **Against other malaria** (triple difference; flat before the raid, −0.06 to +0.04):
-  - *At the raid:* −0.05 (p 0.34) for all raids, −0.03 (p 0.78) for visible ones. The
-    95% intervals reach about −0.15 and −0.20.
-  - *Bordering municipalities:* −0.02 to −0.10 (p ≥ 0.10). No raid sample shows a gain
-    next door, so the displacement ratio is not defined.
+  - In the year before a visible raid, garimpo cases rise by 0.36 log points into the
+    raid month. Non-garimpo malaria rises by 0.30.
+  - Both stay near that level after the raid. Raids are timed to local malaria peaks,
+    so the plain event study cannot isolate a raid effect.
+- **Repeated raids.** The 2,073 raid terms of 2024–25 give only 26 episodes, because
+  IBAMA raids the same municipalities month after month. Sustained campaigns fall
+  outside this design.
+- **Against other malaria** (triple difference; before the raid −0.06 to +0.02):
+  - *At the raid:* −0.04 (p 0.39) for all raids, −0.05 (p 0.56) for large ones and
+    −0.03 (p 0.65) for visible ones. The 95% intervals reach about −0.12 (all) and −0.17
+    (visible).
+  - *Bordering municipalities:* −0.07 to +0.01 (p ≥ 0.18). No raid sample shows a gain
+    next door. Cases in levels rise at the raid (+4 to +11 per month, p ≥ 0.11), so the
+    displacement ratio is not defined.
 - **Reading.**
-  - A single raid of the size IBAMA ran in 2019–2023 does not measurably reduce garimpo
-    malaria where it happens within a year, and crews do not show up in bordering
-    municipalities.
-  - Displacement may go farther than the next municipality, or out of the region. A
-    raid may also stop operations without stopping infection among those who stay, or
-    SIVEP may be too coarse for one raid.
-  - The 2024 surge in raids (1,080 terms) lies beyond SIVEP's 2024 end. Together with
-    E12, the evidence so far is that the level of deterrence matters (the 2019
-    collapse), more than any single raid.
+  - Within a year, a single raid does not measurably reduce garimpo malaria where it
+    happens, and crews do not show up in bordering municipalities.
+  - Displacement may go farther than the next municipality, or out of the region. A raid
+    may stop operations without stopping infection among those who stay, or SIVEP may
+    be too coarse for one raid.
+  - Together with E12, the evidence so far is that the level of deterrence matters (the
+    2019 collapse) more than any single raid. The sustained campaigns of 2023–25 need a
+    design on raid intensity.
 
 ## Data inventory
 
@@ -1566,7 +1582,7 @@ in `output/analysis/garimpo/raids/`. Monthly cases: `malaria_adm2_monthly.parque
 | Hospitalizations, births, deaths by municipality | DATASUS (SIH, SINASC, SIM) | health outcomes | in pipeline (`health`), including SINASC anomalies and APGAR and SIM infant deaths by ICD-10 chapter |
 | Land cover incl. a single mining class | MapBiomas Collection 10 | land-cover exposures | in pipeline (`land_cover`); mapping step in 2020 |
 | Mining substances (garimpo vs. industrial, by ore) | MapBiomas Collection 11 | garimpo area | in pipeline (`land_cover` with the mining legend); step in 2020 in every group |
-| Malaria cases with occupation, infection site, residence | SIVEP-Malária (Saldanha, Zenodo 20706957, CC BY) | garimpo workers by group; flows | in pipeline (`malaria`); 2025–26 preliminary in Zenodo 20706949 |
+| Malaria cases with occupation, infection site, residence | SIVEP-Malária (Saldanha, Zenodo 20706957 and preliminary 20706949, CC BY) | garimpo workers by group; flows; monthly timing | in pipeline (`malaria`: yearly to 2025, monthly to the last complete month, flows; preliminary releases in dated snapshots) |
 | Gold occurrences, gold provinces and districts | Geological Survey of Brazil (SGB) | deposit quality, IGD, geology control | in pipeline (`geology`); stream-sediment assays not fetched |
 | Mining permits with type, ore, dates, flags | ANM Cadastro Mineiro microdata; MapBiomas Monitor da Mineração | laundering exposure, ghost permits, anticipation | in pipeline (`mining`: PLG requests, grants, PLGs in force); events and the Monitor layer to add |
 | Royalty payments (CFEM) | ANM | declared output | not usable for garimpo (E7) |
@@ -1615,7 +1631,10 @@ in `output/analysis/garimpo/raids/`. Monthly cases: `malaria_adm2_monthly.parque
       `land_cover_mining.parquet` and `land_cover_mining_adm2_upstream.parquet`.
     - `panels.adm2_upstream_mining` gives kernel-weighted upstream shares per
       municipality-year.
-- **SIVEP-Malária 2004–2024** (Saldanha, Zenodo 20706957, CC BY), in `data/malaria/raw/`.
+- **SIVEP-Malária** (Saldanha, CC BY): 2004–2024 from Zenodo 20706957 in
+  `data/malaria/raw/`; the preliminary years from 2025 (from LAI requests, updated
+  monthly) from Zenodo 20706949, in dated snapshots `data/malaria/raw/preliminary_<date>/`
+  (2025 complete, 2026 to 25 May in the 2026-10-30 snapshot).
   - *Contents:* record-level notifications with activity in the prior 15 days
     (`cod_ocup`, "Garimpagem"), municipality of residence, probable municipality and
     locality of infection, and country of infection.
@@ -1623,9 +1642,12 @@ in `output/analysis/garimpo/raids/`. Monthly cases: `malaria_adm2_monthly.parque
     (5399xx are placeholders). There is no patient identifier (`id_pacie` is age).
     Negative exams are included.
   - *Pipeline:* the `malaria` source.
-    - `data fetch` downloads and md5-verifies the yearly files.
+    - `data fetch` downloads and md5-verifies the yearly files, and adds a preliminary
+      snapshot when the record has changed.
     - `data preprocess` writes `malaria_adm2.parquet` (sparse: zero-fill against the
-      panel) and `malaria_garimpo_flows.parquet` (Brazilian residents only).
+      panel), `malaria_adm2_monthly.parquet` (by notification month) and
+      `malaria_garimpo_flows.parquet` (Brazilian residents only). Outputs stop at the
+      last complete month, the yearly tables at the last complete year.
     - Formats are in `src/data/output_file_formats.md`.
 - **SGB gold geology** (fetched 2026-10-27), in `data/geology/raw/sgb_gold.gpkg`.
   - *Source:* the SGB geoportal's ArcGIS REST services:
