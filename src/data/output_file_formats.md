@@ -659,3 +659,58 @@ Semantics:
   in the 2026-10-29 snapshot); the table's last year is complete for every
   action.
 - Records count where they took place, by their own municipality code.
+
+## Night-Light Outputs
+
+Produced by `src.data.sources.nightlights` from the Earth Observation Group's
+annual VIIRS night-light composites (VNL, Colorado School of Mines), downloaded
+by hand behind EOG's login and kept as served (`.dat.tif.gz`) in folders under
+`data/nightlights/raw/`:
+
+- `eog_vnl_v21/`: v2.1, 2012 (April–December) to 2021, Suomi NPP; a link to the
+  copies of the growth-and-temperature project.
+- `eog_vnl_<YYYY-MM-DD>/`: v2.2, 2022 onward, with `PROVENANCE.md`, `SCHEMA.md`
+  and `SHA256SUMS`. 2022 combines Suomi NPP with three months of NOAA-20; later
+  years are Suomi NPP only. v2.2 does not reprocess earlier years.
+
+Every file covers the globe on one grid of 15″ pixels (86401 × 33601, EPSG:4326,
+pixel centres from (−180, 75)). The preprocess reads the `average_masked`
+(background, fires and aurora masked to 0) and `cf_cvg` (cloud-free
+observations) layers over the window of Brazil's municipalities. Each file is
+identified by the original name EOG wrote into its TIFF document-name tag: some
+v2.1 copies were saved under another file's name, and a file whose tag
+disagrees with its name is skipped (the 2013 `cf_cvg` copy holds the 2012
+median, so 2013 has no coverage).
+
+### `data/nightlights/processed/nightlights_adm2.parquet`
+
+One row per (`mun_id`, `year`), every municipality in every year from 2012.
+
+- `viirs_version` (`v2.1`, `v2.2`), `viirs_satellite` (`npp`, or `npp-j01` for
+  2022).
+- For each zone `<z>`:
+  - `viirs_pixels<z>`: pixels whose centre lies in the zone;
+  - `viirs_lit_pixels<z>`: those with masked radiance above 0;
+  - `viirs_radiance<z>`: summed masked radiance (nW/cm²/sr, unweighted by pixel
+    area).
+
+  The zones are:
+  - `` (no suffix): the whole municipality;
+  - `_protected`: areas that bar mining and were in force by 2012
+    (`protected_areas`, lead 1's IGD areas);
+  - `_gold5km`: within 5 km of an SGB gold occurrence (`geology`, any economic
+    status);
+  - `_gold5km_protected`: both.
+- `viirs_cf_cvg_mean`: mean cloud-free observations over the municipality's
+  pixels (missing in 2013).
+
+Semantics:
+
+- Negative masked radiance (a few cells; −1.5 marks a missing median in v2) is
+  set to 0.
+- v2.2 changes the method at the 2021/2022 boundary: a month needs only one
+  cloud-free observation for the median (v2.1: three), and cells without a
+  median are left out of the background threshold. NOAA-20 enters in 2022.
+  Compare across 2021/2022 with year effects, not levels.
+- 2012 and 2013 are not corrected for stray light (`vcmcfg`); later years are
+  (`vcmslcfg`).

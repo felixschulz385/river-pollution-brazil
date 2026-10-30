@@ -1719,6 +1719,111 @@ def _enforcement_fingerprint_paths(root_dir) -> list[Path]:
 
 
 # --------------------------------------------------------------------------
+# nightlights
+# --------------------------------------------------------------------------
+
+def _nightlights_list_fetched(root_dir, force: bool = False) -> FetchListing:
+    from src.data.sources.nightlights.constants import AVERAGE, FIRST_YEAR, raw_dir, raw_files
+
+    years = sorted({year for _, year, variant, _, _ in raw_files(raw_dir(root_dir)) if variant == AVERAGE})
+    if not years:
+        return FetchListing(present=0, expected=1, detail="No EOG VNL files (manual placement).")
+    return FetchListing(present=len(years), expected=years[-1] - FIRST_YEAR + 1,
+                        detail=f"average_masked for {years[0]}-{years[-1]} ({len(years)} years).")
+
+
+def _nightlights_adm2_checks(frame) -> list[CheckResult]:
+    """Keys unique, a balanced panel of consecutive years, counts within pixels, zones nested."""
+    from src.data.sources.nightlights.constants import (
+        ADM2_COLUMNS,
+        COVERAGE_COLUMN,
+        MEASURE_COLUMNS,
+        MUN_ID_COLUMN,
+        YEAR_COLUMN,
+        zone_columns,
+    )
+
+    checks = [check_required_columns(frame, list(ADM2_COLUMNS)), _non_empty_check(frame)]
+    if not set(ADM2_COLUMNS) <= set(frame.columns):
+        return checks
+    duplicates = int(frame.duplicated([MUN_ID_COLUMN, YEAR_COLUMN]).sum())
+    checks.append(CheckResult(
+        name="unique:mun_id,year",
+        ok=duplicates == 0,
+        message="All (mun_id, year) keys unique." if duplicates == 0 else f"{duplicates} duplicate keys.",
+    ))
+    years = sorted(frame[YEAR_COLUMN].unique())
+    balanced = len(frame) == frame[MUN_ID_COLUMN].nunique() * len(years) and years == list(
+        range(years[0], years[-1] + 1))
+    checks.append(CheckResult(
+        name="balanced_consecutive_years",
+        ok=balanced,
+        message=f"Every municipality in {years[0]}-{years[-1]}." if balanced else "Unbalanced panel or gaps in years.",
+    ))
+    negative = int((frame[list(MEASURE_COLUMNS)] < 0).sum().sum())
+    checks.append(CheckResult(
+        name="non_negative",
+        ok=negative == 0,
+        message="No negative measures." if negative == 0 else f"{negative} negative values.",
+    ))
+    pixels, lit, radiance = zone_columns("")
+    exceeding = sorted(
+        f"{narrow} > {broad}"
+        for zone in ("_protected", "_gold5km", "_gold5km_protected")
+        for narrow, broad in zip(zone_columns(zone), (pixels, lit, radiance))
+        if (frame[narrow] > frame[broad] + 1e-6).any()
+    ) + sorted(
+        f"{narrow} > {broad}"
+        for zone in ("_gold5km_protected",)
+        for base in ("_protected", "_gold5km")
+        for narrow, broad in zip(zone_columns(zone), zone_columns(base))
+        if (frame[narrow] > frame[broad] + 1e-6).any()
+    ) + [f"lit > pixels{zone}" for zone in ("", "_protected", "_gold5km", "_gold5km_protected")
+         if (frame[zone_columns(zone)[1]] > frame[zone_columns(zone)[0]]).any()]
+    checks.append(CheckResult(
+        name="zones_nested",
+        ok=not exceeding,
+        message="Zones within municipalities, lit pixels within pixels." if not exceeding else f"Exceeding: {exceeding}",
+    ))
+    # A year without its cf_cvg file has no coverage anywhere; otherwise only municipalities without pixels lack it.
+    has_pixels = frame[pixels] > 0
+    missing = frame.loc[has_pixels, COVERAGE_COLUMN].isna().groupby(frame.loc[has_pixels, YEAR_COLUMN])
+    partial = sorted(int(year) for year, flags in missing if flags.any() and not flags.all())
+    checks.append(CheckResult(
+        name="coverage_missing_by_whole_year",
+        ok=not partial,
+        message="Coverage missing only for whole years or municipalities without pixels." if not partial
+        else f"Coverage missing for some municipalities in {partial}",
+    ))
+    return checks
+
+
+def _nightlights_check_outputs(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.nightlights.constants import DEFAULT_ADM2_OUTPUT_PATH
+
+    return [_artifact_check("nightlights_adm2", Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH, _nightlights_adm2_checks)]
+
+
+def _nightlights_check_fetched(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.nightlights.constants import raw_dir, raw_files
+
+    files = raw_files(raw_dir(root_dir))
+    if not files:
+        return [_absent_artifact("nightlights_vnl", raw_dir(root_dir))]
+    return [
+        OutputArtifactCheck(label=f"nightlights_{year}_{variant}", path=path, exists=True,
+                            checks=[check_file_nonempty(path, min_size_bytes=100 << 20)])
+        for path, year, variant, _, _ in files
+    ]
+
+
+def _nightlights_fingerprint_paths(root_dir) -> list[Path]:
+    from src.data.sources.nightlights.constants import DEFAULT_ADM2_OUTPUT_PATH, raw_dir, raw_files
+
+    return [*(path for path, *_ in raw_files(raw_dir(root_dir))), Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH]
+
+
+# --------------------------------------------------------------------------
 # population
 # --------------------------------------------------------------------------
 
@@ -2191,6 +2296,14 @@ SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
         fingerprint_paths=_enforcement_fingerprint_paths,
         fetch_method="Manual placement (IBAMA snapshot)",
         check_fetched=_enforcement_check_fetched,
+    ),
+    "nightlights": SourceAdapter(
+        name="nightlights",
+        list_fetched=_nightlights_list_fetched,
+        check_outputs=_nightlights_check_outputs,
+        fingerprint_paths=_nightlights_fingerprint_paths,
+        fetch_method="Manual placement (EOG VNL)",
+        check_fetched=_nightlights_check_fetched,
     ),
     "population": SourceAdapter(
         name="population",

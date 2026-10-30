@@ -20,6 +20,7 @@ SOURCES = (
     "commodity_prices",
     "mining",
     "enforcement",
+    "nightlights",
     "population",
     "health",
     "assembly",

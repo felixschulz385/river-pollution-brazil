@@ -798,6 +798,27 @@ datasets:
           - ibama_destructions_all
           - ibama_destructions_mining
           - ibama_destructions_garimpo
+      # VIIRS night lights by municipality and year from 2012 (EOG VNL v2.1 to
+      # 2021, v2.2 from 2022): pixels, lit pixels and summed radiance over the
+      # municipality, inside barred areas in force by 2012, within 5 km of gold
+      # occurrences, and both; mean cloud-free coverage (missing in 2013).
+      - name: nightlights_adm2
+        path: data/nightlights/processed/nightlights_adm2.parquet
+        join_keys: [mun_id, year]
+        variables:
+          - viirs_pixels
+          - viirs_lit_pixels
+          - viirs_radiance
+          - viirs_pixels_protected
+          - viirs_lit_pixels_protected
+          - viirs_radiance_protected
+          - viirs_pixels_gold5km
+          - viirs_lit_pixels_gold5km
+          - viirs_radiance_gold5km
+          - viirs_pixels_gold5km_protected
+          - viirs_lit_pixels_gold5km_protected
+          - viirs_radiance_gold5km_protected
+          - viirs_cf_cvg_mean
       # SIVEP-Malária positives by infection (`inf_`), residence (`res_`) and
       # notification (`noti_`) municipality. The table lists only
       # municipality-years with a record, so the rest of 2004-2024 is 0;

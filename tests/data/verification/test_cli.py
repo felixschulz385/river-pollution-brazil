@@ -42,6 +42,7 @@ def test_cli_summary_on_empty_root_reports_not_present_locally(tmp_path):
         "commodity_prices",
         "mining",
         "enforcement",
+        "nightlights",
         "population",
         "health",
         "assembly",
@@ -62,6 +63,7 @@ def test_cli_summary_on_empty_root_reports_not_present_locally(tmp_path):
         "commodity_prices",
         "mining",
         "enforcement",
+        "nightlights",
         "population",
         "health",
         "assembly",
@@ -88,6 +90,7 @@ def test_cli_summary_on_empty_root_reports_not_present_locally(tmp_path):
         "commodity_prices",
         "mining",
         "enforcement",
+        "nightlights",
         "population",
         "health",
     ):

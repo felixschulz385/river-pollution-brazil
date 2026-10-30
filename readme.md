@@ -54,7 +54,7 @@ python3 -m src.cli data assemble   --dataset <id>       # join preprocessed sour
 
 `--source` and `--phase` must precede any source-specific flags. `--source`
 is one of `health`, `climate`, `sensor_data`, `land_cover`, `population`,
-`river_network`, `biomes`, `protected_areas`, `geology`, `malaria`, `commodity_prices`, `mining`, `enforcement`. `--phase` only applies to sources whose
+`river_network`, `biomes`, `protected_areas`, `geology`, `malaria`, `commodity_prices`, `mining`, `enforcement`, `nightlights`. `--phase` only applies to sources whose
 preprocessing has two stages (`climate`, `land_cover`): `extract` (raw →
 per-source processed output) and `aggregate` (roll-up into sensor/ADM2
 upstream panels). `sensor_data` has a single preprocess step that does both
@@ -321,6 +321,21 @@ python3 -m src.cli data preprocess --source enforcement --slurm
 
 Outputs: `data/enforcement/processed/ibama_records.parquet` and
 `data/enforcement/processed/enforcement_adm2.parquet`.
+
+### Night Lights
+
+EOG's annual VIIRS night-light composites (VNL v2.1 for 2012–2021, v2.2 from
+2022), as a measure of activity: radiance and lit pixels per municipality and
+year, over the whole municipality, inside protected areas that bar mining, and
+within 5 km of SGB gold occurrences. EOG requires a login, so the files are
+downloaded by hand and placed, as served, in `data/nightlights/raw/`. The
+preprocess reads the `protected_areas` output and the `geology` occurrences.
+
+```bash
+python3 -m src.cli data preprocess --source nightlights --slurm
+```
+
+Output: `data/nightlights/processed/nightlights_adm2.parquet`.
 
 ## Analysis Workflow
 

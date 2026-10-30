@@ -147,6 +147,16 @@ jobs:
     cpus_per_task: 2
     mem: 32G
 
+  # EOG VIIRS annual composites -> ADM2 x year. One worker per file, each
+  # decompressing a global .tif.gz (11.6 GB) and holding the Brazil window
+  # (~10,900 x 9,400 pixels, ~3 GB with its temporaries).
+  nightlights.preprocess:
+    job_name: preprocess_nightlights
+    time: "0-03:00:00"
+    qos: 6hours
+    cpus_per_task: 8
+    mem: 64G
+
   # Formerly setup/slurm_scripts/generate_river_network.sh
   river_network.preprocess:
     job_name: preprocess_river_network
