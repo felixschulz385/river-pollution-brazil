@@ -465,7 +465,13 @@ Semantics:
 ## Malaria Outputs
 
 Produced by `src.data.sources.malaria` from the record-level SIVEP-Malária
-notifications 2004–2024 (Zenodo 20706957, `data/malaria/raw/`). A case is a
+notifications 2004–2024 (Zenodo 20706957, `data/malaria/raw/`) and the
+preliminary years from 2025 (Zenodo 20706949, from LAI requests, updated
+monthly; dated snapshots `data/malaria/raw/preliminary_<YYYY-MM-DD>/`, the
+newest read). Outputs stop at the last complete month of notifications: the
+yearly tables at the last complete year (2025 in the 2026-10-30 snapshot), the
+monthly table at the last complete month (2026-04). Preliminary counts can
+still rise with late notifications. A case is a
 positive exam (`res_exam` filled and not "Negativo") that is not a
 cure-verification slide (`id_lvc` or `tipo_lam` = LVC). A garimpo case has
 `cod_ocup` = "Garimpagem" (activity in the prior 15 days; "Mineracao" is not
@@ -475,9 +481,10 @@ notification year.
 
 ### `data/malaria/processed/malaria_adm2.parquet`
 
-One row per (`mun_id`, `year`) with any record (13,792 rows, 1,419
-municipalities); absent rows have zero cases. `adm2_panel` carries these
-columns zero-filled for 2004–2024 and missing outside those years.
+One row per (`mun_id`, `year`) with any record (14,349 rows through 2025);
+absent rows have zero cases. `adm2_panel` carries these columns zero-filled for
+2004–2024 and missing outside those years; the panel's spine stops in 2024, so
+the preliminary 2025 is only in this table.
 The same cases are counted from three sites:
 
 - by infection municipality (Brazil-infected only): `inf_cases`,

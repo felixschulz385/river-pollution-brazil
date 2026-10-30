@@ -1,10 +1,23 @@
+import datetime
 import hashlib
+import json
 import logging
 import os
 
 import requests
 
-from .constants import METADATA_FILENAMES, YEAR_FILENAME_TEMPLATE, YEARS, ZENODO_RECORD_URL, raw_dir
+from .constants import (
+    METADATA_FILENAMES,
+    PRELIMINARY_PREFIX,
+    PRELIMINARY_RECORD_URL,
+    PRELIMINARY_YEARS,
+    RECORD_FILENAME,
+    YEAR_FILENAME_TEMPLATE,
+    YEARS,
+    ZENODO_RECORD_URL,
+    preliminary_snapshot,
+    raw_dir,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -63,3 +76,39 @@ def fetch_sivep(root_dir=".", years=YEARS):
         logger.info("Downloading %s (%.1f MB)", name, entry["size"] / 1e6)
         _download(entry["links"]["self"], destination, expected_md5)
     return destination_dir
+
+
+def fetch_preliminary(root_dir=".", today=None):
+    """Download the preliminary SIVEP years (Zenodo, updated monthly) into a dated snapshot folder.
+
+    A new snapshot is written only when the record's files differ from the
+    newest snapshot's; the record's metadata is written last, so an interrupted
+    download leaves a folder that is not read.
+    """
+    response = requests.get(PRELIMINARY_RECORD_URL, timeout=120)
+    response.raise_for_status()
+    record = response.json()
+    files = {entry["key"]: entry for entry in record["files"]}
+
+    wanted = [YEAR_FILENAME_TEMPLATE.format(year=year) for year in PRELIMINARY_YEARS] + list(METADATA_FILENAMES)
+    missing = [name for name in wanted if name not in files]
+    if missing:
+        raise RuntimeError(f"Not in Zenodo record: {missing}")
+    expected = {name: files[name]["checksum"].removeprefix("md5:") for name in wanted}
+
+    newest = preliminary_snapshot(root_dir)
+    if newest is not None and all((newest / name).exists() and _md5(newest / name) == md5
+                                  for name, md5 in expected.items()):
+        logger.info("Preliminary SIVEP record unchanged since %s, skipping.", newest.name)
+        return newest
+
+    destination = raw_dir(root_dir) / f"{PRELIMINARY_PREFIX}{today or datetime.date.today().isoformat()}"
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in wanted:
+        target = destination / name
+        if target.exists() and _md5(target) == expected[name]:
+            continue
+        logger.info("Downloading %s (%.1f MB)", name, files[name]["size"] / 1e6)
+        _download(files[name]["links"]["self"], target, expected[name])
+    (destination / RECORD_FILENAME).write_text(json.dumps(record, indent=1, ensure_ascii=False))
+    return destination

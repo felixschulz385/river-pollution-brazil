@@ -5,10 +5,11 @@ class Malaria:
         self.root_dir = root_dir
 
     def fetch(self):
-        """Download the yearly SIVEP parquet files from Zenodo, verified by md5."""
-        from .fetch import fetch_sivep
+        """Download the yearly SIVEP parquet files from Zenodo, verified by md5, and the preliminary years."""
+        from .fetch import fetch_preliminary, fetch_sivep
 
-        return fetch_sivep(root_dir=self.root_dir)
+        fetch_sivep(root_dir=self.root_dir)
+        return fetch_preliminary(root_dir=self.root_dir)
 
     def preprocess(self, adm2_output_path=None, flows_output_path=None, monthly_output_path=None):
         """Build the ADM2 case counts (by year and by month) and the garimpo residence-to-infection flows."""

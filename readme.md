@@ -264,9 +264,11 @@ Outputs: `data/geology/processed/geology_adm2.parquet` and
 
 ### Malaria
 
-Record-level SIVEP-Malária notifications 2004–2024 (Zenodo 20706957), counted
-by infection, residence and notification municipality, with garimpo cases
-split into local and incoming workers and infections abroad:
+Record-level SIVEP-Malária notifications 2004–2024 (Zenodo 20706957) and the
+preliminary years from 2025 (Zenodo 20706949, updated monthly; each fetch that
+finds the record changed adds a dated snapshot), counted by infection,
+residence and notification municipality, with garimpo cases split into local
+and incoming workers and infections abroad:
 
 ```bash
 python3 -m src.cli data fetch      --source malaria

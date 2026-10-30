@@ -1320,11 +1320,12 @@ def _geology_fingerprint_paths(root_dir) -> list[Path]:
 # --------------------------------------------------------------------------
 
 def _malaria_list_fetched(root_dir, force: bool = False) -> FetchListing:
-    from src.data.sources.malaria.constants import YEARS, year_path
+    from src.data.sources.malaria.constants import ALL_YEARS, year_path
 
-    present = sum(year_path(root_dir, year).exists() for year in YEARS)
+    present = sum(year_path(root_dir, year).exists() for year in ALL_YEARS)
     return FetchListing(
-        present=present, expected=len(YEARS), detail=f"{present}/{len(YEARS)} yearly SIVEP parquet files present."
+        present=present, expected=len(ALL_YEARS),
+        detail=f"{present}/{len(ALL_YEARS)} yearly SIVEP parquet files present (with the preliminary years).",
     )
 
 
@@ -1353,6 +1354,8 @@ def _malaria_monthly_checks(frame, yearly=None) -> list[CheckResult]:
     ))
     counts = ["inf_cases", "inf_garimpo"]
     if yearly is not None and set(counts) <= set(yearly.columns):
+        # The monthly table runs past the last complete year, which the yearly table stops at.
+        frame = frame[frame[MONTH_COLUMN].dt.year <= yearly[YEAR_COLUMN].max()]
         by_year = frame.groupby([frame[MUN_ID_COLUMN], frame[MONTH_COLUMN].dt.year.rename(YEAR_COLUMN)])[counts].sum()
         expected = yearly.set_index([MUN_ID_COLUMN, YEAR_COLUMN])[counts]
         expected = expected[expected.sum(axis=1) > 0]
@@ -1407,10 +1410,10 @@ def _malaria_check_outputs(root_dir) -> list[OutputArtifactCheck]:
 
 
 def _malaria_check_fetched(root_dir) -> list[OutputArtifactCheck]:
-    from src.data.sources.malaria.constants import YEARS, year_path
+    from src.data.sources.malaria.constants import ALL_YEARS, year_path
 
     artifacts = []
-    for year in YEARS:
+    for year in ALL_YEARS:
         path = year_path(root_dir, year)
         if not path.exists():
             artifacts.append(_missing_artifact(f"sivep_{year}", path))
@@ -1425,12 +1428,12 @@ def _malaria_fingerprint_paths(root_dir) -> list[Path]:
         DEFAULT_ADM2_OUTPUT_PATH,
         DEFAULT_FLOWS_OUTPUT_PATH,
         DEFAULT_MONTHLY_OUTPUT_PATH,
-        YEARS,
+        ALL_YEARS,
         year_path,
     )
 
     return [
-        *(year_path(root_dir, year) for year in YEARS),
+        *(year_path(root_dir, year) for year in ALL_YEARS),
         Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH,
         Path(root_dir) / DEFAULT_FLOWS_OUTPUT_PATH,
         Path(root_dir) / DEFAULT_MONTHLY_OUTPUT_PATH,

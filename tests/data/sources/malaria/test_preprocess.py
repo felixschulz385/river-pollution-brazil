@@ -59,6 +59,8 @@ def test_build_malaria_panels_splits_local_incoming_and_abroad(tmp_path: Path):
             _record(res_exam="Negativo", occupation=None, infection=None, residence=None, notification=ITAITUBA),
             _record(lvc="Notificacao de LVC"),  # cure verification: dropped
             _record(detection="LVC"),  # cure verification by the old flag: dropped
+            _record(res_exam="Negativo", occupation=None, infection=None, residence=None, notification=ALTO_ALEGRE,
+                    date="2020-12-31"),  # notifications run through the year
         ],
     )
 
@@ -106,6 +108,8 @@ def test_monthly_counts_by_infection_municipality_sum_to_the_year(tmp_path: Path
             _record(occupation="Agricultura", date="2020-07-15"),  # non-garimpo case, July
             _record(infection=None, country="Guiana Francesa", residence=JACAREACANGA),  # abroad: no row
             _record(res_exam="Negativo", occupation=None, infection=None, residence=None, notification=ITAITUBA),
+            _record(res_exam="Negativo", occupation=None, infection=None, residence=None, notification=ALTO_ALEGRE,
+                    date="2020-12-31"),  # notifications run through the year
         ],
     )
 
@@ -120,3 +124,10 @@ def test_monthly_counts_by_infection_municipality_sum_to_the_year(tmp_path: Path
     assert (itaituba.sum()[["inf_cases", "inf_garimpo", "inf_garimpo_incoming"]]
             == yearly[["inf_cases", "inf_garimpo", "inf_garimpo_incoming"]]).all()
     assert (tmp_path / "monthly.parquet").exists()
+
+
+def test_outputs_stop_at_the_last_complete_month():
+    from src.data.sources.malaria.preprocess import complete_through
+
+    assert complete_through("2026-05-25") == pd.Timestamp("2026-04-01")
+    assert complete_through("2025-12-31") == pd.Timestamp("2025-12-01")

@@ -5,6 +5,7 @@ import pandas as pd
 
 from .constants import (
     ADM2_COLUMNS,
+    ALL_YEARS,
     BRAZIL,
     DEFAULT_ADM2_OUTPUT_PATH,
     DEFAULT_FLOWS_OUTPUT_PATH,
@@ -28,7 +29,6 @@ from .constants import (
     RESIDENCE_COLUMNS,
     UNMAPPED_NAME_PREFIX,
     YEAR_COLUMN,
-    YEARS,
     year_path,
 )
 
@@ -133,13 +133,24 @@ def aggregate_flows(records):
     return flows[list(FLOW_COLUMNS)]
 
 
-def build_malaria_panels(root_dir=".", years=YEARS, adm2_output_path=None, flows_output_path=None,
+def complete_through(last_notification):
+    """The first day of the last complete month on or before `last_notification`."""
+    last = pd.Timestamp(last_notification)
+    month = last.to_period("M")
+    return (month if last.is_month_end else month - 1).to_timestamp()
+
+
+def build_malaria_panels(root_dir=".", years=ALL_YEARS, adm2_output_path=None, flows_output_path=None,
                          monthly_output_path=None):
-    """Write the ADM2 malaria counts (by year and by month) and the garimpo residence-to-infection flows."""
+    """Write the ADM2 malaria counts (by year and by month) and the garimpo residence-to-infection flows,
+    through the last complete month (yearly tables through the last complete year)."""
     adm2, flows, monthly = [], [], []
+    last_notification = None
     for year in years:
         frame = pd.read_parquet(year_path(root_dir, year), columns=list(READ_COLUMNS))
         records = classify_records(frame)
+        latest = pd.to_datetime(frame["dt_notif"]).max()
+        last_notification = latest if last_notification is None else max(last_notification, latest)
         adm2.append(aggregate_adm2(records))
         flows.append(aggregate_flows(records))
         monthly.append(aggregate_monthly(records))
@@ -155,6 +166,13 @@ def build_malaria_panels(root_dir=".", years=YEARS, adm2_output_path=None, flows
     flows = pd.concat(flows, ignore_index=True).sort_values(list(FLOW_COLUMNS[:4]))
     # A few notifications fall in another year's file; sum them into one row per month.
     monthly = pd.concat(monthly, ignore_index=True).groupby([MUN_ID_COLUMN, MONTH_COLUMN], as_index=False).sum()
+    last_month = complete_through(last_notification)
+    last_year = last_month.year if last_month.month == 12 else last_month.year - 1
+    adm2 = adm2[adm2[YEAR_COLUMN] <= last_year]
+    flows = flows[flows[YEAR_COLUMN] <= last_year]
+    monthly = monthly[monthly[MONTH_COLUMN] <= last_month]
+    logger.info("Notifications through %s: months through %s, years through %d", last_notification.date(),
+                last_month.strftime("%Y-%m"), last_year)
     outputs = (
         (adm2, adm2_output_path or DEFAULT_ADM2_OUTPUT_PATH),
         (flows, flows_output_path or DEFAULT_FLOWS_OUTPUT_PATH),

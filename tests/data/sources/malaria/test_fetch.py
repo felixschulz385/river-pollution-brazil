@@ -67,3 +67,41 @@ def test_fetch_rejects_a_checksum_mismatch(tmp_path, monkeypatch: pytest.MonkeyP
     with pytest.raises(RuntimeError, match="md5"):
         fetch_module.fetch_sivep(root_dir=tmp_path, years=(2020,))
     assert list(raw_dir(tmp_path).iterdir()) == []
+
+
+def _fake_preliminary_get(md5s, calls):
+    from src.data.sources.malaria.constants import PRELIMINARY_YEARS
+
+    names = [YEAR_FILENAME_TEMPLATE.format(year=year) for year in PRELIMINARY_YEARS] + list(METADATA_FILENAMES)
+    record = {"id": 1, "files": [{"key": name, "size": len(CONTENT), "checksum": f"md5:{md5s(name)}",
+                                  "links": {"self": f"https://z/{name}"}} for name in names]}
+
+    def get(url, timeout, stream=False):
+        calls.append(url)
+        return _FakeResponse(payload=record) if not stream else _FakeResponse(content=CONTENT)
+
+    return get
+
+
+def test_preliminary_fetch_writes_a_dated_snapshot_once_per_record_version(tmp_path, monkeypatch):
+    from src.data.sources.malaria.constants import PRELIMINARY_YEARS, preliminary_snapshot, year_path
+
+    calls = []
+    md5 = hashlib.md5(CONTENT).hexdigest()
+    monkeypatch.setattr(fetch_module.requests, "get", _fake_preliminary_get(lambda name: md5, calls))
+    first = fetch_module.fetch_preliminary(root_dir=tmp_path, today="2026-01-01")
+    assert first.name == "preliminary_2026-01-01" and preliminary_snapshot(tmp_path) == first
+    assert year_path(tmp_path, PRELIMINARY_YEARS[0]) == first / YEAR_FILENAME_TEMPLATE.format(year=PRELIMINARY_YEARS[0])
+
+    calls.clear()
+    assert fetch_module.fetch_preliminary(root_dir=tmp_path, today="2026-02-01") == first  # unchanged record
+    assert len(calls) == 1
+
+
+def test_preliminary_fetch_leaves_no_snapshot_after_a_failed_download(tmp_path, monkeypatch):
+    from src.data.sources.malaria.constants import preliminary_snapshot
+
+    monkeypatch.setattr(fetch_module.requests, "get", _fake_preliminary_get(lambda name: "0" * 32, []))
+    with pytest.raises(RuntimeError, match="md5"):
+        fetch_module.fetch_preliminary(root_dir=tmp_path, today="2026-01-01")
+    assert preliminary_snapshot(tmp_path) is None

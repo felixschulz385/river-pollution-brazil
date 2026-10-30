@@ -10,6 +10,18 @@ from src.data.shared.paths import processed_dir, raw_dir as _shared_raw_dir, sou
 ZENODO_RECORD_ID = 20706957
 ZENODO_RECORD_URL = f"https://zenodo.org/api/records/{ZENODO_RECORD_ID}"
 YEARS = tuple(range(2004, 2025))
+# Preliminary years from the LAI requests (Zenodo 20706949, updated monthly;
+# the last year is partial). Each fetch that finds the record changed writes a
+# new dated snapshot `raw/preliminary_<YYYY-MM-DD>/` with the record's metadata
+# (`zenodo_record.json`); the newest complete snapshot is read.
+PRELIMINARY_RECORD_ID = 20706949
+PRELIMINARY_RECORD_URL = f"https://zenodo.org/api/records/{PRELIMINARY_RECORD_ID}"
+PRELIMINARY_YEARS = (2025, 2026)
+PRELIMINARY_PREFIX = "preliminary_"
+RECORD_FILENAME = "zenodo_record.json"
+# Preprocessed years. Outputs stop at the last complete month of notifications
+# (yearly tables at the last complete year).
+ALL_YEARS = (*YEARS, *PRELIMINARY_YEARS)
 YEAR_FILENAME_TEMPLATE = "sivep_malaria_{year}.parquet"
 METADATA_FILENAMES = ("sivep_malaria_metadata_csv.zip", "sivep_malaria_full_methodology_description.md")
 
@@ -76,5 +88,19 @@ def raw_dir(root_dir: str | Path = ".") -> Path:
     return _shared_raw_dir(root_dir, "malaria")
 
 
+def preliminary_snapshot(root_dir: str | Path = ".") -> Path | None:
+    """The newest preliminary snapshot folder holding the record and every year file (folders sort by date)."""
+    required = [RECORD_FILENAME, *(YEAR_FILENAME_TEMPLATE.format(year=year) for year in PRELIMINARY_YEARS)]
+    for snapshot in sorted(raw_dir(root_dir).glob(f"{PRELIMINARY_PREFIX}*"), reverse=True):
+        if all((snapshot / name).exists() for name in required):
+            return snapshot
+    return None
+
+
 def year_path(root_dir: str | Path, year: int) -> Path:
-    return raw_dir(root_dir) / YEAR_FILENAME_TEMPLATE.format(year=year)
+    """A year's parquet: in the raw folder, or in the newest preliminary snapshot for the preliminary years."""
+    name = YEAR_FILENAME_TEMPLATE.format(year=year)
+    if year not in PRELIMINARY_YEARS:
+        return raw_dir(root_dir) / name
+    snapshot = preliminary_snapshot(root_dir)
+    return (snapshot or raw_dir(root_dir) / f"{PRELIMINARY_PREFIX}<missing>") / name

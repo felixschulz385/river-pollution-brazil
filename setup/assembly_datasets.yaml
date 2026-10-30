@@ -822,7 +822,8 @@ datasets:
       # SIVEP-Malária positives by infection (`inf_`), residence (`res_`) and
       # notification (`noti_`) municipality. The table lists only
       # municipality-years with a record, so the rest of 2004-2024 is 0;
-      # outside SIVEP's years the counts stay missing.
+      # outside SIVEP's years the counts stay missing. The table also has the
+      # preliminary 2025, beyond the panel's land-cover spine (to 2024).
       - name: malaria_adm2
         path: data/malaria/processed/malaria_adm2.parquet
         join_keys: [mun_id, year]
