@@ -316,7 +316,11 @@ Parfitt, the closest competitor for claim 1.
 - **Oliveira & Miranda (2024, JIE)** — priority-municipality enforcement reduces land
   conflict. Adjacent to lead 3 (deforestation enforcement, not mining).
 - **Assunção, Gandour & Rocha (2023, AEJ: Applied)** — DETER satellite monitoring and
-  enforcement. Background for lead 3.
+  enforcement; read. Cloud cover instruments fines; a benchmark for E12 and a second
+  design for lead 3 (see the leads note's literature section).
+- **Assunção, McMillan, Murphy & Souza-Rodrigues (2023, ReStud)** — the 2008 Priority
+  List and optimal targeting; read. Deterrence spillovers onto neighbours, and an overlap
+  with E12's presence measure (see the leads note's literature section).
 - **Rodrigues (2025, BPSR), "Brazil's Journey Against Illegal Mining"** — documents the
   electronic invoice and the suspension of the good-faith presumption. A source for the
   2023 dates in lead 1.

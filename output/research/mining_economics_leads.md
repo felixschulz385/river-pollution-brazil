@@ -383,9 +383,6 @@ Rocha & Soares (2023, *ReStud*), which this project also uses.
     2013 component is +3.2 to +4.0 and mostly insignificant.
   - *For this project:* nearly lead 1's exposure, with an enforcement shock that lead 3
     can use. Replication data on Zenodo (10.5281/zenodo.22213133).
-- **Araujo, Possebom & Setti (2026, arXiv 2509.06076):** DETER enforcement, instrumented
-  by cloud cover, cuts Amazon homicides by ~15%. The same cloud-cover instrument is
-  available for lead 3.
 - **De Salazar et al. (2024, Lancet Reg. Health Americas):** malaria spillover into
   Indigenous communities in Guyana after Brazil's 2023 crackdown. Cross-border
   displacement evidence for lead 3.
@@ -398,6 +395,76 @@ Rocha & Soares (2023, *ReStud*), which this project also uses.
   using directed river networks. A method precedent for the asymmetry test.
 - **Moretz-Sohn & Costa (2026, OSF), "Protected Area Erasure Accelerates
   Deforestation":** relevant to lead 4's protected-area-stability threat.
+
+**Enforcement against deforestation.** The literature an enforcement framing answers
+to. It shows that federal monitoring and enforcement cut Amazon clearing. Garimpo
+differs from clearing in one respect that matters for lead 3: cleared land stays put,
+while crews and dredges move.
+
+- **Assunção, Gandour & Rocha (2023, *AEJ: Applied*), "DETER-ing Deforestation in the
+  Amazon"**, read.
+  - *Design:* clouds in DETER's monthly masks block satellite alerts, so IBAMA is sent
+    elsewhere. Yearly DETER cloud cover instruments deforestation-related IBAMA fines,
+    and next year's PRODES deforestation is regressed on them. 521 Amazon-biome
+    municipalities, 2006–2016; precipitation, temperature and PRODES-visibility
+    controls; municipality and year FE; clustered by municipality and microregion-year.
+  - *Results:*
+    - *First stage:* F ≈ 10. An SD of cloud cover cuts fines by about a quarter of the
+      mean; in monthly data fines respond to clouds two months earlier, and leads are
+      null.
+    - *Effect:* the elasticity of deforestation to fines is about −0.53 at the mean.
+      OLS is zero.
+    - *Checks:* clouds do not predict deforestation before DETER (2002–04).
+      With state-year clusters, p is 0.08.
+  - *Mechanism they name:* catching offenders in the act, while machinery can still be
+    seized and destroyed. That is the sanction recorded in IBAMA's garimpo destruction
+    terms.
+  - *For this project:*
+    - **A benchmark for E12.** A 10% fall in fines going with about 4.6% more garimpo
+      cases ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse)) is an
+      elasticity of about −0.46, close to theirs for clearing. Ours is a ratio of
+      responses to one break, not an IV estimate.
+    - **A second design for lead 3** that does not rest on the 2019 date: cloud cover
+      instruments fines, with next year's garimpo cases as the outcome. Two problems
+      are specific to garimpo:
+      - rain and cloud also drive malaria transmission, so the outcome has to net it
+        out (garimpo against other malaria, or local minus incoming as in
+        [E15](#e15-who-responds-to-what-local-and-incoming-workers));
+      - clouds also hide garimpo from the Landsat imagery behind C11, as they hide
+        clearings from PRODES.
+
+      Whether DETER's cloud masks are published after the switch to DETER-B
+      (2015–16) still needs checking.
+- **Assunção, McMillan, Murphy & Souza-Rodrigues (2023, *ReStud*), "Optimal
+  Environmental Targeting in the Amazon Rainforest"**, read.
+  - *Design:* the 2008 Priority List of 36 municipalities, chosen by thresholds on
+    cumulative and recent deforestation (the authors recover the rule with 98%
+    accuracy). Changes-in-changes, 2006–2010, gives effects on the treated and the
+    untreated. These feed an optimal list under a constraint on the area or number of
+    municipalities listed.
+  - *Results:*
+    - *Direct effect:* deforestation falls 43% in listed municipalities.
+    - *Spillovers:* bordering municipalities with high past deforestation cleared
+      *less*, 27% of the total effect. Deterrence spread rather than leaked.
+    - *Untreated:* effects on them are a tenth to a sixth of those on the treated.
+    - *Optimal list:* it cuts emissions at least 11% more than the actual list.
+  - *For this project:*
+    - **Spillovers can have either sign.** Enforcement can deter neighbours who expect
+      to be next, or push crews to them. E14's null for bordering municipalities fits
+      the two cancelling out. Following their split, bordering municipalities with
+      garimpo before a raid (where deterrence is expected) should be separated from
+      those without it (where displacement is expected). Lead 3's displacement ratio is
+      net of both.
+    - **E12's presence measure overlaps the Priority List.** Listed municipalities had
+      about six times the fines of others in 2007 (40 against 7) and lie in the arc of
+      deforestation, where E12's response concentrates. The 2019 response may be the
+      garimpo side of the collapse of the deforestation-enforcement regime the list
+      belongs to. E12's frontier controls cover deforestation, not list status.
+    - **Targeting.** Effects on the untreated and a list under a resource constraint are
+      a template for the paper's question of which lever works per unit of effort, if
+      enforcement carries the paper.
+- **Araujo, Possebom & Setti (2026, arXiv 2509.06076):** the same cloud-cover instrument;
+  DETER enforcement cuts Amazon homicides by ~15%.
 
 ## Why the project is well placed
 
@@ -773,6 +840,14 @@ elsewhere, where does it go, and does the health burden move with it?
   the model-implied ratio for comparison.
 - **Where the health burden goes.** Malaria at the substitute sites, and in crews' home
   municipalities (the importation channel).
+- **Deterrence or displacement next door.** Neighbours can respond in either direction:
+  less garimpo where crews expect to be next, as in the Priority List's spillovers on
+  deforestation (Assunção, McMillan, Murphy & Souza-Rodrigues 2023), and more where
+  crews move. Split bordering and substitute sites by garimpo before the shock.
+- **Cloud cover as an instrument** (Assunção, Gandour & Rocha 2023). DETER cloud cover
+  instruments IBAMA fines, with next year's garimpo cases as the outcome. It gives an
+  enforcement effect that does not rest on the 2019 date. The outcome must be garimpo
+  against other malaria, since rain also drives transmission.
 
 **Data.**
 
@@ -793,8 +868,11 @@ elsewhere, where does it go, and does the health burden move with it?
     in these counts.
   - C11, SIVEP (yearly and monthly counts, and flows), the river network for travel
     distances.
-- **To add:** operation dates and areas from official reporting, to group records into
-  operations where the operation code is missing.
+- **To add:**
+  - operation dates and areas from official reporting, to group records into
+    operations where the operation code is missing;
+  - DETER's monthly cloud masks (INPE), for the cloud-cover instrument;
+  - the Priority List by year (Ministry of the Environment), as a control for E12.
 
 **Threats.**
 
@@ -830,6 +908,11 @@ The one experimental benchmark is Saavedra (2022 WP).
 
 Pereira, Pucci & Soares (2024, "Landing on Water") show the same kind of response for
 drug trafficking: air interdiction moved routes onto rivers.
+
+For deforestation, monitoring and enforcement work (Assunção, Gandour & Rocha 2023), and
+the Priority List's neighbours cleared less rather than more. The argument for why
+enforcement works there is that cleared land stays put, so offenders can be found.
+Garimpo crews and dredges move, which makes displacement the first-order question.
 
 What is new here is a displacement ratio for armed enforcement within Brazil and across
 its borders, with the workers' origins observed. It directly tests prediction 1 of lead
@@ -948,6 +1031,10 @@ substitute sites of lead 3.
      logit.
    - E12 through 2025: the panel's spine (land cover) stops in 2024, while SIVEP and
      IBAMA run to 2025.
+   - E12 with Priority List status × the periods as a control, and without listed
+     municipalities.
+   - The cloud-cover instrument for fines, if DETER's cloud masks cover 2016–2024.
+   - E14's bordering municipalities split by garimpo before the raid.
 5. **Lead 1, if it stays in.** Permit events (`ProcessoEvento`: rejections,
    cancellations, forfeitures) and the Monitor da Mineração layer (polygons, the MEND
    flag for ghost permits).
