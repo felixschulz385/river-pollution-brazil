@@ -16,6 +16,10 @@ move next door?
   controls are the sample municipalities neither raided in the window nor
   bordering the raided one. Episode x municipality and episode x month FE; SEs
   clustered by municipality, which appears in many stacks.
+- *Deterrence or displacement next door.* Neighbours where crews expect the
+  next raid can lose garimpo, others gain it. The neighbour design is split by
+  whether a municipality had a garimpo case in the 12 months before the raid,
+  for the treated neighbours and the controls alike.
 - *Sample.* Legal Amazon municipalities with a garimpo case in 2016-2024 or a
   garimpo raid. Episode samples: all, large raids (`LARGE_TERMS` terms in the
   raid month), and malaria-visible raids (`MIN_PRE_CASES` garimpo cases in the
@@ -57,6 +61,8 @@ MIN_PRE_CASES = 12
 RAID_ACTIONS = ("destructions", "seizures")
 BORDER_BUFFER_M = 1_000  # simplified boundaries: municipalities within 1 km of each other border
 DESIGNS = ("own", "neighbours")
+# Municipalities split by garimpo cases in the 12 months before the raid.
+GROUPS = ("all", "with garimpo", "without garimpo")
 
 OUTCOMES = {
     "log1p_garimpo": "log(1 + garimpo cases)",
@@ -142,8 +148,11 @@ def borders(boundaries, buffer_m=BORDER_BUFFER_M):
     return pairs.groupby("mun_id_left")["mun_id_right"].agg(set).to_dict()
 
 
-def stack(panel, episode_table, raids, adjacency, design="own", window=WINDOW):
-    """The stacked panel of one design: treated and control municipalities over each episode's window."""
+def stack(panel, episode_table, raids, adjacency, design="own", window=WINDOW, group="all"):
+    """The stacked panel of one design: treated and control municipalities over each episode's window.
+
+    With `group` "with garimpo" or "without garimpo", treated and control municipalities are restricted to those
+    with or without a garimpo case in the 12 months before the raid."""
     raided = raids.assign(t=month_index(raids["month"]))
     sample = set(panel["mun_id"])
     frames = []
@@ -156,6 +165,11 @@ def stack(panel, episode_table, raids, adjacency, design="own", window=WINDOW):
         else:
             treated = (nearby & sample) - raided_now
         controls = sample - raided_now - nearby - {episode.mun_id}
+        if group != "all":
+            before = panel[panel["t"].between(episode.t - 12, episode.t - 1) & panel["inf_garimpo"].gt(0)]
+            active = set(before["mun_id"])
+            keep = active if group == "with garimpo" else sample - active
+            treated, controls = treated & keep, controls & keep
         if not treated or not controls:
             continue
         rows = panel[panel["t"].between(low, high) & panel["mun_id"].isin(treated | controls)].copy()

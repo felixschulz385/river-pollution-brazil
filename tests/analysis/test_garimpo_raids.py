@@ -114,3 +114,17 @@ def test_episode_samples_select_large_and_malaria_visible_raids():
 def test_episode_window_ends_a_window_before_the_last_month():
     panel, _, _ = _inputs()
     assert R.episode_window(panel) == ("2019-01", "2023-12")
+
+
+def test_neighbours_split_by_garimpo_before_the_raid():
+    panel, raids, adjacency = _inputs()
+    silent = {"150004", "150010", "150011"}  # one neighbour and two controls without garimpo cases
+    panel.loc[panel["mun_id"].isin(silent), "inf_garimpo"] = 0.0
+    table = R.episodes(raids)
+    with_garimpo = R.stack(panel, table, raids, adjacency, "neighbours", group="with garimpo")
+    without = R.stack(panel, table, raids, adjacency, "neighbours", group="without garimpo")
+
+    assert set(with_garimpo.loc[with_garimpo["treated"] > 0, "mun_id"]) == {"150006", "150019", "150021"}
+    assert not with_garimpo["mun_id"].isin(silent).any()
+    assert set(without["mun_id"]) == silent  # only the first raid has a neighbour without garimpo
+    assert set(without.loc[without["treated"] > 0, "mun_id"]) == {"150004"}

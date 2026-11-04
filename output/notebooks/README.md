@@ -61,7 +61,8 @@ Other notebooks:
   happen and move it next door? A stacked monthly event study of raid episodes from 2019
   to April 2025
   for the raided and the bordering municipalities, with a triple difference against
-  non-garimpo malaria (Evidence E14; `src/analysis/garimpo_raids.py`).
+  non-garimpo malaria, and bordering municipalities split by garimpo before the raid
+  (Evidence E14; `src/analysis/garimpo_raids.py`).
 - `garimpo/07_groups.ipynb`: who responds to what? Local and incoming garimpo cases, and
   their difference, on drought, upstream garimpo, the gold price × deposits and
   enforcement presence (lead 2's prediction 5; Evidence E15; `src/analysis/garimpo_groups.py`).
@@ -138,7 +139,8 @@ health effect: both fail the injury placebo. Coefficients are exported to
   checks and holds through 2025.
 - `garimpo/05_nightlights`: VIIRS annual composites do not see garimpo.
 - `garimpo/06_raids`: a single raid (2019 to April 2025) neither reduces garimpo malaria
-  measurably within a year nor moves it to bordering municipalities.
+  measurably within a year nor moves it to bordering municipalities, and neighbours with
+  garimpo are not deterred.
 - `garimpo/07_groups`: drought and upstream garimpo do not move local workers more than
   incoming ones. Incoming workers gain on local ones in deposit municipalities as the
   price rises, which cannot be told from a trend.
