@@ -70,6 +70,10 @@ Other notebooks:
   Indigenous lands? C11 garimpo inside each Legal Amazon land from the river trenches, by
   stage, and stacked event studies around declaration and homologation (lead 4; Evidence
   E16; `src/analysis/garimpo_demarcation.py`).
+- `garimpo/09_raid_intensity.ipynb`: does sustained raiding lower garimpo malaria? Raid
+  terms as a continuous treatment by month, in the municipality, its bordering
+  municipalities and the others within 150 km, with leads, lags and a triple difference
+  against non-garimpo malaria (Evidence E17; `src/analysis/garimpo_intensity.py`).
 - `health/upstream_mining_municipality_map.ipynb`: municipality upstream-deforestation
   map (moved from `src/analysis/notebooks/`; its `land_cover.feather` input is stale).
 - `pollution/maps.ipynb`: upstream drainage-area maps for four example sensors
@@ -147,6 +151,9 @@ health effect: both fail the injury placebo. Coefficients are exported to
 - `garimpo/08_demarcation`: declaration and homologation do not move garimpo inside
   Indigenous lands. Garimpo sits in a few large, long-regularised lands and surges after
   2019.
+- `garimpo/09_raid_intensity`: raids follow rising garimpo, and neither a year of raiding
+  nor the sustained campaigns from 2023 lower garimpo malaria at the site, next door or
+  within 150 km.
 
 ## Sub-basins (Otto Pfafstetter)
 

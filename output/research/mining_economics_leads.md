@@ -36,7 +36,7 @@ relapse are counted?
 | Lead 1: gold price | done | Garimpo does not follow the price within municipalities | E10 |
 | Lead 1: laundering rules | done | Permits move by year, but not when the 2013 rule starts; garimpo follows neither date | E11 |
 | Lead 3: enforcement collapse | done | Where IBAMA had been present, fines fell after 2019 and garimpo cases rose, mostly incoming crews; not the Priority List, and it holds through 2025 | E12 |
-| Lead 3: raids and displacement | first pass | A single raid has no measurable effect at the site or next door within a year; neighbours with garimpo are not deterred | E14 |
+| Lead 3: raids and displacement | first pass | Neither a single raid nor sustained raiding measurably lowers garimpo malaria at the site, next door or within 150 km; neighbours with garimpo are not deterred | E14, E17 |
 | Lead 2: crews and residents | first pass | Drought and upstream garimpo do not move local workers more than incoming ones; incoming workers gain on local ones in deposit municipalities as the price rises, which cannot be told from a trend | E5, E12, E15 |
 | Lead 4: demarcation | first pass | Declaration and homologation do not move garimpo inside lands; garimpo sits in a few large, long-regularised lands and surges after 2019 | E16 |
 | Pollution and health arms | done | No credible downstream health effect of mining; metal violations rise with upstream pasture and mining; mercury is not measured in the Amazon | E1, E2, E4, E9 |
@@ -95,8 +95,12 @@ relapse are counted?
   - Neighbours with garimpo before the raid are not deterred (−0.02 to +0.03). In
     neighbours without it, garimpo cases appear (+0.07 after visible raids, p 0.014),
     but other malaria rises as much.
-  - From 2023 IBAMA raids the same municipalities month after month, which a design on
-    first raids does not capture.
+- **Sustained raiding shows no effect either** ([E17](#e17-raid-intensity)).
+  - Raid terms as a continuous treatment by month (2019 to January 2026): garimpo cases
+    rise before raids (lead +0.07, p 0.015), so raids are targeted at rising garimpo.
+  - Against other malaria, a year of raiding changes garimpo by −0.04 (p 0.71) at the
+    site, and nothing in bordering municipalities or the other municipalities within
+    150 km. From 2023, the sustained campaigns: +0.02 (p 0.62).
 - **Residents do not respond to the shocks the model gives them** ([E15](#e15-who-responds-to-what-local-and-incoming-workers)).
   - This year's drought raises local and incoming garimpo cases alike (+0.03 per SD),
     as it raises other malaria: transmission.
@@ -131,8 +135,9 @@ relapse are counted?
 
 - Lead 2: the downstream-spread test, and fishing dependence for the residents' side.
 - A novelty check on malaria importation by miners.
-- Lead 3: raid intensity for the sustained campaigns, displacement beyond bordering
-  municipalities, and the cloud-cover instrument for fines.
+- Lead 3: displacement beyond 150 km (river distance, residence flows, the large
+  operations as events), and the cloud-cover instrument for fines, which needs INPE's
+  cloud data.
 
 ## The paper
 
@@ -441,8 +446,9 @@ while crews and dredges move.
       - clouds also hide garimpo from the Landsat imagery behind C11, as they hide
         clearings from PRODES.
 
-      Whether DETER's cloud masks are published after the switch to DETER-B
-      (2015–16) still needs checking.
+      TerraBrasilis does not publish DETER's cloud masks: its DETER workspaces carry
+      only the alerts. They have to be requested from INPE, or rebuilt from MODIS
+      cloud masks in Earth Engine.
 - **Assunção, McMillan, Murphy & Souza-Rodrigues (2023, *ReStud*), "Optimal
   Environmental Targeting in the Amazon Rainforest"**, read.
   - *Design:* the 2008 Priority List of 36 municipalities, chosen by thresholds on
@@ -820,8 +826,11 @@ elsewhere, where does it go, and does the health burden move with it?
   bordering ones within a year. The displacement ratio is not identified from single
   raids. Neighbours with garimpo before the raid are not deterred; garimpo appearing in
   neighbours without it is matched by other malaria.
-- *So far:* the level of deterrence moves garimpo; single raids do not. Displacement
-  beyond bordering municipalities and the sustained campaigns of 2023–25 are untested.
+- *Raid intensity* ([E17](#e17-raid-intensity)): raids follow rising garimpo, and a year of raiding,
+  including the sustained campaigns of 2023–25, does not lower garimpo malaria at the
+  site, next door or within 150 km.
+- *So far:* the level of deterrence moves garimpo; raids, single or sustained, do not
+  show in SIVEP. Displacement beyond 150 km is untested.
 
 **Shocks.**
 
@@ -885,7 +894,8 @@ elsewhere, where does it go, and does the health burden move with it?
 - **To add:**
   - operation dates and areas from official reporting, to group records into
     operations where the operation code is missing;
-  - DETER's monthly cloud masks (INPE), for the cloud-cover instrument;
+  - DETER's monthly cloud masks, for the cloud-cover instrument: not published on
+    TerraBrasilis, so by request to INPE or rebuilt from MODIS cloud masks;
   - the Priority Lists from 2023 (Portaria MMA 834/2023; GM/MMA 1.202/2024).
 
 **Threats.**
@@ -1038,12 +1048,10 @@ substitute sites of lead 3.
    - The residents' side with fishing dependence: registered fishers and seguro-defeso,
      Bolsa Família.
 4. **Lead 3, continued.**
-   - Raid intensity: monthly raid terms or operations as a continuous treatment, for the
-     sustained campaigns of 2023–25.
-   - Substitute sites beyond bordering municipalities (river distance, residence flows),
-     the large operations (Yanomami 2023, the Madeira dredges) as events, and the crew
-     logit.
-   - The cloud-cover instrument for fines, if DETER's cloud masks cover 2016–2024.
+   - Substitute sites beyond 150 km (river distance, residence flows), the large
+     operations (Yanomami 2023, the Madeira dredges) as events, and the crew logit.
+   - The cloud-cover instrument for fines: DETER's cloud masks from INPE on request, or
+     monthly MODIS cloud cover by municipality from Earth Engine.
 5. **Lead 1, if it stays in.** Permit events (`ProcessoEvento`: rejections,
    cancellations, forfeitures) and the Monitor da Mineração layer (polygons, the MEND
    flag for ghost permits).
@@ -1831,6 +1839,49 @@ tables in `output/analysis/garimpo/demarcation/`. Overlaps:
   - The stage events fall mostly in 1991–2004, when garimpo inside lands was small, so
     the test has little power for the lands that matter. The recent declarations (2016,
     2024–25) need C11 after its 2020 step.
+
+### E17. Raid intensity
+
+*Code: `src/analysis/garimpo_intensity.py`, `output/notebooks/garimpo/09_raid_intensity.ipynb`;
+tables in `output/analysis/garimpo/raid_intensity/`.*
+
+- **Question.** E14's episodes need 12 raid-free months, so the campaigns of 2023–25, which
+  raid the same municipalities month after month, give few of them. Does raiding lower
+  garimpo malaria when its intensity is the treatment?
+- **Design.**
+  - *Panel:* E14's 267 sample municipalities (95 Otto-3 basins) by month, January 2019 to
+    January 2026 (three months before SIVEP's last).
+  - *Treatment:* log(1 + garimpo destruction and seizure terms) over windows relative to
+    the month: the next three months (lead), the month, and lags 1–3, 4–6 and 7–12. For
+    the municipality, its bordering municipalities, and the other municipalities whose
+    centroid is within 150 km (a median of 14).
+  - *Specification:* municipality × calendar-month and state × month FE, Otto-3
+    clusters. The year sum adds the month and lag coefficients. A pooled spec (lead and
+    the past 12 months) gets the wild-cluster bootstrap.
+  - *Checks:* without Roraima; from 2023; municipality and month FE.
+- **Raids.** Raided municipality-months rise from 28 (2019) to 125–134 a year in 2023–25.
+  The 98 raided municipalities have a median of 3 raided months, the top tenth 17 or more.
+- **Raids are targeted.** Garimpo cases at the raided municipality rise before and with
+  raids: lead +0.073 (p 0.015; pooled +0.085, bootstrap p 0.049), month +0.068. Other
+  malaria rises too (year sum +0.19, p 0.024).
+- **Estimates** (against other malaria, unless stated):
+  - *At the raid:* year sum −0.04 (p 0.71); pooled past year −0.051 (p 0.29, bootstrap
+    0.36).
+  - *Next door:* garimpo cases do not move (year sum −0.03, p 0.56). The year sum against
+    other malaria is −0.105 (p 0.015), from other malaria rising next to raids.
+  - *Within 150 km:* garimpo −0.05 (p 0.60); against other malaria pooled −0.040
+    (p 0.077, bootstrap 0.088), but the ring's garimpo cases do not fall and the term is
+    −0.03 (p 0.19) without Roraima.
+  - *From 2023:* own past +0.019 (p 0.62), year sum +0.135 (p 0.28); border and ring
+    within ±0.03.
+- **Reading.**
+  - Raiding, single or sustained, does not show in SIVEP's garimpo cases at the site,
+    next door or within 150 km. The campaigns of 2023–25 do not change that.
+  - Raids go where garimpo malaria is rising, so the estimates are against a targeted
+    comparison; the lead and the triple difference do not reveal a fall after it.
+  - With E12, the evidence is that the general level of deterrence moved garimpo after
+    2019, not the raids themselves. Crews may move farther than 150 km or across
+    borders, return after raids, or keep infections up while operations stop.
 
 ## Data inventory
 
