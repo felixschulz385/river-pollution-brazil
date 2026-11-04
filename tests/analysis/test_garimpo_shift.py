@@ -106,3 +106,39 @@ def test_randomization_rejects_the_shift_and_permutes_within_strata():
     frame["presence_stratum"] = frame[G.PRESENCE]
     rows = G.randomization(frame, "log1p_garimpo_cases", strata="presence_stratum", draws=49)
     assert all(row["p_ri"] == 1.0 for row in rows)
+
+
+def test_extension_rows_carry_municipality_columns_and_fill_missing_records_with_zero():
+    frame = _frame()
+    ids = frame["mun_id"].unique()
+    malaria = pd.DataFrame({"mun_id": ids[:2], "year": 2025, "inf_cases": [10.0, 3.0], "inf_garimpo": [4.0, 0.0],
+                            "inf_garimpo_local": [1.0, 0.0], "inf_garimpo_incoming": [3.0, 0.0]})
+    fines = pd.DataFrame({"mun_id": ids[:1], "year": 2025, "ibama_fines_all": [5.0], "ibama_fines_mining": [1.0]})
+    requests = pd.DataFrame({"mun_id": ids[1:2], "year": 2025, "plg_requests_gold": [2.0]})
+    rows = G.extension_rows(frame, [malaria, fines, requests], pd.Series({2025: 9.0})).set_index("mun_id")
+
+    assert len(rows) == len(ids) and (rows["year"] == 2025).all()
+    last = frame[frame["year"] == 2024].set_index("mun_id")
+    pd.testing.assert_series_equal(rows[G.PRESENCE], last[G.PRESENCE])  # constant within municipalities
+    assert "forest_loss" not in rows  # year-varying and not in the tables: missing once appended
+    assert rows.loc[ids[0], "log1p_garimpo_cases"] == pytest.approx(np.log(5.0))
+    assert rows.loc[ids[0], "other_malaria"] == 6.0
+    assert rows.loc[ids[1], "log1p_fines_all"] == 0.0  # no fines recorded
+    assert rows.loc[ids[2], ["inf_garimpo", "plg_requests_gold"]].tolist() == [0.0, 0.0]
+    assert (rows[L.PRICE] == 9.0).all()
+
+
+def test_priority_controls_and_listed_exclusion():
+    frame = _frame()
+    listed = frame["mun_id"].isin(frame["mun_id"].unique()[:10])
+    frame["priority_pre"] = listed.astype(float)
+    frame["monitored_pre"] = frame["mun_id"].isin(frame["mun_id"].unique()[10:15]).astype(float)
+    frame["priority_ever"] = listed.astype(float)
+    data, _, controls = G.spec_data(frame, "log1p_garimpo_cases", priority=True)
+    assert len(controls) == 1 + 2 * len(G.PRIORITY)
+    data, _, _ = G.spec_data(frame, "log1p_garimpo_cases", drop_listed=True)
+    assert data["mun_id"].nunique() == frame["mun_id"].nunique() - 10
+    rows = {row["term"]: row for row in G.run_spec(frame, "log1p_garimpo_cases", bootstrap=False, priority=True)}
+    assert rows["post2019"]["estimate"] == pytest.approx(0.3, abs=0.05)
+    with pytest.raises(ValueError, match="beyond"):
+        G.spec_data(frame, "log1p_garimpo_cases", years=G.EXTENDED_YEARS)

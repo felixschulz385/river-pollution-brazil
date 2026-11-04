@@ -1,6 +1,6 @@
 # Garimpo supply in the Brazilian Amazon: research design
 
-*Living document; status as of 2026-10-30. It builds on the project's pollution and
+*Living document; status as of 2026-11-04. It builds on the project's pollution and
 health arms (`output/notebooks/pollution/memo.md`, `output/notebooks/health/memo.md`).
 The evidence behind each claim is collected in the [Evidence](#evidence) section, with
 the location of its code.*
@@ -35,7 +35,7 @@ relapse are counted?
 | Measurement of garimpo | done | SIVEP measures garimpo workers where malaria is transmitted; C11 area grows on a smooth trend and steps in 2020; never-exploited SGB gold locates garimpo; VIIRS annual composites do not see it | E3, E5, E6, E13 |
 | Lead 1: gold price | done | Garimpo does not follow the price within municipalities | E10 |
 | Lead 1: laundering rules | done | Permits move by year, but not when the 2013 rule starts; garimpo follows neither date | E11 |
-| Lead 3: enforcement collapse | done | Where IBAMA had been present, fines fell after 2019 and garimpo cases rose, mostly incoming crews | E12 |
+| Lead 3: enforcement collapse | done | Where IBAMA had been present, fines fell after 2019 and garimpo cases rose, mostly incoming crews; not the Priority List, and it holds through 2025 | E12 |
 | Lead 3: raids and displacement | first pass | A single raid has no measurable effect at the site or next door within a year | E14 |
 | Lead 2: crews and residents | first pass | Drought and upstream garimpo do not move local workers more than incoming ones; incoming workers gain on local ones in deposit municipalities as the price rises, which cannot be told from a trend | E5, E12, E15 |
 | Lead 4: demarcation | first pass | Declaration and homologation do not move garimpo inside lands; garimpo sits in a few large, long-regularised lands and surges after 2019 | E16 |
@@ -78,9 +78,14 @@ relapse are counted?
   - The response survives controls for the deforestation frontier and current
     clearing, and permutation inference. It is weakest with state×year FE (+0.06,
     p 0.09), and it sits in the top presence quintile, mostly Pará and Mato Grosso.
+  - It is not the Priority List: +0.095 (p 0.014) with list status × the periods, and
+    +0.088 (p 0.03) without the 75 listed municipalities. The clearing response to the
+    collapse sits in the listed municipalities; the garimpo response does not.
   - Fines were already falling before 2019, so the federal government's signals may
-    have mattered as much as the fines. When fines recover in 2023, cases do not fall
-    back significantly.
+    have mattered as much as the fines.
+  - Through 2025 the response holds (+0.098, p 0.03). The recovery of fines in
+    high-presence municipalities lasts only 2023. Incoming cases there halve from 2022
+    to 2025, but other malaria falls too, so the post-2023 term is not clean.
 - **A single raid shows no effect within a year** ([E14](#e14-raids-and-displacement)).
   - IBAMA's garimpo raids (129 episodes, 2019 to April 2025) come where malaria is
     rising, garimpo and other malaria alike.
@@ -124,7 +129,7 @@ relapse are counted?
 - Lead 2: the downstream-spread test, and fishing dependence for the residents' side.
 - A novelty check on malaria importation by miners.
 - Lead 3: raid intensity for the sustained campaigns, displacement beyond bordering
-  municipalities, and E12 through 2025 (the panel stops in 2024).
+  municipalities, and the cloud-cover instrument for fines.
 
 ## The paper
 
@@ -459,7 +464,9 @@ while crews and dredges move.
       about six times the fines of others in 2007 (40 against 7) and lie in the arc of
       deforestation, where E12's response concentrates. The 2019 response may be the
       garimpo side of the collapse of the deforestation-enforcement regime the list
-      belongs to. E12's frontier controls cover deforestation, not list status.
+      belongs to. List status × the periods leaves E12's case response unchanged, and
+      so does dropping the listed municipalities. The clearing response to the collapse
+      sits in the listed municipalities.
     - **Targeting.** Effects on the untreated and a list under a resource constraint are
       a template for the paper's question of which lever works per unit of effort, if
       enforcement carries the paper.
@@ -804,7 +811,8 @@ elsewhere, where does it go, and does the health burden move with it?
 
 - *The enforcement collapse* ([E12](#e12-the-2019-20-shift-roraima-and-the-enforcement-collapse)): where IBAMA was present before 2015, fines fell
   after 2019 and garimpo cases rose, mostly among incoming crews. The result holds with
-  deforestation-frontier controls, and is weakest with state×year FE.
+  deforestation-frontier and Priority List controls and through 2025, and is weakest
+  with state×year FE. Fines in high-presence municipalities recover in 2023 only.
 - *Single raids* ([E14](#e14-raids-and-displacement)): no measurable effect at the raided municipality or in
   bordering ones within a year. The displacement ratio is not identified from single
   raids.
@@ -866,13 +874,15 @@ elsewhere, where does it go, and does the health burden move with it?
     Recorded garimpo enforcement is small before 2021 and surges from 2023, in Pará,
     Roraima, Mato Grosso and Amazonas. The 2019 collapse shows in all IBAMA fines, not
     in these counts.
+  - The Priority List and the monitored list by municipality and year, 2008–2022
+    (`enforcement`, from Zenodo record 8412144).
   - C11, SIVEP (yearly and monthly counts, and flows), the river network for travel
     distances.
 - **To add:**
   - operation dates and areas from official reporting, to group records into
     operations where the operation code is missing;
   - DETER's monthly cloud masks (INPE), for the cloud-cover instrument;
-  - the Priority List by year (Ministry of the Environment), as a control for E12.
+  - the Priority Lists from 2023 (Portaria MMA 834/2023; GM/MMA 1.202/2024).
 
 **Threats.**
 
@@ -1029,10 +1039,6 @@ substitute sites of lead 3.
    - Substitute sites beyond bordering municipalities (river distance, residence flows),
      the large operations (Yanomami 2023, the Madeira dredges) as events, and the crew
      logit.
-   - E12 through 2025: the panel's spine (land cover) stops in 2024, while SIVEP and
-     IBAMA run to 2025.
-   - E12 with Priority List status × the periods as a control, and without listed
-     municipalities.
    - The cloud-cover instrument for fines, if DETER's cloud masks cover 2016–2024.
    - E14's bordering municipalities split by garimpo before the raid.
 5. **Lead 1, if it stays in.** Permit events (`ProcessoEvento`: rejections,
@@ -1510,8 +1516,9 @@ tables in `output/analysis/garimpo/shift_2019/`.*
 - **Roraima.** Totals and lead 1's IGD event study split into IGD municipalities in
   Roraima (6) and elsewhere (21), relative to 2018:
   - *Roraima:* garimpo cases were already rising before 2019 (9–55 a year in 2012–17,
-    396 in 2018), jump to 2,261 (2019) and 11,785 (2022), and fall to 5,977 (2023) and
-    1,288 (2024) with the Yanomami operation (garimpo enforcement +2.2 in 2023–24).
+    396 in 2018), jump to 2,261 (2019) and 11,785 (2022), and fall to 5,977 (2023),
+    1,288 (2024) and 288 (2025) with the Yanomami operation (garimpo enforcement +2.2 in
+    2023–24).
     Non-garimpo malaria rises steadily from 2,044 (2012) to 26,897 (2024), without a
     2019 break: Indigenous people infected in the rush need not carry the garimpo code,
     so E11's outcome placebo is contaminated in Roraima.
@@ -1562,6 +1569,30 @@ tables in `output/analysis/garimpo/shift_2019/`.*
 
   Single-municipality permutation ignores the spatial clustering of presence and
   outcomes. The Otto-3 and bootstrap p-values stay the conservative inference.
+- **The Priority List.** The Ministry of the Environment's list concentrated monitoring and
+  enforcement on frontier municipalities (`enforcement`, 2008–2022).
+  - *Overlap:* presence is correlated with list status in 2015–2018 (0.51); all 75
+    municipalities ever listed are in the top two presence quintiles.
+  - *Cases × post-2019:* +0.095 (Otto-3 p 0.014, bootstrap 0.006) with Priority List
+    and monitored-list status × the periods; +0.069 (p 0.05) with state×year FE as well;
+    +0.088 (p 0.03) without the listed municipalities. Incoming cases +0.086 to +0.088
+    (p ≤ 0.024).
+  - *Gold PLG requests* lose the effect (+0.03, p ≥ 0.25).
+  - *Forest loss × post-2019* falls from +0.044 to +0.023 with the controls and to
+    −0.008 without the listed municipalities: the clearing response sits in the listed
+    municipalities.
+- **Through 2025.** SIVEP (preliminary in 2025), IBAMA, PLG requests and the gold price are
+  appended to the panel, which stops in 2024 with land cover.
+  - *Fines:* per SD of presence, relative to 2018, −0.14 (2020), +0.12 (2023), then
+    −0.005 (2024) and +0.02 (2025). The recovery lasts one year.
+  - *Cases:* peak +0.133 (2022), +0.062 (2024), +0.068 (2025). Incoming cases fall from
+    +0.112 (2022) to +0.047 (2024–25); local cases stay at +0.05 to +0.08.
+  - *Placebo:* non-garimpo malaria falls from 2023 (−0.147 in 2025).
+  - *Pooled:* post-2019 +0.098 (p 0.028, bootstrap 0.023); +0.071 (p 0.075) with
+    state×year FE and +0.074 (p 0.079) without Roraima. Post-2023 −0.024 (p 0.32); the
+    placebo −0.104 (p 0.002).
+  - *Top presence quintile:* garimpo cases 2,789 (2018), 12,458 (2021), 8,946 (2025);
+    incoming cases peak at 4,864 (2022) and fall to 2,313 (2025).
 - **Dose.**
   - The fall in fines grows with presence: −0.09, −0.15, −0.26 and −0.56 in quintiles
     1–4 against quintile 0.
@@ -1586,8 +1617,10 @@ tables in `output/analysis/garimpo/shift_2019/`.*
   - Fines in high-presence municipalities already drop from 2017 to 2018; cases rise
     from 2019, the first year of the new federal government, so signals may have mattered
     as much as the fines.
-  - The recovery of fines after 2023 has not yet brought cases down significantly, and
-    the placebo falls after 2023, so the post-2023 term is not clean.
+  - The recovery of fines after 2023 lasts one year in high-presence municipalities and
+    has not brought cases down significantly by 2025. The placebo falls after 2023, so
+    the post-2023 term is not clean.
+  - The Priority List does not explain the response; it explains the clearing response.
   - Presence is not random: IBAMA was present on the deforestation frontier and where
     garimpo is. The design rests on parallel trends in 2015–18, which hold for cases,
     requests and the placebo.
@@ -1800,6 +1833,7 @@ tables in `output/analysis/garimpo/demarcation/`. Overlaps:
 | Mining permits with type, ore, dates, flags | ANM Cadastro Mineiro microdata; MapBiomas Monitor da Mineração | laundering exposure, ghost permits, anticipation | in pipeline (`mining`: PLG requests, grants, PLGs in force); events and the Monitor layer to add |
 | Royalty payments (CFEM) | ANM | declared output | not usable for garimpo (E7) |
 | Fines, embargoes, seizures, destruction terms | IBAMA Fiscalização open data | enforcement shocks, relapse timing | in pipeline (`enforcement`: records and municipality × year counts, mining and garimpo classes); seizures stop in 2026-05 in the current snapshot |
+| Priority List and monitored list | Ministry of the Environment, from the Diário Oficial (Zenodo 8412144, MIT) | E12 control, deterrence spillovers | in pipeline (`enforcement`: municipality × year, 2008–2022); lists from 2023 to add |
 | Indigenous lands with stage and dates | FUNAI GeoServer (`tis_poligonais_portarias`), by hand over a Brazilian VPN | IGD, lead 4 | in pipeline (`protected_areas`: boundaries, current stage, the date and act of each stage, and the share of each river trench inside each land; snapshot 2026-10-29) |
 | Protected areas with creation dates | CNUC, via INPE TerraBrasilis | IGD, lead 4 | in pipeline (`protected_areas`: boundaries, category, creation year; units up to about 2020) |
 | Gold price | World Bank Pink Sheet × BCB BRL/USD rate | price shock | in pipeline (`commodity_prices`) |

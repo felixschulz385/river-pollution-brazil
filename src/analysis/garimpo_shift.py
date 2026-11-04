@@ -26,22 +26,38 @@ The checks add the frontier (forest loss in 2010-2014 and forest cover in 2014,
 each x post-2019 and x post-2023), current forest loss (a bad control, as a
 bound), a presence trend, forest loss as an outcome, permutation inference
 (all municipalities and within states) and presence quintiles x the periods.
+
+The Priority List concentrated monitoring and enforcement on a few frontier
+municipalities. Its checks add Priority List and monitored-list status in
+2015-2018 x the periods, or drop every municipality listed in 2008-2022.
+
+The panel stops in 2024 with land cover, while SIVEP (preliminary from 2025),
+IBAMA, PLG requests and the gold price run to 2025. `extend_frame` appends
+those years from the processed tables, with the municipality-level columns
+carried over, so the post-2023 term can be read through 2025.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from src.analysis import garimpo_laundering as L
 from src.analysis import moreno_louzada as M
+from src.analysis import panels
 from src.analysis.inference import wild_cluster_bootstrap
 
 YEARS = (2015, 2024)
+LAST_YEAR = 2025  # SIVEP, IBAMA, PLG requests and the gold price; the panel's land cover stops in 2024
+EXTENDED_YEARS = (YEARS[0], LAST_YEAR)
 PRESENCE_YEARS = (2010, 2014)
 FRONTIER_YEARS = (2010, 2014)
 FRONTIER = ("frontier_loss", "forest_2014")  # standardised, x post-2019 and x post-2023
 EARLY_PRESENCE_YEARS = (2005, 2010)
+PRIORITY_YEARS = (2015, 2018)  # Priority List status before the shift
+PRIORITY = ("priority_pre", "monitored_pre")  # x post-2019 and x post-2023
 SHIFT_YEAR = 2019  # IBAMA fines fall from 2019 (new federal government, January 2019)
 RECOVERY_YEAR = 2023  # and recover in 2023
 BASE_YEAR = 2018
@@ -69,6 +85,17 @@ PERIODS = {
 }
 DOSE_BINS = 5
 
+# Processed tables carrying the year-varying inputs past the panel's last year,
+# zero where a municipality has no record (as assembly fills them).
+EXTENSION_TABLES = {
+    "data/malaria/processed/malaria_adm2.parquet": ("inf_cases", "inf_garimpo", "inf_garimpo_local",
+                                                    "inf_garimpo_incoming"),
+    "data/enforcement/processed/enforcement_adm2.parquet": ("ibama_fines_all", "ibama_fines_mining",
+                                                            "ibama_seizures_garimpo", "ibama_destructions_garimpo"),
+    "data/mining/processed/mining_permits_adm2.parquet": ("plg_requests_gold",),
+}
+GOLD_PRICE_TABLE = "data/commodity_prices/processed/gold_price_annual.parquet"
+
 IGD_RORAIMA = "igd_roraima"
 IGD_OTHER = "igd_other_states"
 GROUPS = (IGD_RORAIMA, IGD_OTHER, "rest_roraima", "rest")
@@ -92,8 +119,9 @@ def standardised(values):
     return (values - values.mean()) / values.std()
 
 
-def build_frame(path=None):
-    """Lead 1's Legal Amazon panel with enforcement presence, the extra outcomes, groups and FE keys."""
+def build_frame(path=None, last_year=LAST_YEAR, root_dir=panels.PROJECT_ROOT):
+    """Lead 1's Legal Amazon panel with enforcement presence, the extra outcomes, groups and FE keys, extended to
+    `last_year` (`extend_frame`)."""
     frame = L.build_frame(path)
     frame[PRESENCE] = standardised_presence(frame, "ibama_fines_all", PRESENCE_YEARS)
     frame["nonmining_fines"] = frame["ibama_fines_all"] - frame["ibama_fines_mining"]
@@ -106,18 +134,71 @@ def build_frame(path=None):
     early = frame[frame["year"].between(*FRONTIER_YEARS)].groupby("mun_id")
     frame["frontier_loss"] = frame["mun_id"].map(standardised(early["forest_loss"].mean()))
     frame["forest_2014"] = frame["mun_id"].map(standardised(early["local_lc_forest"].last()))
+    pre = frame[frame["year"].between(*PRIORITY_YEARS)].groupby("mun_id")
+    frame["priority_pre"] = frame["mun_id"].map(pre["priority_list"].max())
+    frame["monitored_pre"] = frame["mun_id"].map(pre["priority_monitored"].max())
+    listed = frame[["priority_list", "priority_monitored"]].max(axis=1).groupby(frame["mun_id"]).max()
+    frame["priority_ever"] = frame["mun_id"].map(listed)
 
     roraima = frame["mun_id"].str[:2].eq(RORAIMA)
     igd = frame[L.IGD] > 0
     frame[IGD_RORAIMA] = (igd & roraima).astype(float)
     frame[IGD_OTHER] = (igd & ~roraima).astype(float)
     frame["group"] = np.select([igd & roraima, igd, roraima], [IGD_RORAIMA, IGD_OTHER, "rest_roraima"], "rest")
+    frame = extend_frame(frame, last_year, root_dir)
+    igd = frame[L.IGD] > 0
 
     year = frame["year"].astype(str)
     frame["state_year"] = frame["mun_id"].str[:2] + "_" + year
     frame["igd_year"] = igd.astype(int).astype(str) + "_" + year
     frame["gold_year"] = (frame[L.S.ALL_GOLD_EXPOSURE] > 0).astype(int).astype(str) + "_" + year
     return frame
+
+
+def extension_rows(frame, tables, price, last_year=LAST_YEAR):
+    """Rows for the years after the frame's last, through `last_year`.
+
+    Columns constant within municipalities in the frame's last five years are
+    carried from its last year; `tables` (municipality x year frames) give the
+    year-varying inputs, zero where a municipality has none, and `price`
+    (indexed by year) the gold price. Every other column is left out, so it is
+    missing once the rows are appended.
+    """
+    final = int(frame["year"].max())
+    recent = frame[frame["year"] > final - 5]
+    constant = recent.groupby("mun_id").nunique(dropna=False).le(1).all()
+    static = [column for column in constant.index[constant] if column != "year"]
+    base = frame.loc[frame["year"] == final, ["mun_id", *static]]
+    rows = pd.concat([base.assign(year=year) for year in range(final + 1, last_year + 1)], ignore_index=True)
+    for table in tables:
+        columns = [column for column in table.columns if column not in ("mun_id", "year")]
+        rows = rows.drop(columns=columns, errors="ignore").merge(table, on=["mun_id", "year"], how="left")
+        rows[columns] = rows[columns].fillna(0.0)
+    rows[L.PRICE] = rows["year"].map(price)
+    rows["log1p_garimpo_cases"] = np.log1p(rows["inf_garimpo"])
+    rows["log1p_garimpo_local"] = np.log1p(rows["inf_garimpo_local"])
+    rows["log1p_garimpo_incoming"] = np.log1p(rows["inf_garimpo_incoming"])
+    rows["other_malaria"] = (rows["inf_cases"] - rows["inf_garimpo"]).clip(lower=0)
+    rows["log1p_other_malaria"] = np.log1p(rows["other_malaria"])
+    rows["log1p_fines_all"] = np.log1p(rows["ibama_fines_all"])
+    rows["log1p_plg_requests_gold"] = np.log1p(rows["plg_requests_gold"])
+    return rows
+
+
+def extend_frame(frame, last_year=LAST_YEAR, root_dir=panels.PROJECT_ROOT):
+    """The frame with `extension_rows` appended from the processed tables (no-op if it already reaches
+    `last_year`)."""
+    if frame["year"].max() >= last_year:
+        return frame
+    years = range(int(frame["year"].max()) + 1, last_year + 1)
+    tables = []
+    for path, columns in EXTENSION_TABLES.items():
+        table = pd.read_parquet(Path(root_dir) / path, columns=["mun_id", "year", *columns])
+        tables.append(table[table["year"].isin(years)].astype({"mun_id": str}))
+    price = pd.read_parquet(Path(root_dir) / GOLD_PRICE_TABLE).set_index("year")[L.PRICE]
+    if not set(years) <= set(price.index):
+        raise ValueError(f"No gold price for {sorted(set(years) - set(price.index))}")
+    return pd.concat([frame, extension_rows(frame, tables, price, last_year)], ignore_index=True)
 
 
 def group_table(frame, column, first_year=2010):
@@ -132,21 +213,26 @@ def term(exposure, period):
 
 
 def spec_data(frame, outcome, exposure=PRESENCE, years=YEARS, drop_states=(), gold_only=False, sample=None,
-              frontier=False, deforestation=False, trend=False):
+              frontier=False, deforestation=False, trend=False, priority=False, drop_listed=False):
     """Estimation rows of one presence spec: (data, exposure terms, other controls).
 
-    `frontier` adds the frontier measures x the periods, `deforestation` current forest loss, and `trend` the
-    exposure x a linear trend.
+    `frontier` adds the frontier measures x the periods, `deforestation` current forest loss, `trend` the
+    exposure x a linear trend, and `priority` the Priority List measures x the periods; `drop_listed` drops
+    municipalities ever on either list.
     """
+    if years[1] > frame["year"].max():
+        raise ValueError(f"Years {years} beyond the frame's last year {frame['year'].max()}")
     data = frame[frame["year"].between(*years) & ~frame["mun_id"].str[:2].isin(drop_states)].copy()
     if gold_only:
         data = data[data[L.S.ALL_GOLD_EXPOSURE] > 0]
     if sample is not None:
         data = data[data[sample] > 0]
+    if drop_listed:
+        data = data[data["priority_ever"] == 0]
     data["y"] = data[outcome]
     data["weight"] = 1.0
     required = ["y", exposure, CLUSTER, L.PRICE, *(FRONTIER if frontier else ()),
-                *(("forest_loss",) if deforestation else ())]
+                *(("forest_loss",) if deforestation else ()), *(PRIORITY if priority else ())]
     data = data.dropna(subset=required).reset_index(drop=True)
     terms = []
     for period, active in PERIODS.items():
@@ -154,11 +240,10 @@ def spec_data(frame, outcome, exposure=PRESENCE, years=YEARS, drop_states=(), go
         terms.append(term(exposure, period))
     data[M.interaction(L.DEPOSITS, L.PRICE)] = data[L.DEPOSITS] * data[L.PRICE]
     controls = [M.interaction(L.DEPOSITS, L.PRICE)]
-    if frontier:
-        for measure in FRONTIER:
-            for period, active in PERIODS.items():
-                data[term(measure, period)] = data[measure] * active(data["year"])
-                controls.append(term(measure, period))
+    for measure in (*(FRONTIER if frontier else ()), *(PRIORITY if priority else ())):
+        for period, active in PERIODS.items():
+            data[term(measure, period)] = data[measure] * active(data["year"])
+            controls.append(term(measure, period))
     if deforestation:
         controls.append("forest_loss")
     if trend:
@@ -182,6 +267,12 @@ def specs():
         "frontier x periods, state x year FE": ({"frontier": True}, "mun_id + state_year"),
         "+ current forest loss": ({"deforestation": True}, FE),
         "presence trend": ({"trend": True}, FE),
+        "Priority List x periods": ({"priority": True}, FE),
+        "Priority List x periods, state x year FE": ({"priority": True}, "mun_id + state_year"),
+        "without listed municipalities": ({"drop_listed": True}, FE),
+        "through 2025": ({"years": EXTENDED_YEARS}, FE),
+        "through 2025, state x year FE": ({"years": EXTENDED_YEARS}, "mun_id + state_year"),
+        "through 2025, without Roraima": ({"years": EXTENDED_YEARS, "drop_states": (RORAIMA,)}, FE),
     }
 
 
