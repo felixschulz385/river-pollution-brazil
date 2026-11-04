@@ -16,6 +16,7 @@ from .constants import (
     CLASSES,
     COVERAGE_START,
     DEFAULT_ADM2_OUTPUT_PATH,
+    DEFAULT_PRIORITY_OUTPUT_PATH,
     DEFAULT_RECORDS_OUTPUT_PATH,
     ENCODING,
     FIRST_DATE,
@@ -26,15 +27,21 @@ from .constants import (
     MINING_PATTERN,
     MUN_ID_COLUMN,
     PLACE_NAME_PATTERN,
+    PRIORITY_BIOME,
+    PRIORITY_COLUMNS,
+    PRIORITY_STATE_CORRECTIONS,
     RECORD_COLUMNS,
     SEPARATOR,
     SNAPSHOT_PREFIX,
+    STATE_CODES,
     TABLES,
     YEAR_COLUMN,
     action_columns,
     measure_column,
+    priority_path,
     snapshot_path,
 )
+from src.data.sources.gadm.constants import DEFAULT_ADM2_LAYER, DEFAULT_SIMPLIFIED_GADM_PATH
 
 
 logger = logging.getLogger(__name__)
@@ -256,3 +263,66 @@ def build_enforcement(root_dir=".", snapshot=None, records_output_path=None, adm
     logger.info("Wrote %d records to %s and the ADM2 table %s to %s",
                 len(records), outputs[0], adm2.shape, outputs[1])
     return records, adm2
+
+
+def fold_name(name):
+    """A municipality name lower-cased and accent-folded, with apostrophe variants and hyphens unified."""
+    text = unicodedata.normalize("NFKD", name.replace("’", "'")).encode("ascii", "ignore").decode()
+    return " ".join(text.lower().replace("-", " ").split())
+
+
+def gadm_municipalities(gadm_path):
+    """(IBGE state code, folded name) key -> 6-digit `mun_id`, from GADM's municipalities."""
+    import pyogrio
+
+    frame = pyogrio.read_dataframe(gadm_path, layer=DEFAULT_ADM2_LAYER, columns=["NAME_2", "CC_2"], read_geometry=False)
+    codes = frame["CC_2"]
+    codes = codes.round().astype("Int64").astype(str) if pd.api.types.is_float_dtype(codes) else codes.astype(str)
+    keys = codes.str[:2] + "|" + frame["NAME_2"].map(fold_name)
+    if keys.duplicated().any():
+        raise ValueError(f"Municipality names repeated within a state in GADM: {sorted(keys[keys.duplicated()])}")
+    return pd.Series(codes.str[:6].to_numpy(), index=keys.to_numpy())
+
+
+def priority_list_adm2(table, municipalities):
+    """Municipality x year flags of the Amazon Priority List and the monitored list.
+
+    Rows cover every municipality on either list in any year, for every year
+    of the table, with 0 where it is off the list. Rows are matched to
+    `municipalities` on state and name; an unmatched row raises.
+    """
+    rows = table[table["biome"] == PRIORITY_BIOME].copy()
+    states = [PRIORITY_STATE_CORRECTIONS.get((state, name), state) for state, name in zip(rows["uf"], rows["name_muni"])]
+    keys = pd.Series(states, index=rows.index).map(STATE_CODES) + "|" + rows["name_muni"].map(fold_name)
+    rows[MUN_ID_COLUMN] = keys.map(municipalities)
+    unmatched = rows[rows[MUN_ID_COLUMN].isna()]
+    if len(unmatched):
+        raise ValueError("Priority List rows without a GADM municipality: "
+                         f"{sorted(set(zip(unmatched['uf'], unmatched['name_muni'])))}")
+    recoded = rows["code_muni"].astype(str).str[:6] != rows[MUN_ID_COLUMN]
+    logger.info("Priority List: %d Amazon rows, %d recoded from the record's IBGE code", len(rows), int(recoded.sum()))
+
+    keys = [MUN_ID_COLUMN, YEAR_COLUMN]
+    flags = rows.groupby(keys)[["priority", "monitored"]].max()
+    both = flags[(flags["priority"] > 0) & (flags["monitored"] > 0)]
+    if len(both):
+        raise ValueError(f"Municipality-years on both lists: {both.index.tolist()}")
+    years = range(int(rows[YEAR_COLUMN].min()), int(rows[YEAR_COLUMN].max()) + 1)
+    index = pd.MultiIndex.from_product([sorted(rows[MUN_ID_COLUMN].unique()), years], names=keys)
+    flags = flags.reindex(index, fill_value=0).astype(float)
+    result = flags.rename(columns={"priority": "priority_list", "monitored": "priority_monitored"}).reset_index()
+    return result[list(PRIORITY_COLUMNS)]
+
+
+def build_priority_list(root_dir=".", path=None, gadm_path=None, output_path=None):
+    """Read the downloaded Priority List and write its municipality x year table."""
+    path = Path(path) if path else priority_path(root_dir)
+    if not path.exists():
+        raise FileNotFoundError(f"No Priority List at {path}; run `data fetch --source enforcement`.")
+    table = pd.read_csv(path, dtype={"code_muni": str})
+    adm2 = priority_list_adm2(table, gadm_municipalities(gadm_path or Path(root_dir) / DEFAULT_SIMPLIFIED_GADM_PATH))
+    resolved = Path(root_dir) / (output_path or DEFAULT_PRIORITY_OUTPUT_PATH)
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    adm2.to_parquet(resolved, index=False)
+    logger.info("Wrote the Priority List table %s to %s", adm2.shape, resolved)
+    return adm2

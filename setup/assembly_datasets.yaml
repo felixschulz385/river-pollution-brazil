@@ -798,6 +798,16 @@ datasets:
           - ibama_destructions_all
           - ibama_destructions_mining
           - ibama_destructions_garimpo
+      # MMA's Priority List of Amazon municipalities for deforestation control
+      # and the monitored list of those that left it, in force each year
+      # 2008-2022 (0 off the lists, missing outside these years).
+      - name: priority_list_adm2
+        path: data/enforcement/processed/priority_list_adm2.parquet
+        join_keys: [mun_id, year]
+        fill: {value: 0, years: [2008, 2022]}
+        variables:
+          - priority_list
+          - priority_monitored
       # VIIRS night lights by municipality and year from 2012 (EOG VNL v2.1 to
       # 2021, v2.2 from 2022): pixels, lit pixels and summed radiance over the
       # municipality, inside barred areas in force by 2012, within 5 km of gold

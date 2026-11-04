@@ -156,6 +156,14 @@ jobs:
     cpus_per_task: 2
     mem: 32G
 
+  # The Priority List: a small CSV recoded against GADM's names.
+  enforcement.preprocess.priority_list:
+    job_name: preprocess_enforcement_priority_list
+    time: "0-00:15:00"
+    qos: 30min
+    cpus_per_task: 1
+    mem: 4G
+
   # EOG VIIRS annual composites -> ADM2 x year. One worker per file, each
   # decompressing a global .tif.gz (11.6 GB) and holding the Brazil window
   # (~10,900 x 9,400 pixels, ~3 GB with its temporaries).

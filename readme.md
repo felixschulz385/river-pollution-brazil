@@ -328,6 +328,18 @@ python3 -m src.cli data preprocess --source enforcement --slurm
 Outputs: `data/enforcement/processed/ibama_records.parquet` and
 `data/enforcement/processed/enforcement_adm2.parquet`.
 
+The same source carries the Ministry of the Environment's Priority List of
+Amazon municipalities for deforestation control, and the monitored list of
+those that left it, for 2008–2022 (Zenodo record 8412144, transcribed from the
+Diário Oficial), recoded to municipalities against GADM:
+
+```bash
+python3 -m src.cli data fetch --source enforcement
+python3 -m src.cli data preprocess --source enforcement --product priority_list
+```
+
+Output: `data/enforcement/processed/priority_list_adm2.parquet`.
+
 ### Night Lights
 
 EOG's annual VIIRS night-light composites (VNL v2.1 for 2012–2021, v2.2 from

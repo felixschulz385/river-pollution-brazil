@@ -151,6 +151,30 @@ ADM2_COLUMNS = (MUN_ID_COLUMN, YEAR_COLUMN, *(column for action in ACTIONS for c
 DEFAULT_RECORDS_OUTPUT_PATH = str(processed_dir(".", "enforcement") / "ibama_records.parquet")
 DEFAULT_ADM2_OUTPUT_PATH = str(processed_dir(".", "enforcement") / "enforcement_adm2.parquet")
 
+IBAMA_PRODUCT = "ibama"
+PRIORITY_PRODUCT = "priority_list"
+PRODUCTS = (IBAMA_PRODUCT, PRIORITY_PRODUCT)
+
+# The Ministry of the Environment's Priority List of Amazon municipalities for
+# deforestation control (Decreto 6.321/2007, portarias from MMA 28/2008), and
+# the list of municipalities that left it with deforestation "monitored and
+# under control". The lists in force each year 2008-2022 are transcribed from
+# the Diário Oficial in Zenodo record 8412144 (v1.0.0, MIT license), one row
+# per listed municipality and year. The record's IBGE codes come from a join on
+# names alone (Buritis RO also gets Buritis MG's code, Rio Branco AC a code in
+# MT), so rows are recoded from the state and name against GADM. Rorainópolis
+# is listed under RO but is in RR. The Cerrado list is left out.
+PRIORITY_RECORD = "8412144"
+PRIORITY_FILE = "priority_list.csv"
+PRIORITY_URL = f"https://zenodo.org/api/records/{PRIORITY_RECORD}"
+PRIORITY_RAW_DIR_NAME = "priority_list"
+PRIORITY_BIOME = "Amazônia"
+PRIORITY_STATE_CORRECTIONS = {("RO", "Rorainópolis"): "RR"}
+STATE_CODES = {"RO": "11", "AC": "12", "AM": "13", "RR": "14", "PA": "15", "AP": "16", "TO": "17", "MA": "21",
+               "MT": "51"}
+PRIORITY_COLUMNS = (MUN_ID_COLUMN, YEAR_COLUMN, "priority_list", "priority_monitored")
+DEFAULT_PRIORITY_OUTPUT_PATH = str(processed_dir(".", "enforcement") / "priority_list_adm2.parquet")
+
 
 def enforcement_dir(root_dir: str | Path = ".") -> Path:
     return source_root(root_dir, "enforcement")
@@ -158,6 +182,11 @@ def enforcement_dir(root_dir: str | Path = ".") -> Path:
 
 def raw_dir(root_dir: str | Path = ".") -> Path:
     return _shared_raw_dir(root_dir, "enforcement")
+
+
+def priority_path(root_dir: str | Path = ".") -> Path:
+    """The Priority List table downloaded from Zenodo."""
+    return raw_dir(root_dir) / PRIORITY_RAW_DIR_NAME / PRIORITY_FILE
 
 
 def snapshot_path(root_dir: str | Path = ".") -> Path | None:

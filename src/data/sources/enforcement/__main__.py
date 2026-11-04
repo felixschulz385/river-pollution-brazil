@@ -1,6 +1,7 @@
 import argparse
 import logging
 
+from .constants import IBAMA_PRODUCT, PRIORITY_PRODUCT, PRODUCTS
 from .core import Enforcement
 
 
@@ -21,19 +22,34 @@ def configure_logging(level: str = "INFO") -> None:
 def configure_parser(parser, include_action=True):
     """Add enforcement CLI arguments to ``parser``."""
     if include_action:
-        parser.add_argument("action", choices=["preprocess"])
+        parser.add_argument("action", choices=["fetch", "preprocess"])
     parser.add_argument("--root-dir", default=".")
+    parser.add_argument(
+        "--product",
+        default=IBAMA_PRODUCT,
+        choices=PRODUCTS,
+        help="'ibama' (default): the IBAMA records and municipality x year counts; 'priority_list': the Ministry of "
+        "the Environment's Priority List by municipality and year (fetched from Zenodo).",
+    )
     parser.add_argument("--snapshot", default=None, help="IBAMA snapshot folder (default: the newest complete one)")
     parser.add_argument("--records-output", default=None)
     parser.add_argument("--adm2-output", default=None)
+    parser.add_argument("--gadm-path", default=None)
+    parser.add_argument("--priority-output", default=None)
     return parser
 
 
 def run(args):
     """Execute the requested enforcement action for parsed ``args``."""
-    Enforcement(root_dir=args.root_dir).preprocess(
-        snapshot=args.snapshot, records_output_path=args.records_output, adm2_output_path=args.adm2_output
-    )
+    agent = Enforcement(root_dir=args.root_dir)
+    if args.action == "fetch":
+        agent.fetch()
+    elif args.product == PRIORITY_PRODUCT:
+        agent.preprocess_priority_list(gadm_path=args.gadm_path, output_path=args.priority_output)
+    else:
+        agent.preprocess(
+            snapshot=args.snapshot, records_output_path=args.records_output, adm2_output_path=args.adm2_output
+        )
 
 
 def main():

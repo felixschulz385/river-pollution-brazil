@@ -693,6 +693,34 @@ Semantics:
   action.
 - Records count where they took place, by their own municipality code.
 
+### `data/enforcement/processed/priority_list_adm2.parquet`
+
+The Ministry of the Environment's Priority List of Amazon municipalities for
+deforestation control (Decreto 6.321/2007; portarias from MMA 28/2008), and the
+list of municipalities that left it with deforestation "monitored and under
+control". Read from `data/enforcement/raw/priority_list/priority_list.csv`,
+Zenodo record 8412144 (v1.0.0, MIT license; `record.json` holds the record's
+metadata), which transcribes the lists in force each year 2008–2022 from the
+Diário Oficial. Fetched with `data fetch --source enforcement`.
+
+One row per (`mun_id`, `year`) for the 75 municipalities on either list in any
+year, every year 2008–2022.
+
+- `priority_list`: 1 if on the Priority List that year, else 0.
+- `priority_monitored`: 1 if on the monitored list that year, else 0. Never
+  both.
+
+Semantics:
+
+- The record's IBGE codes come from a join on names alone (Buritis RO also gets
+  Buritis MG's code; Rio Branco AC a code in MT). Rows are recoded from the
+  state and the accent-folded name against GADM's municipalities; Rorainópolis,
+  listed under RO, is in RR. An unmatched row stops the preprocess.
+- The record's `portaria` column is not used (some dates are wrong).
+- The Cerrado list is left out. The lists from 2023 (Portaria MMA 834/2023,
+  70 municipalities; GM/MMA 1.202/2024, 81) are not in the record.
+- `adm2_panel` joins both columns and fills 2008–2022 with 0.
+
 ## Night-Light Outputs
 
 Produced by `src.data.sources.nightlights` from the Earth Observation Group's

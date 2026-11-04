@@ -1676,12 +1676,13 @@ def _mining_fingerprint_paths(root_dir) -> list[Path]:
 # --------------------------------------------------------------------------
 
 def _enforcement_list_fetched(root_dir, force: bool = False) -> FetchListing:
-    from src.data.sources.enforcement.constants import snapshot_path
+    from src.data.sources.enforcement.constants import priority_path, snapshot_path
 
     snapshot = snapshot_path(root_dir)
-    present = 1 if snapshot is not None else 0
-    detail = f"IBAMA snapshot {snapshot.name} present." if snapshot else "No IBAMA snapshot (manual placement)."
-    return FetchListing(present=present, expected=1, detail=detail)
+    priority = priority_path(root_dir).exists()
+    detail = (f"IBAMA snapshot {snapshot.name} present" if snapshot else "No IBAMA snapshot (manual placement)") + (
+        "; Priority List present." if priority else "; no Priority List (data fetch).")
+    return FetchListing(present=int(snapshot is not None) + int(priority), expected=2, detail=detail)
 
 
 def _enforcement_record_checks(frame) -> list[CheckResult]:
@@ -1760,39 +1761,89 @@ def _enforcement_adm2_checks(frame) -> list[CheckResult]:
     return checks
 
 
+def _enforcement_priority_checks(frame) -> list[CheckResult]:
+    """Keys unique, every listed municipality in every year, flags 0/1 and never both lists at once."""
+    from src.data.sources.enforcement.constants import MUN_ID_COLUMN, PRIORITY_COLUMNS, YEAR_COLUMN
+
+    checks = [check_required_columns(frame, list(PRIORITY_COLUMNS)), _non_empty_check(frame)]
+    if not set(PRIORITY_COLUMNS) <= set(frame.columns) or frame.empty:
+        return checks
+    duplicates = int(frame.duplicated([MUN_ID_COLUMN, YEAR_COLUMN]).sum())
+    checks.append(CheckResult(
+        name="unique:mun_id,year",
+        ok=duplicates == 0,
+        message="All (mun_id, year) keys unique." if duplicates == 0 else f"{duplicates} duplicate keys.",
+    ))
+    years = frame[YEAR_COLUMN].nunique()
+    incomplete = int((frame.groupby(MUN_ID_COLUMN)[YEAR_COLUMN].nunique() != years).sum())
+    checks.append(CheckResult(
+        name="complete_grid",
+        ok=incomplete == 0,
+        message=f"Every municipality in all {years} years." if incomplete == 0
+        else f"{incomplete} municipalities missing years.",
+    ))
+    flags = frame[["priority_list", "priority_monitored"]]
+    invalid = int((~flags.isin([0.0, 1.0])).sum().sum())
+    both = int((flags.sum(axis=1) > 1).sum())
+    checks.append(CheckResult(
+        name="flags_exclusive",
+        ok=invalid == 0 and both == 0,
+        message="Flags are 0/1 and never both set." if invalid == 0 and both == 0
+        else f"{invalid} values not 0/1, {both} municipality-years on both lists.",
+    ))
+    return checks
+
+
 def _enforcement_check_outputs(root_dir) -> list[OutputArtifactCheck]:
-    from src.data.sources.enforcement.constants import DEFAULT_ADM2_OUTPUT_PATH, DEFAULT_RECORDS_OUTPUT_PATH
+    from src.data.sources.enforcement.constants import (
+        DEFAULT_ADM2_OUTPUT_PATH,
+        DEFAULT_PRIORITY_OUTPUT_PATH,
+        DEFAULT_RECORDS_OUTPUT_PATH,
+    )
 
     return [
         _artifact_check("ibama_records", Path(root_dir) / DEFAULT_RECORDS_OUTPUT_PATH, _enforcement_record_checks),
         _artifact_check("enforcement_adm2", Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH, _enforcement_adm2_checks),
+        _artifact_check("priority_list_adm2", Path(root_dir) / DEFAULT_PRIORITY_OUTPUT_PATH,
+                        _enforcement_priority_checks),
     ]
 
 
 def _enforcement_check_fetched(root_dir) -> list[OutputArtifactCheck]:
-    from src.data.sources.enforcement.constants import SNAPSHOT_PREFIX, TABLES, raw_dir, snapshot_path
+    from src.data.sources.enforcement.constants import SNAPSHOT_PREFIX, TABLES, priority_path, raw_dir, snapshot_path
 
+    priority = priority_path(root_dir)
+    priority_check = (
+        OutputArtifactCheck(label="priority_list", path=priority, exists=True,
+                            checks=[check_file_nonempty(priority, min_size_bytes=1 << 10)])
+        if priority.exists() else _missing_artifact("priority_list", priority)
+    )
     snapshot = snapshot_path(root_dir)
     if snapshot is None:
-        return [_missing_artifact("ibama_snapshot", raw_dir(root_dir) / f"{SNAPSHOT_PREFIX}<YYYY-MM-DD>")]
+        return [_missing_artifact("ibama_snapshot", raw_dir(root_dir) / f"{SNAPSHOT_PREFIX}<YYYY-MM-DD>"),
+                priority_check]
     return [
-        OutputArtifactCheck(label=f"ibama_{action}", path=snapshot / spec["file"], exists=True,
-                            checks=[check_file_nonempty(snapshot / spec["file"], min_size_bytes=1 << 20)])
-        for action, spec in TABLES.items()
+        *(OutputArtifactCheck(label=f"ibama_{action}", path=snapshot / spec["file"], exists=True,
+                              checks=[check_file_nonempty(snapshot / spec["file"], min_size_bytes=1 << 20)])
+          for action, spec in TABLES.items()),
+        priority_check,
     ]
 
 
 def _enforcement_fingerprint_paths(root_dir) -> list[Path]:
     from src.data.sources.enforcement.constants import (
         DEFAULT_ADM2_OUTPUT_PATH,
+        DEFAULT_PRIORITY_OUTPUT_PATH,
         DEFAULT_RECORDS_OUTPUT_PATH,
         TABLES,
+        priority_path,
         snapshot_path,
     )
 
     snapshot = snapshot_path(root_dir)
     raw = [snapshot / spec["file"] for spec in TABLES.values()] if snapshot else []
-    return [*raw, Path(root_dir) / DEFAULT_RECORDS_OUTPUT_PATH, Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH]
+    return [*raw, priority_path(root_dir), Path(root_dir) / DEFAULT_RECORDS_OUTPUT_PATH,
+            Path(root_dir) / DEFAULT_ADM2_OUTPUT_PATH, Path(root_dir) / DEFAULT_PRIORITY_OUTPUT_PATH]
 
 
 # --------------------------------------------------------------------------
@@ -2371,7 +2422,7 @@ SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
         list_fetched=_enforcement_list_fetched,
         check_outputs=_enforcement_check_outputs,
         fingerprint_paths=_enforcement_fingerprint_paths,
-        fetch_method="Manual placement (IBAMA snapshot)",
+        fetch_method="Manual (IBAMA) + download (Zenodo)",
         check_fetched=_enforcement_check_fetched,
     ),
     "nightlights": SourceAdapter(

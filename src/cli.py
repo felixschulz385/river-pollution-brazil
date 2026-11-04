@@ -33,7 +33,7 @@ SOURCE_REGISTRY = {
     "malaria": dict(package="src.data.sources.malaria", fetch=True, phases=None),
     "commodity_prices": dict(package="src.data.sources.commodity_prices", fetch=True, phases=None),
     "mining": dict(package="src.data.sources.mining", fetch=False, phases=None),
-    "enforcement": dict(package="src.data.sources.enforcement", fetch=False, phases=None),
+    "enforcement": dict(package="src.data.sources.enforcement", fetch=True, phases=None),
     "protected_areas": dict(package="src.data.sources.protected_areas", fetch=True, phases=None),
     "nightlights": dict(package="src.data.sources.nightlights", fetch=False, phases=None),
 }
