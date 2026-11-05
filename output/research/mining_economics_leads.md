@@ -136,8 +136,8 @@ relapse are counted?
 - Lead 2: the downstream-spread test, and fishing dependence for the residents' side.
 - A novelty check on malaria importation by miners.
 - Lead 3: displacement beyond 150 km (river distance, residence flows, the large
-  operations as events), and the cloud-cover instrument for fines, which needs INPE's
-  cloud data.
+  operations as events), and the cloud-cover instrument for fines (DETER's cloud masks
+  are in the pipeline for 2005–2016 only).
 
 ## The paper
 
@@ -447,7 +447,11 @@ while crews and dredges move.
         clearings from PRODES.
 
       TerraBrasilis does not publish DETER's cloud masks: its DETER workspaces carry
-      only the alerts. They have to be requested from INPE, or rebuilt from MODIS
+      only the alerts. The authors' replication package (openICPSR 132281) holds
+      INPE's monthly masks for May 2005 – December 2016, which the pipeline measures
+      per municipality (`cloud_cover`). Within that window, garimpo enforcement is
+      thin (8–71 seizures a year in 2008–16), so the instrument moves all fines.
+      After 2016 the masks have to be requested from INPE, or rebuilt from MODIS
       cloud masks in Earth Engine.
 - **Assunção, McMillan, Murphy & Souza-Rodrigues (2023, *ReStud*), "Optimal
   Environmental Targeting in the Amazon Rainforest"**, read.
@@ -889,13 +893,23 @@ elsewhere, where does it go, and does the health burden move with it?
     in these counts.
   - The Priority List and the monitored list by municipality and year, 2008–2022
     (`enforcement`, from Zenodo record 8412144).
+  - DETER's monthly cloud share per Legal Amazon municipality, 2005–2016
+    (`cloud_cover`, from the replication package of Assunção, Gandour & Rocha 2023).
+    It matches the authors' own panel closely. Thirteen months without a mask
+    (most of the 2005–07 wet seasons) count as fully clouded, as INPE advises.
+  - DETER-B alerts per municipality and month from August 2016 (`cloud_cover`),
+    including 8,866 mining alerts in 114 municipalities to October 2026. They are a
+    monthly garimpo measure that does not depend on SIVEP or on C11's 2020 step.
+    Detection varies with cloud and the satellite mix (CBERS-4, then Amazonia-1 from
+    2021), and alerts also guide IBAMA's targeting.
   - C11, SIVEP (yearly and monthly counts, and flows), the river network for travel
     distances.
 - **To add:**
   - operation dates and areas from official reporting, to group records into
     operations where the operation code is missing;
-  - DETER's monthly cloud masks, for the cloud-cover instrument: not published on
-    TerraBrasilis, so by request to INPE or rebuilt from MODIS cloud masks;
+  - DETER's monthly cloud masks after 2016, for the cloud-cover instrument over the
+    2019+ panel: not published on TerraBrasilis, so by request to INPE or rebuilt
+    from MODIS cloud masks;
   - the Priority Lists from 2023 (Portaria MMA 834/2023; GM/MMA 1.202/2024).
 
 **Threats.**
@@ -1050,8 +1064,12 @@ substitute sites of lead 3.
 4. **Lead 3, continued.**
    - Substitute sites beyond 150 km (river distance, residence flows), the large
      operations (Yanomami 2023, the Madeira dredges) as events, and the crew logit.
-   - The cloud-cover instrument for fines: DETER's cloud masks from INPE on request, or
-     monthly MODIS cloud cover by municipality from Earth Engine.
+   - The cloud-cover instrument for fines in 2006–2016, from `cloud_cover`: clouds
+     predict all IBAMA fines, with next year's garimpo against other malaria as the
+     outcome. After 2016: DETER's cloud masks from INPE on request, or monthly MODIS
+     cloud cover by municipality from Earth Engine.
+   - DETER-B mining alerts as a monthly garimpo outcome for
+     [E14](#e14-raids-and-displacement) and [E17](#e17-raid-intensity).
 5. **Lead 1, if it stays in.** Permit events (`ProcessoEvento`: rejections,
    cancellations, forfeitures) and the Monitor da Mineração layer (polygons, the MEND
    flag for ghost permits).
