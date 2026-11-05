@@ -1847,6 +1847,205 @@ def _enforcement_fingerprint_paths(root_dir) -> list[Path]:
 
 
 # --------------------------------------------------------------------------
+# cloud_cover
+# --------------------------------------------------------------------------
+
+def _cloud_cover_list_fetched(root_dir, force: bool = False) -> FetchListing:
+    from src.data.sources.cloud_cover.constants import alerts_path, replication_path
+
+    package, alerts = replication_path(root_dir), alerts_path(root_dir)
+    detail = ("openICPSR 132281 package present" if package.exists() else "No openICPSR 132281 package") + (
+        f"; DETER-B download {alerts.name}." if alerts else "; no DETER-B download (manual placement).")
+    return FetchListing(present=int(package.exists()) + int(alerts is not None), expected=2, detail=detail)
+
+
+def _unique_keys_check(frame, keys) -> CheckResult:
+    duplicates = int(frame.duplicated(keys).sum())
+    label = ", ".join(keys)
+    return CheckResult(
+        name=f"unique:{','.join(keys)}",
+        ok=duplicates == 0,
+        message=f"All ({label}) keys unique." if duplicates == 0 else f"{duplicates} duplicate keys.",
+    )
+
+
+def _complete_grid_check(frame, unit, periods) -> CheckResult:
+    """Every `unit` once in each combination of the `periods` columns present in the table."""
+    expected = frame[unit].nunique() * len(frame[periods].drop_duplicates())
+    return CheckResult(
+        name="complete_grid",
+        ok=len(frame) == expected,
+        message=f"Every municipality in every period ({len(frame)} rows)." if len(frame) == expected
+        else f"{len(frame)} rows, {expected} expected.",
+    )
+
+
+def _share_range_check(frame, columns) -> CheckResult:
+    values = frame[list(columns)]
+    outside = int(((values < 0) | (values > 1)).sum().sum())
+    return CheckResult(
+        name="shares_in_unit_interval",
+        ok=outside == 0,
+        message="Shares within [0, 1]." if outside == 0 else f"{outside} shares outside [0, 1].",
+    )
+
+
+def _cloud_month_checks(frame) -> list[CheckResult]:
+    """Keys unique, a complete municipality x month grid of 2005-2016, shares in [0, 1], imputed months whole and clouded."""
+    from src.data.sources.cloud_cover.constants import (
+        CLOUD_IMPUTED_COLUMN,
+        CLOUD_MONTH_COLUMNS,
+        CLOUD_SHARE_COLUMN,
+        FIRST_YEAR,
+        LAST_YEAR,
+        MONTH_COLUMN,
+        MUN_ID_COLUMN,
+        YEAR_COLUMN,
+    )
+
+    checks = [check_required_columns(frame, list(CLOUD_MONTH_COLUMNS)), _non_empty_check(frame)]
+    if not set(CLOUD_MONTH_COLUMNS) <= set(frame.columns) or frame.empty:
+        return checks
+    checks.append(_unique_keys_check(frame, [MUN_ID_COLUMN, YEAR_COLUMN, MONTH_COLUMN]))
+    checks.append(_complete_grid_check(frame, MUN_ID_COLUMN, [YEAR_COLUMN, MONTH_COLUMN]))
+    years = sorted(frame[YEAR_COLUMN].unique())
+    checks.append(CheckResult(
+        name="years",
+        ok=years == list(range(FIRST_YEAR, LAST_YEAR + 1)) and sorted(frame[MONTH_COLUMN].unique()) == list(range(1, 13)),
+        message=f"Months of {years[0]}-{years[-1]}.",
+    ))
+    checks.append(_share_range_check(frame, [CLOUD_SHARE_COLUMN]))
+    imputed = frame.groupby([YEAR_COLUMN, MONTH_COLUMN])[CLOUD_IMPUTED_COLUMN].agg(["any", "all"])
+    partial = int((imputed["any"] & ~imputed["all"]).sum())
+    unclouded = int((frame.loc[frame[CLOUD_IMPUTED_COLUMN], CLOUD_SHARE_COLUMN] != 1.0).sum())
+    checks.append(CheckResult(
+        name="imputed_months_whole_and_clouded",
+        ok=partial == 0 and unclouded == 0,
+        message=f"{int(imputed['all'].sum())} months without data, clouded everywhere." if partial == 0 and unclouded == 0
+        else f"{partial} months imputed for some municipalities only, {unclouded} imputed shares below 1.",
+    ))
+    return checks
+
+
+def _cloud_year_checks(frame) -> list[CheckResult]:
+    """Keys unique, a complete municipality x year grid, shares in [0, 1], the PRODES mean missing only in the first year."""
+    from src.data.sources.cloud_cover.constants import (
+        CLOUD_ADM2_COLUMNS,
+        CLOUD_PRODES_COLUMN,
+        CLOUD_SHARE_COLUMN,
+        MUN_ID_COLUMN,
+        YEAR_COLUMN,
+    )
+
+    checks = [check_required_columns(frame, list(CLOUD_ADM2_COLUMNS)), _non_empty_check(frame)]
+    if not set(CLOUD_ADM2_COLUMNS) <= set(frame.columns) or frame.empty:
+        return checks
+    checks.append(_unique_keys_check(frame, [MUN_ID_COLUMN, YEAR_COLUMN]))
+    checks.append(_complete_grid_check(frame, MUN_ID_COLUMN, [YEAR_COLUMN]))
+    checks.append(_share_range_check(frame, [CLOUD_SHARE_COLUMN, CLOUD_PRODES_COLUMN]))
+    first = frame[YEAR_COLUMN].min()
+    misplaced = int((frame[CLOUD_PRODES_COLUMN].isna() != (frame[YEAR_COLUMN] == first)).sum()) + int(
+        frame[CLOUD_SHARE_COLUMN].isna().sum())
+    checks.append(CheckResult(
+        name="missing_only_first_prodes_year",
+        ok=misplaced == 0,
+        message=f"PRODES mean missing only in {first}; calendar mean complete." if misplaced == 0
+        else f"{misplaced} misplaced missing values.",
+    ))
+    return checks
+
+
+def _alert_checks(frame, columns, periods) -> list[CheckResult]:
+    """Keys unique, a complete grid, counts and areas non-negative, deforestation and mining within all alerts."""
+    from src.data.sources.cloud_cover.constants import ALERT_GROUPS, ALERT_MEASURE_COLUMNS, MUN_ID_COLUMN, alert_columns
+
+    checks = [check_required_columns(frame, list(columns)), _non_empty_check(frame)]
+    if not set(columns) <= set(frame.columns) or frame.empty:
+        return checks
+    checks.append(_unique_keys_check(frame, [MUN_ID_COLUMN, *periods]))
+    checks.append(_complete_grid_check(frame, MUN_ID_COLUMN, periods))
+    negative = int((frame[list(ALERT_MEASURE_COLUMNS)] < 0).sum().sum())
+    missing = int(frame[list(ALERT_MEASURE_COLUMNS)].isna().sum().sum())
+    checks.append(CheckResult(
+        name="non_negative_complete",
+        ok=negative == 0 and missing == 0,
+        message="Counts and areas non-negative and complete." if negative == 0 and missing == 0
+        else f"{negative} negative and {missing} missing values.",
+    ))
+    exceeding = sorted(
+        narrow
+        for group in ALERT_GROUPS if group != "all"
+        for narrow, broad in zip(alert_columns(group), alert_columns("all"))
+        if (frame[narrow] > frame[broad] + 1e-9).any()
+    )
+    checks.append(CheckResult(
+        name="groups_within_all",
+        ok=not exceeding,
+        message="Deforestation and mining within all alerts." if not exceeding else f"Exceed all alerts: {exceeding}",
+    ))
+    return checks
+
+
+def _alert_month_checks(frame) -> list[CheckResult]:
+    from src.data.sources.cloud_cover.constants import ALERT_MONTH_COLUMNS, MONTH_COLUMN, YEAR_COLUMN
+
+    return _alert_checks(frame, ALERT_MONTH_COLUMNS, [YEAR_COLUMN, MONTH_COLUMN])
+
+
+def _alert_year_checks(frame) -> list[CheckResult]:
+    from src.data.sources.cloud_cover.constants import ALERT_ADM2_COLUMNS, YEAR_COLUMN
+
+    return _alert_checks(frame, ALERT_ADM2_COLUMNS, [YEAR_COLUMN])
+
+
+def _cloud_cover_check_outputs(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.cloud_cover.constants import (
+        DEFAULT_ALERT_ADM2_OUTPUT_PATH,
+        DEFAULT_ALERT_MONTH_OUTPUT_PATH,
+        DEFAULT_CLOUD_ADM2_OUTPUT_PATH,
+        DEFAULT_CLOUD_MONTH_OUTPUT_PATH,
+    )
+
+    root = Path(root_dir)
+    return [
+        _artifact_check("deter_clouds_adm2_month", root / DEFAULT_CLOUD_MONTH_OUTPUT_PATH, _cloud_month_checks),
+        _artifact_check("deter_clouds_adm2", root / DEFAULT_CLOUD_ADM2_OUTPUT_PATH, _cloud_year_checks),
+        _artifact_check("deter_alerts_adm2_month", root / DEFAULT_ALERT_MONTH_OUTPUT_PATH, _alert_month_checks),
+        _artifact_check("deter_alerts_adm2", root / DEFAULT_ALERT_ADM2_OUTPUT_PATH, _alert_year_checks),
+    ]
+
+
+def _cloud_cover_check_fetched(root_dir) -> list[OutputArtifactCheck]:
+    from src.data.sources.cloud_cover.constants import alerts_path, raw_dir, replication_path
+
+    package, alerts = replication_path(root_dir), alerts_path(root_dir)
+    return [
+        OutputArtifactCheck(label="openicpsr_132281", path=package, exists=True,
+                            checks=[check_file_nonempty(package, min_size_bytes=1 << 30)])
+        if package.exists() else _missing_artifact("openicpsr_132281", package),
+        OutputArtifactCheck(label="deter_b_alerts", path=alerts, exists=True,
+                            checks=[check_file_nonempty(alerts, min_size_bytes=10 << 20)])
+        if alerts else _missing_artifact("deter_b_alerts", raw_dir(root_dir) / "deter-amz-<DD>-<MM>-<YYYY>-*.zip"),
+    ]
+
+
+def _cloud_cover_fingerprint_paths(root_dir) -> list[Path]:
+    from src.data.sources.cloud_cover.constants import (
+        DEFAULT_ALERT_ADM2_OUTPUT_PATH,
+        DEFAULT_ALERT_MONTH_OUTPUT_PATH,
+        DEFAULT_CLOUD_ADM2_OUTPUT_PATH,
+        DEFAULT_CLOUD_MONTH_OUTPUT_PATH,
+        alerts_path,
+        replication_path,
+    )
+
+    alerts = alerts_path(root_dir)
+    return [replication_path(root_dir), *([alerts] if alerts else []),
+            *(Path(root_dir) / path for path in (DEFAULT_CLOUD_MONTH_OUTPUT_PATH, DEFAULT_CLOUD_ADM2_OUTPUT_PATH,
+                                                  DEFAULT_ALERT_MONTH_OUTPUT_PATH, DEFAULT_ALERT_ADM2_OUTPUT_PATH))]
+
+
+# --------------------------------------------------------------------------
 # nightlights
 # --------------------------------------------------------------------------
 
@@ -2424,6 +2623,14 @@ SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
         fingerprint_paths=_enforcement_fingerprint_paths,
         fetch_method="Manual (IBAMA) + download (Zenodo)",
         check_fetched=_enforcement_check_fetched,
+    ),
+    "cloud_cover": SourceAdapter(
+        name="cloud_cover",
+        list_fetched=_cloud_cover_list_fetched,
+        check_outputs=_cloud_cover_check_outputs,
+        fingerprint_paths=_cloud_cover_fingerprint_paths,
+        fetch_method="Manual (openICPSR 132281, DETER-B)",
+        check_fetched=_cloud_cover_check_fetched,
     ),
     "nightlights": SourceAdapter(
         name="nightlights",

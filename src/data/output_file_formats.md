@@ -721,6 +721,97 @@ Semantics:
   70 municipalities; GM/MMA 1.202/2024, 81) are not in the record.
 - `adm2_panel` joins both columns and fills 2008–2022 with 0.
 
+## Cloud Cover Outputs
+
+Produced by `src.data.sources.cloud_cover` from two files placed by hand in
+`data/cloud_cover/raw/`:
+
+- `132281-V1.zip`: the openICPSR replication package of Assunção, Gandour &
+  Rocha (2023, *AEJ: Applied*, "DETERring Deforestation in the Amazon"; data CC
+  BY 4.0, INPE's files CC BY-SA 3.0). The preprocess reads only
+  `data/raw2clean/land_cover/deter_inpe/input.zip`, INPE's monthly DETER cloud
+  shapefiles (`Nuvem`/`Nuvens`), May 2005 – December 2016, as the authors
+  downloaded them from `www1.dpi.inpe.br/obt/deter/dados/`. TerraBrasilis does
+  not publish the masks. The inner zip is copied to `$TMPDIR` for reading.
+- `deter-amz-<DD>-<MM>-<YYYY>-<hh_mm_ss>.zip`: TerraBrasilis's DETER-B alert
+  layer (`deter-amz`, shapefile, EPSG:4674), downloaded on the date in its
+  name; the newest is read.
+
+Both cover the Legal Amazon's municipalities: the eight full states and the
+Maranhão municipalities reaching west of 44°W (772 in GADM).
+
+### `data/cloud_cover/processed/deter_clouds_adm2_month.parquet`
+
+One row per (`mun_id`, `year`, `month`), every Legal Amazon municipality in
+every month 2005–2016.
+
+- `deter_cloud_share`: share of the municipality's area under DETER's cloud
+  mask that month (areas in EPSG:5880).
+- `deter_cloud_imputed`: True for the 13 months without a mask (January–April
+  and November–December 2005, February and November–December 2006,
+  January–March 2007, December 2009), which count as fully clouded
+  (`deter_cloud_share` = 1), as INPE advises and the authors do.
+
+Semantics:
+
+- A month with two layers (two image passes, most of 2006–2010, and August
+  2012) counts an area as clouded only where both are, as the authors do.
+  Polygons are repaired and merged within a layer, so overlaps count once.
+- Layers without a `.prj` get INPE's documented system for their month: SAD69
+  to 2010, SAD69 with Brazil's pre-1996 shift from 2011 to July 2015, SIRGAS
+  2000 from August 2015 (the authors give January 2016 the second).
+- Against the authors' own panel (`policy_la_deter_built_clouds_coverage_panel_df`,
+  their 2007 municipal map), shares in months with a mask correlate at 0.999
+  (mean absolute difference 0.003, 99th percentile 0.07), and the PRODES-year
+  means at 0.997 (0.004). The largest gaps are in a few small municipalities of
+  northeastern Pará and Maranhão, where the municipal maps differ. In months
+  without a mask the authors' shares average 0.985, as their mask is the Legal
+  Amazon's outline. Mojuí dos Campos (150475, created 2013) is not in theirs.
+
+### `data/cloud_cover/processed/deter_clouds_adm2.parquet`
+
+One row per (`mun_id`, `year`), Legal Amazon municipalities, 2005–2016.
+
+- `deter_cloud_share`: mean monthly share over the calendar year.
+- `deter_cloud_share_prodes`: mean monthly share over the PRODES year ending in
+  July of `year` (August of `year − 1` to July), the authors' yearly
+  instrument. Missing in 2005, which lacks August–December 2004.
+
+`adm2_panel` joins both columns; municipalities outside the Legal Amazon and
+years outside 2005–2016 are missing.
+
+### `data/cloud_cover/processed/deter_alerts_adm2_month.parquet`
+
+One row per (`mun_id`, `year`, `month`), every Legal Amazon municipality in
+every month from August 2016 to the month before the download. For each group
+`<g>`:
+
+- `deter_alerts_<g>`: alert polygons whose image date (`VIEW_DATE`) falls in
+  the month;
+- `deter_alert_area_km2_<g>`: their summed area within the municipality
+  (`AREAMUNKM`).
+
+The groups are `all` (every class), `deforestation` (`DESMATAMENTO_CR`,
+`DESMATAMENTO_VEG`) and `mining` (`MINERACAO`).
+
+Semantics:
+
+- TerraBrasilis splits alerts by municipality and gives each piece the
+  municipality's code (`GEOCODIBGE`), which sets `mun_id`. Codes outside the
+  Legal Amazon map would be dropped with a warning (none in the 2026-11-04
+  download).
+- Alerts of the latest month (`_curr` IDs) are not yet audited, and the last
+  months can still grow.
+- Detection depends on cloud and on the satellites: CBERS-4 and Resourcesat-2
+  to 2018, CBERS-4 alone in 2019, CBERS-4A from 2020 and Amazonia-1 from 2021
+  (the largest source from 2023).
+
+### `data/cloud_cover/processed/deter_alerts_adm2.parquet`
+
+The monthly table summed over calendar years with all twelve months (2017 to
+the last full year before the download), with the same columns less `month`.
+`adm2_panel` joins every column; outside the Legal Amazon they are missing.
+
 ## Night-Light Outputs
 
 Produced by `src.data.sources.nightlights` from the Earth Observation Group's

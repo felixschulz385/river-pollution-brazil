@@ -808,6 +808,29 @@ datasets:
         variables:
           - priority_list
           - priority_monitored
+      # INPE's DETER cloud masks, 2005-2016, from the replication package of
+      # Assunção, Gandour & Rocha (2023): the mean monthly share of the
+      # municipality under cloud over the calendar year and over the PRODES
+      # year ending in July (missing in 2005). Legal Amazon only.
+      - name: deter_clouds_adm2
+        path: data/cloud_cover/processed/deter_clouds_adm2.parquet
+        join_keys: [mun_id, year]
+        variables:
+          - deter_cloud_share
+          - deter_cloud_share_prodes
+      # DETER-B alerts per calendar year from 2017 (the first full year): counts
+      # and areas of all alerts, clear-cut deforestation and mining. Legal
+      # Amazon only, 0 in its municipalities without alerts.
+      - name: deter_alerts_adm2
+        path: data/cloud_cover/processed/deter_alerts_adm2.parquet
+        join_keys: [mun_id, year]
+        variables:
+          - deter_alerts_all
+          - deter_alert_area_km2_all
+          - deter_alerts_deforestation
+          - deter_alert_area_km2_deforestation
+          - deter_alerts_mining
+          - deter_alert_area_km2_mining
       # VIIRS night lights by municipality and year from 2012 (EOG VNL v2.1 to
       # 2021, v2.2 from 2022): pixels, lit pixels and summed radiance over the
       # municipality, inside barred areas in force by 2012, within 5 km of gold

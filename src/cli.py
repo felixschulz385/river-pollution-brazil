@@ -36,6 +36,7 @@ SOURCE_REGISTRY = {
     "enforcement": dict(package="src.data.sources.enforcement", fetch=True, phases=None),
     "protected_areas": dict(package="src.data.sources.protected_areas", fetch=True, phases=None),
     "nightlights": dict(package="src.data.sources.nightlights", fetch=False, phases=None),
+    "cloud_cover": dict(package="src.data.sources.cloud_cover", fetch=False, phases=None),
 }
 
 

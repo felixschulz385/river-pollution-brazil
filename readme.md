@@ -340,6 +340,26 @@ python3 -m src.cli data preprocess --source enforcement --product priority_list
 
 Output: `data/enforcement/processed/priority_list_adm2.parquet`.
 
+### Cloud Cover
+
+INPE's DETER cloud masks, as the share of each Legal Amazon municipality under
+cloud per month, 2005–2016: the instrument of Assunção, Gandour & Rocha (2023)
+for IBAMA's enforcement. TerraBrasilis does not publish the masks, so they are
+read from the authors' openICPSR replication package (project 132281, V1),
+placed by hand as `data/cloud_cover/raw/132281-V1.zip`. The same source counts
+TerraBrasilis's DETER-B alerts (from August 2016) per municipality and month,
+for all classes, clear-cut deforestation and mining, from the shapefile
+download placed as `data/cloud_cover/raw/deter-amz-<DD>-<MM>-<YYYY>-*.zip`.
+
+```bash
+python3 -m src.cli data preprocess --source cloud_cover --slurm
+python3 -m src.cli data preprocess --source cloud_cover --product deter_alerts --slurm
+```
+
+Outputs: `data/cloud_cover/processed/deter_clouds_adm2_month.parquet` and
+`deter_clouds_adm2.parquet` (calendar- and PRODES-year means), and
+`deter_alerts_adm2_month.parquet` and `deter_alerts_adm2.parquet` (calendar years).
+
 ### Night Lights
 
 EOG's annual VIIRS night-light composites (VNL v2.1 for 2012–2021, v2.2 from
