@@ -23,6 +23,70 @@ health.
 - **Headwater municipalities:** the 215 municipalities without upstream rivers stay in
   the sample.
 
+## Data notes
+
+- **Health columns in `adm2_panel`:**
+  - SIH hospitalizations: `hosp_*_count` all-cause, `hosp_icd_01` … `hosp_icd_99` by
+    ICD-10 chapter, and `hosp_<channel>` morbidity channels.
+  - SINASC births: `births`, `births_low_weight`, `births_preterm` and their `*_known`
+    denominators, from `health_births.parquet`.
+  - SIM deaths: `deaths_total` and `deaths_<age band>`.
+  - `panels.hospitalization_columns()`, `panels.birth_columns()` and
+    `panels.mortality_columns()` name the groups.
+- **Morbidity channels** are complete for 1998–2024 and continuous across the
+  2007/2008 SIH switch: 2010/2006 ratios are 0.87–1.35, except vector-borne at 2.3 (the
+  2010 dengue epidemic).
+  - Batches that were never fetched stay missing; zero-filling applies only within
+    fetched batches.
+  - Injuries in legacy 2000 list fewer causes than in other years.
+- **Births:** the SINASC tables sum to `Total` in every year.
+  - The 28–36 week bin splits into 28–31/32–36 from 2000 (partly from 1996), which the
+    preterm count handles.
+  - The preterm share breaks with the 2011 SINASC form (7% in 2010, 12.5% in 2012).
+  - 2025–26 are in the processed table but outside the panel window.
+- **Mortality:** SIM deaths by municipality of residence and age band, 1979–2024
+  (ICD-9 to 1995, ICD-10 from 1996).
+  - 98–99.9% of each year's national deaths fall in an identified municipality.
+  - Registered infant mortality falls from 21 (2000) to 12 (2015–2024) per 1,000 live
+    births.
+  - Municipality-years that SIM does not list stay missing. Before 2000 these are
+    mostly municipalities not yet created.
+- **Local exposure:** bucketed ADM2 sources with `scope: local` average the rings of the
+  trenches touching the municipality, with equal weights, into `local_lc_*`,
+  `local_alr_*` and `local_<climate>`.
+  - The local land-cover source is the panel's spine, so headwater municipalities stay
+    in with missing upstream exposure. `panels.load_adm2_panel()` adds `has_upstream`.
+  - Local and upstream land-cover changes correlate at 0.78–0.86 for forest, pasture and
+    agriculture, and the within-FE ALR terms at 0.20–0.52.
+  - Local and upstream climate correlate at 0.79–0.94 within municipality. Two coastal
+    municipalities have no local climate.
+- **Distance kernel:** land cover and climate use the sensor side's inverse-square-root
+  kernel (`DEFAULT_ADM2_DISTANCE_KERNEL`). The 200 km reach cap is applied in
+  `src/analysis/health.py`.
+- **Clustering:** `adm2_panel` carries `otto_basin_l2` … `otto_basin_l5`, the
+  municipality's dominant basin by summed drainage area of its intersecting trenches
+  (`river_network_adm2_otto_basins.parquet`).
+
+## Descriptive evidence
+
+From `01_descriptives.ipynb`, which motivates the model choices:
+
+- **Outcomes:** ICD-chapter rates have few zeros, except congenital (14%) and perinatal
+  (6%). Infant mortality is zero in 22% of municipality-years. Dispersion falls with
+  population, which argues for PPML with population as exposure.
+- **Identifying variation:** after municipality + state×year FE, about 0.4–2% of the
+  variance in land-cover shares is left (ALR terms: 0.6–1.9%). The long differences are
+  substantial: 55% of municipalities saw upstream pasture shift by more than
+  5 percentage points between 2000 and 2024.
+- **Placebo:** the raw binscatter suggests injury hospitalizations rise with upstream
+  pasture. Under the chosen specification the placebo is not significant (+0.024, SE
+  0.029 with the local block, vs +0.040 without it).
+- **Reach:** 63% of municipalities have no upstream rings beyond 200 km, so the 200 km
+  cap changes little (capped and full ALR correlate at 0.96–0.99 within municipality).
+- **Inference:** 27 states, effective number about 14. Errors are likely correlated
+  along rivers, which state clustering does not capture. Otto-3 basins (217, effective
+  about 39) do.
+
 ## Model
 
 One PPML regression per outcome (`pyfixest.fepois`):
@@ -45,7 +109,9 @@ count ~ upstream ALR(pasture, agriculture, unclassified farming, urban, other)  
 - **Outcomes:**
   - *Primary:* infectious/parasitic (ICD 01), digestive (ICD 11) and gastrointestinal
     hospitalizations; infant deaths; low birth weight.
-  - *Secondary:* 10 further outcomes.
+  - *Secondary (10):* genitourinary (ICD 14), perinatal (16) and congenital (17)
+    hospitalizations; the renal/urinary, skin-contact, leptospirosis, toxic-poisoning
+    and vector-borne morbidity channels; under-5 deaths; the preterm share (from 2012).
   - *Placebos:* injury/poisoning (ICD 19), injuries and mental-health hospitalizations.
 - **Inference:** clustered by Otto level-3 basin (217 basins), with a restricted
   wild-cluster score bootstrap for PPML (9,999 draws).

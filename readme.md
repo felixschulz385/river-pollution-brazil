@@ -1,99 +1,182 @@
 # Land Use Change, River Pollution and Health Externalities in Brazil
 
-This repository contains the code, intermediate data products, analysis outputs, and supporting material for a research project on deforestation, river pollution, and health externalities in Brazil. The project combines geospatial river-network construction, land-cover aggregation, water-quality data processing, health and population data preparation, and downstream econometric analysis.
-
-The main maintained workflow is organized around a repository-level Python CLI under `src/cli.py`.
+Research code for land use, river pollution and health in Brazil, and for the supply of
+illegal gold mining (*garimpo*) in the Amazon. The repository builds a river network for
+Brazil, processes land-cover, water-quality, health, malaria, mining, enforcement and
+related data along it, assembles them into panels, and estimates the analysis in
+notebooks.
 
 ![Drainage polygon processing](/output/figures/weights_example.png)
 
 ## Project Scope
 
-At a high level, the repository supports five linked tasks:
+The project has three linked arms:
 
-1. Build a river-network representation for Brazil, including drainage areas and upstream reachability relationships.
-2. Process land-cover data and aggregate upstream exposure measures by distance band.
-3. Fetch, clean, and assemble water-quality sensor observations.
-4. Fetch and preprocess health and population data.
-5. Estimate analysis models linking upstream land cover and water quality outcomes.
-
-The repository also contains exploratory notebooks, figures, and Quarto documents used during the project.
+| Arm | Question | Panel | Write-up |
+|---|---|---|---|
+| Pollution | Does upstream land-cover change degrade river water quality? | `data/assembly/sensor_panel.parquet` (station × sample date) | `output/notebooks/pollution/memo.md` |
+| Health | Does upstream land-cover change affect health in downstream municipalities? | `data/assembly/adm2_panel.parquet` (municipality × year) | `output/notebooks/health/memo.md` |
+| Garimpo | What drives garimpo supply, who responds, and which policy lever reduces it? | `adm2_panel` and monthly tables of the sources | `output/research/mining_economics_leads.md` |
 
 ## Repository Layout
 
-The main directories are:
+- `src/cli.py`: the command-line entry point.
+- `src/data/`: data pipelines.
+  - `sources/<source>/`: one package per data source (fetch, preprocess).
+  - `assembly/`: joins processed sources into the panels defined in
+    `setup/assembly_datasets.yaml`.
+  - `verification/`: checks of each source's outputs.
+  - `shared/`: paths, Slurm submission, upstream aggregation, web drivers.
+  - `output_file_formats.md`: the format of every processed table.
+- `src/analysis/`: estimators used by the notebooks, one module per topic, and the
+  sensor-data regression pipeline (`sensor_data/`).
+- `output/notebooks/`: analysis notebooks in `pollution/`, `health/` and `garimpo/`.
+- `output/research/`: the garimpo research design and evidence, and the literature
+  search.
+- `output/figures/`: figures used in this readme.
+- `scripts/`: the manual staging steps of the MapBiomas mining layer.
+- `setup/`: Slurm job specs and scripts, the panel definitions, a Docker image for
+  Selenium.
+- `tests/`: tests mirroring `src/`.
+- `data/`, `log/`, `output/analysis/`: data, job logs and analysis tables; not tracked.
 
-- `src/`: Python and R source code.
-- `src/data/`: data ingestion, preprocessing, and assembly workflows.
-- `src/analysis/`: analysis pipelines, especially the sensor-data regression workflow.
-- `src/assemble/`: standalone R assembly scripts.
-- `data/`: local data products used by the codebase.
-- `output/`: analysis outputs, figures, and documents.
-- `output/notebooks/`: analysis notebooks, split into `pollution/` (sensor panel), `health/` (ADM2 panel) and `garimpo/` (measurement of garimpo); see `output/notebooks/README.md`.
-- `output/research/`: research design notes, including `mining_economics_leads.md` (the garimpo-supply design and its evidence).
-- `setup/`: Docker and Slurm/HPC support files.
-- `tests/`: automated tests for the maintained Python components.
+The master's-thesis material (replication files in `submission/`, Quarto documents,
+presentations and thesis figures) is preserved at the `thesis-archive` tag.
 
-## Current Entry Points
+## Documentation
 
-The repository’s current top-level Python entry point is:
+| Document | Content |
+|---|---|
+| `readme.md` | Setup, the CLI, how to fetch and preprocess each source |
+| `src/data/output_file_formats.md` | Columns, keys and construction of every processed table |
+| `src/data/sources/climate/README.md` | The ERA5-Land variants and how to run them |
+| `setup/slurm_scripts/README.md` | Slurm submission and the remaining scripts |
+| `output/notebooks/README.md` | Index of the notebooks and the code behind them |
+| `output/notebooks/pollution/memo.md`, `output/notebooks/health/memo.md` | Model, results and caveats of each arm |
+| `output/research/mining_economics_leads.md` | The garimpo research design: summary, leads, work plan, Evidence E1–E17, data inventory |
+
+## Environment
+
+Python ≥ 3.11. `pyproject.toml` lists the dependencies; install the package in editable
+mode:
 
 ```bash
-python3 -m src.cli --help
+pip install -e .
 ```
 
-`data` exposes a verb-first API, with `--source` picking which pipeline
-source a verb applies to:
+The fetch pipelines that scrape web forms (DATASUS TabNet, the water-quality portal)
+need Chrome; `webdriver-manager` fetches the matching chromedriver on first use. A
+minimal Selenium image is in `setup/docker/Dockerfile`. The population fetch reads from
+Google BigQuery and needs Google Cloud credentials.
+
+## Running on the HPC (scicore)
+
+- **Compute nodes have no internet access.** Every `data fetch` and every scraper runs
+  on a node with internet: an interactive session with an HTTP proxy
+  (`HTTP_PROXY`/`HTTPS_PROXY`) or the transfer node. Fetches resume from their per-batch
+  manifests (`data/<source>/raw/<table>/manifest.jsonl`), so long fetches can run in
+  the background and be restarted.
+- **Everything heavy goes to Slurm:** add `--slurm` to `data preprocess` and
+  `data assemble` (resource specs in `setup/slurm_jobs.yaml`, keyed
+  `<source>.<verb>[.<phase>][.<product>]`), and execute notebooks with
+  `sbatch setup/slurm_scripts/execute_notebook.sh <notebook.ipynb>`.
+
+## Command-Line Interface
 
 ```bash
-python3 -m src.cli data summary                       # pipeline completeness overview
-python3 -m src.cli data verify  --source <source>      # verify one source's outputs
-python3 -m src.cli data fetch      --source <source> [source flags...]
-python3 -m src.cli data preprocess --source <source> [--phase extract|aggregate] [source flags...]
-python3 -m src.cli data assemble   --dataset <id>       # join preprocessed sources
+python -m src.cli --help
 ```
 
-`--source` and `--phase` must precede any source-specific flags. `--source`
-is one of `health`, `climate`, `sensor_data`, `land_cover`, `population`,
-`river_network`, `biomes`, `protected_areas`, `geology`, `malaria`, `commodity_prices`, `mining`, `enforcement`, `nightlights`. `--phase` only applies to sources whose
-preprocessing has two stages (`climate`, `land_cover`): `extract` (raw →
-per-source processed output) and `aggregate` (roll-up into sensor/ADM2
-upstream panels). `sensor_data` has a single preprocess step that does both
-in one call.
+`data` exposes a verb-first API, with `--source` picking which pipeline source a verb
+applies to:
 
-`fetch`/`preprocess`/`assemble` refuse to run if a prerequisite source
-hasn't been fetched/preprocessed yet (e.g. `land_cover preprocess` requires
-`river_network` to be preprocessed first), printing exactly which
-prerequisites are missing and how to fix them. Add `--chain` to
-auto-run whatever's missing first, in the correct order, or
-`--skip-dependency-check` to bypass the check entirely.
+```bash
+python -m src.cli data summary                       # pipeline completeness overview
+python -m src.cli data verify     --source <source>  # verify one source's outputs
+python -m src.cli data fetch      --source <source> [source flags...]
+python -m src.cli data preprocess --source <source> [--phase extract|aggregate] [source flags...]
+python -m src.cli data assemble   --dataset <id>     # join preprocessed sources
+```
 
-Add `--slurm` to `fetch`/`preprocess`/`assemble` to submit the same
-invocation as a Slurm job instead of running it locally — see
-`setup/slurm_scripts/README.md` and `setup/slurm_jobs.yaml`. Prerequisite
-steps run via `--chain` always run locally, even when combined with
-`--slurm`; only the originally requested step is submitted as a job.
+`--source` and `--phase` must precede any source-specific flags. `--source` is one of
+`gadm`, `health`, `climate`, `sensor_data`, `land_cover`, `population`,
+`river_network`, `biomes`, `geology`, `malaria`, `commodity_prices`, `mining`,
+`enforcement`, `protected_areas`, `nightlights`, `cloud_cover`. `--phase` only applies
+to sources whose preprocessing has two stages (`climate`, `land_cover`): `extract`
+(raw → per-source processed output) and `aggregate` (roll-up into sensor/ADM2 upstream
+panels).
 
-Each data submodule also owns its own standalone entry point, e.g.
-`python3 -m src.data.sources.climate --help`; `src/cli.py` delegates to these rather
-than duplicating their argument parsing.
+`fetch`/`preprocess`/`assemble` refuse to run if a prerequisite source hasn't been
+fetched/preprocessed yet (e.g. `land_cover preprocess` requires `river_network` to be
+preprocessed first), printing which prerequisites are missing and how to fix them. Add
+`--chain` to run whatever is missing first, in the correct order, or
+`--skip-dependency-check` to bypass the check.
+
+Add `--slurm` to `fetch`/`preprocess`/`assemble` to submit the same invocation as a
+Slurm job instead of running it locally (see `setup/slurm_scripts/README.md`).
+Prerequisite steps run via `--chain` always run locally; only the requested step is
+submitted as a job.
+
+Each source package also has its own entry point, e.g.
+`python -m src.data.sources.climate --help`; `src/cli.py` delegates to these.
+
+The panels are rebuilt with `data assemble --dataset adm2_panel` and
+`--dataset sensor_panel`, and checked with `data verify --source assembly`.
 
 ## Data Workflows
 
-### Health
+The formats of all outputs are in `src/data/output_file_formats.md`.
 
-Health data can be fetched and preprocessed through the CLI:
+### GADM and Biomes
+
+GADM 4.1 boundaries for Brazil are placed by hand as `data/gadm/raw/gadm41_BRA.gpkg`;
+the preprocess simplifies them into the geopackage that the biomes, river-network and
+sensor-data sources share. The biomes source downloads IBGE's biome polygons and maps
+each municipality and monitoring station to a biome.
 
 ```bash
-python3 -m src.cli data fetch      --source health --subtype all
-python3 -m src.cli data preprocess --source health --subtype all
+python -m src.cli data preprocess --source gadm
+python -m src.cli data fetch      --source biomes
+python -m src.cli data preprocess --source biomes
 ```
 
-Supported health subtypes are `mortality`, `hospitalization`, and `birth`.
-The fetch scrapes DATASUS TabNet with Selenium (headless Chrome), so it needs
-internet access.
+Outputs: `data/gadm/processed/gadm_simplified.gpkg`,
+`data/biomes/processed/biomes_adm2.parquet` and `biomes_sensor.parquet`.
 
-Derived health outputs, in `data/health/processed/` (formats in
-`src/data/output_file_formats.md`):
+### Health
+
+DATASUS data through TabNet: SIH hospitalizations, SINASC births and SIM deaths, by
+municipality and year.
+
+```bash
+python -m src.cli data fetch      --source health --subtype all
+python -m src.cli data preprocess --source health --subtype all
+```
+
+Supported subtypes are `hospitalization`, `birth` and `mortality`. The fetch scrapes
+TabNet with Selenium (add `--headless` to hide the browser) and needs internet: run it
+in an interactive session with the HTTP proxy, or on a local machine and copy
+`data/health/raw/` back with `rsync` (the raw folders carry the manifests). TabNet is
+slow (15–25 s per form page) and flaky:
+
+- A rerun skips every batch marked `completed` in its manifest and present on disk, and
+  retries only failed or missing ones. The SINASC and SIM fetchers read the available
+  years from the form, so a rerun adds new years.
+- `hospitalization` also plans the SIH totals and ICD-chapter requests; a newly complete
+  SIH year is fetched for all three.
+- If the fetch stops with `DATASUS morbidity-list form ... is missing N of M configured
+  values`, the form loaded only partially; rerun it.
+- A failed year listing falls back to a fixed year range and rewrites the manifest, so
+  check the manifests afterwards:
+
+```bash
+grep -c '"pending"\|"failed"' data/health/raw/SIH_*/manifest.jsonl   # expect 0
+grep -c '"completed"' data/health/raw/birth_outcome_*/manifest.jsonl data/health/raw/mortality_age_*/manifest.jsonl data/health/raw/infant_deaths_icd10/manifest.jsonl
+```
+
+Then preprocess, rebuild `adm2_panel` and re-run `output/notebooks/health/01_descriptives.ipynb`.
+
+Derived health outputs, in `data/health/processed/`:
 
 - `health_birth_weight.parquet`, `health_gestational_duration.parquet`,
   `health_congenital_anomaly.parquet`, `health_apgar_1.parquet`,
@@ -104,6 +187,23 @@ Derived health outputs, in `data/health/processed/` (formats in
 - `health_hospitalizations.parquet`, `health_hospitalizations_icd10_chapter.parquet`,
   `health_hospitalizations_selected_morbidity_list.parquet`: SIH hospitalizations
 
+### Climate
+
+ERA5-Land variables (temperature, precipitation, soil moisture, runoff, evaporation),
+fetched into a local Zarr store, extracted per river trench and aggregated upstream of
+each station and municipality. The fetch variants and their caveats are in
+`src/data/sources/climate/README.md`.
+
+```bash
+python -m src.cli data fetch      --source climate --subtype <subtype>
+python -m src.cli data preprocess --source climate --phase extract --slurm
+python -m src.cli data preprocess --source climate --phase aggregate --slurm
+```
+
+Outputs: `data/climate/processed/extract/climate_era5_land.parquet`,
+`data/climate/processed/aggregate/climate_sensor_upstream.parquet` and
+`climate_adm2_upstream_yearly.parquet`.
+
 ### Water Quality
 
 Water-quality processing is organized into a fetch stage (scrape raw data,
@@ -111,8 +211,8 @@ export it to parquet) and a single preprocess stage (clean the raw parquet,
 then join it with GADM/river_network into the final panel):
 
 ```bash
-python3 -m src.cli data fetch      --source sensor_data --root-dir .
-python3 -m src.cli data preprocess --source sensor_data --root-dir .
+python -m src.cli data fetch      --source sensor_data --root-dir .
+python -m src.cli data preprocess --source sensor_data --root-dir .
 ```
 
 `fetch` has no GADM/river_network dependency; `preprocess` does (it needs
@@ -127,22 +227,18 @@ The water-quality fetch pipeline supports additional options for browser executi
 - `--preprocess-workers`
 - `--preprocess-backend`
 
-The main assembled output currently tracked in the repository is:
-
-- `data/sensor_data/processed/aggregate/sensor_data.parquet`
-
-Transformation metadata used by the analysis pipeline is stored in:
-
-- `data/sensor_data/processed/extract/water_quality_cleaning/sensor_data_water_quality_transformations.json`
+Outputs: `data/sensor_data/processed/aggregate/sensor_data.parquet`, and the
+transformation metadata used by the sensor-data regression pipeline,
+`data/sensor_data/processed/extract/water_quality_cleaning/sensor_data_water_quality_transformations.json`.
 
 ### Land Cover
 
 Land-cover processing is also organized into fetch and preprocess (extract, then aggregate) stages:
 
 ```bash
-python3 -m src.cli data fetch      --source land_cover
-python3 -m src.cli data preprocess --source land_cover --phase extract --river-network-path data/river_network/processed
-python3 -m src.cli data preprocess --source land_cover --phase aggregate --river-network-path data/river_network/processed
+python -m src.cli data fetch      --source land_cover
+python -m src.cli data preprocess --source land_cover --phase extract --river-network-path data/river_network/processed
+python -m src.cli data preprocess --source land_cover --phase aggregate --river-network-path data/river_network/processed
 ```
 
 `fetch` downloads the MapBiomas Collection 10 annual coverage GeoTIFFs
@@ -156,7 +252,7 @@ The aggregate stage builds two output variants, and runs both by default
 - `sensor`: upstream land cover by monitoring station and year
 - `adm2`: upstream land cover by municipality-level administrative unit and year
 
-Current derived land-cover outputs include:
+Outputs:
 
 - `data/land_cover/processed/aggregate/land_cover_sensor_upstream.parquet`
 - `data/land_cover/processed/aggregate/land_cover_adm2_upstream.parquet`
@@ -166,8 +262,8 @@ Current derived land-cover outputs include:
 phases, ADM2 only:
 
 ```bash
-python3 -m src.cli data preprocess --source land_cover --phase extract   --product mining --slurm
-python3 -m src.cli data preprocess --source land_cover --phase aggregate --product mining --slurm
+python -m src.cli data preprocess --source land_cover --phase extract   --product mining --slurm
+python -m src.cli data preprocess --source land_cover --phase aggregate --product mining --slurm
 ```
 
 Its rasters are not downloadable directly. They are staged in two manual steps:
@@ -187,8 +283,8 @@ Outputs: `data/land_cover/processed/extract/land_cover_mining.parquet` and
 Population data is processed through:
 
 ```bash
-python3 -m src.cli data fetch      --source population --root-dir .
-python3 -m src.cli data preprocess --source population --root-dir .
+python -m src.cli data fetch      --source population --root-dir .
+python -m src.cli data preprocess --source population --root-dir .
 ```
 
 The population fetch step pulls raw data from BigQuery and therefore requires appropriate Google Cloud credentials and access to the configured billing project.
@@ -203,7 +299,7 @@ The river-network workflow has no automated fetch (raw hydrography/GADM files
 are placed manually) and is exposed through a single preprocess step:
 
 ```bash
-python3 -m src.cli data preprocess --source river_network \
+python -m src.cli data preprocess --source river_network \
   --output-dir data/river_network/processed
 ```
 
@@ -218,13 +314,11 @@ Optional arguments allow spatial subsetting and administrative annotation, inclu
 - `--gadm-layer`
 - `--gadm-adm2-layer`
 
-Current river-network outputs in `data/river_network/processed/` include:
+Outputs in `data/river_network/processed/` include:
 
 - `river_network_trenches.parquet`
 - `river_network_drainage_areas.parquet`
-- `river_network_otto_basins.parquet`: Otto Pfafstetter basin codes (levels 1–6) per trench. Rebuild it alone, without the full pipeline, with `python3 -m src.data.sources.river_network otto-basins`.
-
-The expected persisted formats are described in `src/data/output_file_formats.md`.
+- `river_network_otto_basins.parquet`: Otto Pfafstetter basin codes (levels 1–6) per trench. Rebuild it alone, without the full pipeline, with `python -m src.data.sources.river_network otto-basins`.
 
 ### Protected Areas
 
@@ -237,9 +331,9 @@ not answer from the HPC, so its `tis_poligonais_portarias` layer is downloaded
 by hand over a Brazilian VPN into `data/protected_areas/raw/funai_<date>/`.
 
 ```bash
-python3 -m src.cli data fetch      --source protected_areas
-python3 -m src.cli data preprocess --source protected_areas --slurm
-python3 -m src.cli data preprocess --source protected_areas --slurm --product trenches
+python -m src.cli data fetch      --source protected_areas
+python -m src.cli data preprocess --source protected_areas --slurm
+python -m src.cli data preprocess --source protected_areas --slurm --product trenches
 ```
 
 Outputs: `data/protected_areas/processed/protected_areas.parquet`,
@@ -257,9 +351,9 @@ protected areas that bar mining and were in force by 2012 (lead 1's IGD) are
 counted separately, from the `protected_areas` output:
 
 ```bash
-python3 -m src.cli data fetch      --source geology
-python3 -m src.cli data preprocess --source geology --slurm
-python3 -m src.cli data preprocess --source geology --product upstream --slurm
+python -m src.cli data fetch      --source geology
+python -m src.cli data preprocess --source geology --slurm
+python -m src.cli data preprocess --source geology --product upstream --slurm
 ```
 
 Outputs: `data/geology/processed/geology_adm2.parquet` and
@@ -274,8 +368,8 @@ residence and notification municipality, with garimpo cases split into local
 and incoming workers and infections abroad:
 
 ```bash
-python3 -m src.cli data fetch      --source malaria
-python3 -m src.cli data preprocess --source malaria
+python -m src.cli data fetch      --source malaria
+python -m src.cli data preprocess --source malaria
 ```
 
 Outputs: `data/malaria/processed/malaria_adm2.parquet`, cases by infection
@@ -288,8 +382,8 @@ The World Bank Pink Sheet gold price and the Banco Central do Brasil's
 BRL/USD rate (SGS series 1), both downloaded on every fetch:
 
 ```bash
-python3 -m src.cli data fetch      --source commodity_prices
-python3 -m src.cli data preprocess --source commodity_prices
+python -m src.cli data fetch      --source commodity_prices
+python -m src.cli data preprocess --source commodity_prices
 ```
 
 Outputs: monthly and annual gold prices in USD and BRL, with logs,
@@ -305,7 +399,7 @@ downloaded in a browser and placed in
 `data/mining/raw/anm_scm_microdados_<date>/`; the newest snapshot is used.
 
 ```bash
-python3 -m src.cli data preprocess --source mining --slurm
+python -m src.cli data preprocess --source mining --slurm
 ```
 
 Outputs: `data/mining/processed/mining_permits_adm2.parquet` (municipality × year) and
@@ -322,7 +416,7 @@ schema and checksum files, in `data/enforcement/raw/ibama_<YYYY-MM-DD>/`; the
 newest complete snapshot is used.
 
 ```bash
-python3 -m src.cli data preprocess --source enforcement --slurm
+python -m src.cli data preprocess --source enforcement --slurm
 ```
 
 Outputs: `data/enforcement/processed/ibama_records.parquet` and
@@ -334,8 +428,8 @@ those that left it, for 2008–2022 (Zenodo record 8412144, transcribed from the
 Diário Oficial), recoded to municipalities against GADM:
 
 ```bash
-python3 -m src.cli data fetch --source enforcement
-python3 -m src.cli data preprocess --source enforcement --product priority_list
+python -m src.cli data fetch --source enforcement
+python -m src.cli data preprocess --source enforcement --product priority_list
 ```
 
 Output: `data/enforcement/processed/priority_list_adm2.parquet`.
@@ -352,8 +446,8 @@ for all classes, clear-cut deforestation and mining, from the shapefile
 download placed as `data/cloud_cover/raw/deter-amz-<DD>-<MM>-<YYYY>-*.zip`.
 
 ```bash
-python3 -m src.cli data preprocess --source cloud_cover --slurm
-python3 -m src.cli data preprocess --source cloud_cover --product deter_alerts --slurm
+python -m src.cli data preprocess --source cloud_cover --slurm
+python -m src.cli data preprocess --source cloud_cover --product deter_alerts --slurm
 ```
 
 Outputs: `data/cloud_cover/processed/deter_clouds_adm2_month.parquet` and
@@ -370,145 +464,49 @@ downloaded by hand and placed, as served, in `data/nightlights/raw/`. The
 preprocess reads the `protected_areas` output and the `geology` occurrences.
 
 ```bash
-python3 -m src.cli data preprocess --source nightlights --slurm
+python -m src.cli data preprocess --source nightlights --slurm
 ```
 
 Output: `data/nightlights/processed/nightlights_adm2.parquet`.
 
-## Analysis Workflow
 
-The maintained analysis pipeline is the sensor-data workflow under `src/analysis/sensor_data/`.
+## Analysis
 
-At the repository level it can be invoked as:
-
-```bash
-python3 -m src.cli analysis sensor-data list-groups
-python3 -m src.cli analysis sensor-data run
-```
-
-Direct invocation is also possible:
+The analysis runs in notebooks under `output/notebooks/` (index in
+`output/notebooks/README.md`). Each notebook imports its estimator from
+`src/analysis/<topic>.py`, which is covered by tests in `tests/analysis/`. Notebooks
+are executed in place on Slurm:
 
 ```bash
-python3 -m src.analysis.cli --help
+sbatch setup/slurm_scripts/execute_notebook.sh output/notebooks/garimpo/06_raids.ipynb
 ```
 
-This second command currently requires the analysis dependencies to be installed locally; in this environment it fails if packages such as `pandas` are missing.
+Tables go to `output/analysis/<arm>/` (not tracked); the executed notebooks carry them.
 
-The analysis CLI supports:
-
-- pollutant-group selection by type or importance tier
-- explicit pollutant lists
-- land-cover subclass filtering
-- distance-step truncation
-- custom input and output paths
-
-Example:
-
-```bash
-python3 -m src.cli analysis sensor-data run \
-  --pollutant-group-kind type \
-  --pollutant-group core_physicochemical \
-  --land-cover-subclasses c41,c42 \
-  --max-distance-step 3
-```
-
-By default, analysis settings point to:
-
-- `data/sensor_data/processed/aggregate/sensor_data.parquet`
-- `data/land_cover/processed/aggregate/land_cover_sensor_upstream.parquet`
-- `data/sensor_data/processed/extract/water_quality_cleaning/sensor_data_water_quality_transformations.json`
-- `data/river_network/processed/river_network_trenches.parquet`
-- `output/analysis/sensor_data/`
-
-Each run writes a dedicated model subdirectory with:
-
-- `results.parquet`
-- `manifest.parquet`
-- `summary.json`
-- `settings.json`
-
-## Documents And Figures
-
-The repository includes project outputs beyond code:
-
-- figures under `output/figures/`
-- research notes under `output/research/`
-
-The master's-thesis material (replication files in `submission/`, Quarto documents,
-presentations and thesis figures) was removed from the tree; it is preserved at the
-`thesis-archive` tag.
+`src/analysis/sensor_data/` is a separate regression pipeline for the sensor panel,
+run through the CLI (`python -m src.cli analysis sensor-data list-groups`,
+`... analysis sensor-data run`), with pollutant-group selection, land-cover subclass
+filters and distance-step truncation. It writes one directory per model to
+`output/analysis/sensor_data/`. The pollution notebooks do not use it.
 
 ![Project workflow](/output/figures/data_workflow.png)
 
-## Environment And Dependencies
-
-This repository does not currently include a fully specified Python environment file such as `pyproject.toml`, `requirements.txt`, or `environment.yml`. Setup therefore has to be reconstructed from the codebase and, where relevant, the execution environment used during the project.
-
-The maintained Python code uses packages from the following areas:
-
-- data handling: `pandas`, `duckdb`, `numpy`
-- geospatial processing: `geopandas`, `shapely`, `rasterio`, `rioxarray`, `xarray`, `odc-geo`, `pysheds`, `geocube`
-- scientific computing: `scipy`, `sparse`, `joblib`
-- modeling: `pyfixest`, `statsmodels`, `scikit-learn`
-- browser automation and downloading: `selenium`, `webdriver-manager`, `requests`
-- testing: `pytest`
-
-There are also R scripts and notebooks that depend on an R environment not declared in a machine-readable way in this repository.
-
-For browser-based scraping, the repository includes a minimal Selenium Docker image at `setup/docker/Dockerfile`.
-
-## Suggested Local Setup
-
-A practical starting point for local work is:
-
-1. Create a Python virtual environment.
-2. Install core scientific, geospatial, testing, and CLI dependencies used by the maintained modules.
-3. Install any additional packages required by the specific workflow you intend to run.
-4. Ensure browser automation dependencies are available if you need the fetch pipelines.
-
-For example:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install pandas numpy scipy duckdb geopandas shapely rasterio rioxarray xarray odc-geo geocube pysheds sparse joblib pyfixest statsmodels scikit-learn selenium webdriver-manager requests pytest
-```
-
-This is a reasonable baseline, not a guaranteed complete environment for every script in the repository.
-
 ## Tests
 
-The repository contains automated tests for several of the maintained Python components, including:
-
-- land-cover preprocessing and assembly
-- population preprocessing
-- sensor-data analysis logic
-
-Run the test suite with:
-
 ```bash
-pytest
+python -m pytest -q -p no:cacheprovider
 ```
 
-The tests are concentrated in `tests/data/<submodule>/` (mirroring `src/data/`),
-plus `tests/analysis/sensor_data/` for the analysis layer.
-
-## Status And Conventions
-
-The codebase reflects a research project with multiple generations of tooling. In practice:
-
-- `src/cli.py`, `src/data/`, `src/analysis/`, and the corresponding tests are the best starting points for current work.
+Tests mirror `src/`: `tests/data/sources/<source>/`, `tests/data/{assembly,shared,verification}/`
+and `tests/analysis/`.
 
 ## Data Availability
 
-Some derived data products are present in the repository, but raw source data access varies by workflow. Depending on the module, data may need to be:
-
-- downloaded manually
-- fetched from web sources
-- pulled from Google BigQuery
-- regenerated from local or remote geospatial inputs
-
-If full replication data is not included, the relevant scripts and output schemas are still present and can be used to reconstruct the pipeline where source access permits.
+Data are not tracked. Depending on the source, raw data are fetched from web sources
+or APIs, read from Google BigQuery, or downloaded by hand where a portal blocks scripted
+or foreign access (the source sections above say which). Raw data under `data/*/raw/`
+are never modified; processed outputs are rebuilt only through `data preprocess` and
+`data assemble`.
 
 ## License
 

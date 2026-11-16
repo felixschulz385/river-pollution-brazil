@@ -43,6 +43,27 @@ y ~ ALR(pasture, agriculture, unclassified farming, urban, other)
 - **Inference:** clustered by Otto level-3 sub-basin (207 basins), with restricted
   wild-cluster bootstrap p-values (9,999 draws).
 
+## Clustering
+
+`river_network_otto_basins.parquet` maps every river trench to its Otto Pfafstetter
+basin at levels 1–6, from the attributes of the BHO drainage-area layer
+(`python -m src.data.sources.river_network otto-basins`, about 10 s). `sensor_panel`
+carries levels 2–5. Cluster counts over sensor samples:
+
+| Level | Basins | Effective (inverse HHI) | Largest share |
+|---|---|---|---|
+| `system_id` | 261 | 5.0 | 42% |
+| Otto 2 | 42 | 5.3 | 33% |
+| **Otto 3** (used) | 207 | 27.2 | 9% |
+| Otto 4 | 843 | 98.2 | 4% |
+| Otto 5 | 2,276 | 347.2 | 2% |
+
+Some outcome samples have only a few dozen basins, so every land-cover coefficient also
+gets a restricted wild-cluster bootstrap p-value (§5.7 of `02_analysis.ipynb`,
+`src/analysis/inference.py`). pyfixest's `wildboottest` builds a dense one-hot matrix of
+the ~5,700 station FE and is infeasible here. The module bootstraps the FE-demeaned
+design instead, which is equivalent by Frisch–Waugh–Lovell.
+
 ## Results
 
 Identification rests on about 1% of the land-cover variation, so most coefficients are
@@ -57,8 +78,10 @@ imprecise nulls. There are modestly more significant results than chance would g
   lead violation by about 5 pp (base rate 28%, p = 0.004) and of a cadmium violation by
   about 4 pp (base 23%, p = 0.012), consistent with erosion from degraded pasture.
   Pasture has no robust effect on the continuous core outcomes.
-- **Mining** (separate arm: 1,205 stations with mining within 50 km upstream, 158 of
-  which switch).
+- **Mining** (separate arm, §6 of `02_analysis.ipynb`: 1,205 stations with mining
+  within 50 km upstream, 158 of which switch; mining presence and the mined share of the
+  50 km reach on top of the main model). It is out of the main model because 56% of
+  station-years have no mining upstream and only 2.6% of stations switch.
   - *Lead:* mining appearing upstream raises lead violations by about 4 pp (p = 0.045).
   - *Mercury:* no robust effect. The +14 pp estimate before the unit-error rule
     (p = 0.004) does not survive removing suspected µg/L entries: +5.7 pp, SE 4.4,

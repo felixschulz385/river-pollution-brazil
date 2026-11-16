@@ -1,18 +1,19 @@
 # Analysis notebooks
 
-Upstream land-cover change → river pollution → health, estimated in two linked arms:
+Three arms, each with its write-up; results and status are recorded there, not here.
 
-| Arm | Question | Panel (index) | Exposure |
+| Arm | Question | Panel (index) | Write-up |
 |---|---|---|---|
-| `pollution/` | Does upstream land-cover change degrade water quality? | `data/assembly/sensor_panel.parquet` (`station_code`, `datetime`) | land cover in 25 km rings upstream of the station |
-| `health/` | Does upstream land-cover change affect health downstream? | `data/assembly/adm2_panel.parquet` (`mun_id`, `year`) | land cover in 25 km rings upstream of the municipality |
+| `pollution/` | Does upstream land-cover change degrade water quality? | `data/assembly/sensor_panel.parquet` (`station_code`, `datetime`) | [`pollution/memo.md`](pollution/memo.md) |
+| `health/` | Does upstream land-cover change affect health downstream? | `data/assembly/adm2_panel.parquet` (`mun_id`, `year`) | [`health/memo.md`](health/memo.md) |
+| `garimpo/` | What drives garimpo supply, who responds, and which lever reduces it? | `adm2_panel` and monthly source tables | [`mining_economics_leads.md`](../research/mining_economics_leads.md) (Summary, Evidence) |
 
-Each arm has a one-page memo with the model and results:
-[`pollution/memo.md`](pollution/memo.md), [`health/memo.md`](health/memo.md).
+In the pollution and health arms, land cover enters in 25 km rings upstream of the
+station or municipality.
 
 ## Workflow
 
-Each arm has the same two steps:
+The pollution and health arms have the same two steps:
 
 1. **`01_descriptives.ipynb`**: the descriptive evidence needed to *choose* the model
    (sample, outcomes, transforms, FE, exposure definition, kernel, controls, clustering).
@@ -75,7 +76,7 @@ Other notebooks:
   municipalities and the others within 150 km, with leads, lags and a triple difference
   against non-garimpo malaria (Evidence E17; `src/analysis/garimpo_intensity.py`).
 - `health/upstream_mining_municipality_map.ipynb`: municipality upstream-deforestation
-  map (moved from `src/analysis/notebooks/`; its `land_cover.feather` input is stale).
+  map (its `land_cover.feather` input is stale).
 - `pollution/maps.ipynb`: upstream drainage-area maps for four example sensors
   (mining-, pasture-, urban-dominated and low-disturbance), traced from each sensor's trench.
 
@@ -93,117 +94,13 @@ Other notebooks:
   controls, FE keys). `build_health_panel()` returns the estimation frame.
 - `src/analysis/inference.py`: wild-cluster bootstrap for high-dimensional FE models
   (OLS), and a wild-cluster score bootstrap for PPML fits.
-- `src/analysis/garimpo_gold.py`, `src/analysis/moreno_louzada.py`: the estimators of
-  `health/03` and `health/04`; the latter adds the price-exposure variance of
-  Moreno-Louzada, Figueira and Picchetti and randomization inference over random-walk
-  price paths.
-- `src/analysis/garimpo_supply.py`: the estimator of `garimpo/02`, reusing the
-  Moreno-Louzada helpers (randomization with control terms, e.g. deposit trends).
-- `src/analysis/garimpo_laundering.py`: the estimator of `garimpo/03`, with a permutation
-  of the exposure across municipalities that rebuilds every exposure term.
+- `src/analysis/moreno_louzada.py`: the estimator of `health/04`, with the
+  price-exposure variance of Moreno-Louzada, Figueira and Picchetti and randomization
+  inference over random-walk price paths. The garimpo modules reuse its estimation
+  helpers, the Legal Amazon sample and its FE and clustering defaults.
 - `src/analysis/descriptives.py`: FE demeaning (pyfixest), variation tables, distribution
   tables, binned scatters, effective cluster counts.
+- Each other notebook's estimator is named in its entry above.
 
-The maintained CLI regression pipeline (`python -m src.cli analysis sensor-data`) lives
-in `src/analysis/sensor_data/` and is separate from these notebooks.
-
-## Status (as of 2026-10-30)
-
-**Pollution: active.** The model setup is decided (§11 of `pollution/01_descriptives.ipynb`)
-and implemented in `pollution/02_analysis.ipynb`, with standard errors clustered on Otto
-level-3 sub-basins (below). Coefficients are exported to
-`output/analysis/pollution/coefficients.csv`.
-
-**Health: estimated.** `health/02_analysis` implements the decisions of
-`health/01_descriptives` §9 (`src/analysis/health.py`): PPML with exposure offsets,
-municipality + state×year FE, upstream land cover capped at 200 km next to the local
-block, Otto-3 clustering with a wild-cluster score bootstrap. Upstream land-cover change
-has no detectable effect on hospitalizations, infant deaths or low birth weight, and no
-effect differs from the injury placebo. The mining arm (§9) finds no pooled effect but a
-suggestive rise in infant deaths (about +23%) where mining appears upstream in the
-Amazon, which is not gold mining. Neither the upstream garimpo-gold share (`health/03`)
-nor Moreno-Louzada's gold price × upstream deposits design (`health/04`) gives a credible
-health effect: both fail the injury placebo. Coefficients are exported to
-`output/analysis/health/`; see [`health/README.md`](health/README.md).
-
-**Garimpo: initial evidence for every lead.** Results are recorded in
-`output/research/mining_economics_leads.md` (Summary and Evidence E3–E16).
-- `garimpo/01_measurement`: C11, SIVEP-Malária and the SGB geology as measures of
-  garimpo.
-- `garimpo/02_price_supply`: garimpo in gold-geology municipalities does not follow the
-  gold price. C11 garimpo grows on a trend, and garimpo cases break upward in 2019, mostly
-  in Roraima.
-- `garimpo/03_laundering`: where gold lies inside protected areas, gold PLG requests are
-  higher after the 2013 good-faith rule and lower after its 2023 suspension by year.
-  - By quarter they do not move when the rule starts (the best-fitting break is 2019Q3).
-  - C11 garimpo and garimpo cases follow neither date.
-- `garimpo/04_shift_2019`: the 2019 case break in IGD municipalities is mostly the
-  Roraima rush. Across the Legal Amazon, garimpo cases rose from 2019 where IBAMA had been
-  present and its fines fell. This survives the deforestation-frontier and Priority List
-  checks and holds through 2025.
-- `garimpo/05_nightlights`: VIIRS annual composites do not see garimpo.
-- `garimpo/06_raids`: a single raid (2019 to April 2025) neither reduces garimpo malaria
-  measurably within a year nor moves it to bordering municipalities, and neighbours with
-  garimpo are not deterred.
-- `garimpo/07_groups`: drought and upstream garimpo do not move local workers more than
-  incoming ones. Incoming workers gain on local ones in deposit municipalities as the
-  price rises, which cannot be told from a trend.
-- `garimpo/08_demarcation`: declaration and homologation do not move garimpo inside
-  Indigenous lands. Garimpo sits in a few large, long-regularised lands and surges after
-  2019.
-- `garimpo/09_raid_intensity`: raids follow rising garimpo, and neither a year of raiding
-  nor the sustained campaigns from 2023 lower garimpo malaria at the site, next door or
-  within 150 km.
-
-## Sub-basins (Otto Pfafstetter)
-
-`river_network_otto_basins.parquet` (in `data/river_network/processed/`) maps every
-`trench_id` to its Otto basin code at levels 1–6 (`otto_basin_l1` … `otto_basin_l6`,
-string codes). The codes come from the attributes of the BHO drainage-area layer, so the
-table needs no geometry and no rerun of the network/matrix pipeline:
-
-```bash
-python -m src.data.sources.river_network otto-basins   # ~10 s; also written by a full preprocess
-```
-
-`sensor_panel` carries `otto_basin_l2` … `otto_basin_l5` via the `otto_basins` assembly
-source, and the pollution analysis clusters on `otto_basin_l3`. Cluster counts over
-sensor samples:
-
-| Level | Basins | Effective (inverse HHI) | Largest share |
-|---|---|---|---|
-| `system_id` | 261 | 5.0 | 42% |
-| Otto 2 | 42 | 5.3 | 33% |
-| **Otto 3** (used) | 207 | 27.2 | 9% |
-| Otto 4 | 843 | 98.2 | 4% |
-| Otto 5 | 2,276 | 347.2 | 2% |
-
-Because some outcome samples have only a few dozen basins, §5.7 of
-`pollution/02_analysis.ipynb` adds restricted wild-cluster bootstrap p-values (9,999
-reps, Otto 3) for every land-cover coefficient (`src/analysis/inference.py`). pyfixest's
-built-in `wildboottest` is infeasible here: it builds a dense one-hot matrix of all
-~5,700 station FE. The module therefore bootstraps the FE-demeaned design, which is
-equivalent by Frisch–Waugh–Lovell. Results are in
-`output/analysis/pollution/wild_cluster_bootstrap.csv`.
-
-`adm2_panel` carries the same levels for each municipality's dominant basin (largest
-summed drainage area of its intersecting trenches, from
-`river_network_adm2_otto_basins.parquet`).
-
-## Mining arm
-
-Mining is not in the baseline: 56% of station-years have no mining upstream, and only
-2.6% of stations switch. It is estimated separately in §6 of
-`pollution/02_analysis.ipynb`:
-- **Sample:** the 1,205 stations with any mining within 50 km upstream (158 switch
-  presence).
-- **Regressors:** mining presence (`mining_present_50`) and the mined share of the
-  50 km reach (`mining_pp_50`), on top of the baseline specification.
-- **Outcomes:** turbidity, TSS, conductivity, pH, DO and the CONAMA metal exceedances.
-- **Inference:** wild-cluster bootstrap, since the metal samples have only 12–20
-  Otto-3 basins.
-
-**Headline result:** mining appearing upstream raises mercury violations by about
-14 pp (bootstrap p = 0.004). Adding 200 km `alr_mining` to the full-sample baseline
-moves the other land-cover coefficients by at most 0.33 SE, so leaving mining out of the
-baseline does not bias them.
+The CLI regression pipeline (`python -m src.cli analysis sensor-data`) lives in
+`src/analysis/sensor_data/` and is separate from these notebooks.
