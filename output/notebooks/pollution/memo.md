@@ -60,7 +60,7 @@ carries levels 2–5. Cluster counts over sensor samples:
 
 Some outcome samples have only a few dozen basins, so every land-cover coefficient also
 gets a restricted wild-cluster bootstrap p-value (§5.7 of `02_analysis.ipynb`,
-`src/analysis/inference.py`). pyfixest's `wildboottest` builds a dense one-hot matrix of
+`src/analysis/core/inference.py`). pyfixest's `wildboottest` builds a dense one-hot matrix of
 the ~5,700 station FE and is infeasible here. The module bootstraps the FE-demeaned
 design instead, which is equivalent by Frisch–Waugh–Lovell.
 
@@ -113,6 +113,6 @@ imprecise nulls. There are modestly more significant results than chance would g
 
 ## Files
 
-- Model setup: `src/analysis/pollution.py`
-- Inference: `src/analysis/inference.py`
+- Model setup: `src/analysis/pollution/model.py`
+- Inference: `src/analysis/core/inference.py`
 - Coefficients and bootstrap: `output/analysis/pollution/`

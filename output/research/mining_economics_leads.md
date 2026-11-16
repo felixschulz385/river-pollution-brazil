@@ -581,7 +581,7 @@ X_mt = β_13·(IGD_m × post-2013_t) + β_23·(IGD_m × post-2023_t)
   - CFEM royalties cannot measure declared sales by permit ([E7](#e7-cfem-royalties-by-permit)).
 - **Inference.** Otto-3 clusters with the wild-cluster bootstrap. For the price term,
   add the price-exposure SEs of Moreno-Louzada, Figueira & Picchetti (2025) and
-  randomization over random-walk price paths (`src/analysis/moreno_louzada.py`).
+  randomization over random-walk price paths (`src/analysis/health/moreno_louzada.py`).
   - The price-exposure SE treats yearly prices as independent and comes out close to
     clustering by year.
   - With a persistent price, that understates the uncertainty, and the random-walk
@@ -1088,7 +1088,7 @@ the code exists only outside the repo.
 
 ### E1. Pollution arm and mercury data
 
-*Code: `src/analysis/pollution.py`, `output/notebooks/pollution/` (memo).*
+*Code: `src/analysis/pollution/model.py`, `output/notebooks/pollution/` (memo).*
 
 - **Results.** Pasture raises lead (+5 pp) and cadmium (+4 pp) violations, and
   agriculture raises COD (+4% per SD). Upstream mining raises lead violations by about
@@ -1111,8 +1111,8 @@ the code exists only outside the repo.
 
 ### E2. The Amazon mining-presence result
 
-*Code: `src/analysis/health.py`, `output/notebooks/health/02_analysis.ipynb`; the gold
-and 2020 diagnostics in `src/analysis/garimpo_gold.py` and
+*Code: `src/analysis/health/model.py`, `output/notebooks/health/02_analysis.ipynb`; the gold
+and 2020 diagnostics in `src/analysis/health/garimpo_gold.py` and
 `output/notebooks/health/03_garimpo_gold.ipynb`.*
 
 - **Result.** Where mining (C10, class 30) appears within 50 km upstream, Amazon infant
@@ -1173,7 +1173,7 @@ checks in `output/notebooks/garimpo/01_measurement.ipynb`.*
 
 ### E4. Gate: upstream garimpo-gold share and health
 
-*Code: `src/analysis/garimpo_gold.py`, `output/notebooks/health/03_garimpo_gold.ipynb`;
+*Code: `src/analysis/health/garimpo_gold.py`, `output/notebooks/health/03_garimpo_gold.ipynb`;
 tables in `output/analysis/health/garimpo_gold/`.* Municipality and state×year FE,
 clustered by Otto-3 basin (38–57 clusters), wild-cluster bootstrap. Controls: other
 upstream mining, the local C10 mining terms, the health arm's controls. Sample:
@@ -1332,7 +1332,7 @@ from other sources.
 
 ### E9. Moreno-Louzada's design
 
-*Code: `src/analysis/moreno_louzada.py`, `output/notebooks/health/04_moreno_louzada.ipynb`;
+*Code: `src/analysis/health/moreno_louzada.py`, `output/notebooks/health/04_moreno_louzada.ipynb`;
 tables in `output/analysis/health/moreno_louzada/`.*
 
 - **Design.**
@@ -1400,7 +1400,7 @@ tables in `output/analysis/health/moreno_louzada/`.*
 
 ### E10. Garimpo supply and the gold price
 
-*Code: `src/analysis/garimpo_supply.py`, `output/notebooks/garimpo/02_price_supply.ipynb`;
+*Code: `src/analysis/garimpo/supply.py`, `output/notebooks/garimpo/02_price_supply.ipynb`;
 tables in `output/analysis/garimpo/price_supply/`.*
 
 - **Design.** Lead 1's γ term on its own.
@@ -1446,7 +1446,7 @@ tables in `output/analysis/garimpo/price_supply/`.*
 
 ### E11. Garimpo and the laundering rules
 
-*Code: `src/analysis/garimpo_laundering.py`, `output/notebooks/garimpo/03_laundering.ipynb`;
+*Code: `src/analysis/garimpo/laundering.py`, `output/notebooks/garimpo/03_laundering.ipynb`;
 tables in `output/analysis/garimpo/laundering/`.*
 
 - **Design.** Lead 1's main equation.
@@ -1536,7 +1536,7 @@ tables in `output/analysis/garimpo/laundering/`.*
 
 ### E12. The 2019–20 shift: Roraima and the enforcement collapse
 
-*Code: `src/analysis/garimpo_shift.py`, `output/notebooks/garimpo/04_shift_2019.ipynb`;
+*Code: `src/analysis/garimpo/shift.py`, `output/notebooks/garimpo/04_shift_2019.ipynb`;
 tables in `output/analysis/garimpo/shift_2019/`.*
 
 - **Question.** Garimpo cases, gold PLG requests and non-garimpo malaria all break
@@ -1662,7 +1662,7 @@ tables in `output/analysis/garimpo/shift_2019/`.*
 
 ### E13. Night lights as a garimpo activity measure
 
-*Code: `src/analysis/garimpo_nightlights.py`, `output/notebooks/garimpo/05_nightlights.ipynb`;
+*Code: `src/analysis/garimpo/nightlights.py`, `output/notebooks/garimpo/05_nightlights.ipynb`;
 tables in `output/analysis/garimpo/nightlights/`.*
 
 - **Question.** C11 stops in 2019 and SIVEP counts infections. Do VIIRS night lights
@@ -1714,7 +1714,7 @@ tables in `output/analysis/garimpo/nightlights/`.*
 
 ### E14. Raids and displacement
 
-*Code: `src/analysis/garimpo_raids.py`, `output/notebooks/garimpo/06_raids.ipynb`; tables
+*Code: `src/analysis/garimpo/raids.py`, `output/notebooks/garimpo/06_raids.ipynb`; tables
 in `output/analysis/garimpo/raids/`. Monthly cases: `malaria_adm2_monthly.parquet`.*
 
 - **Question.** Do IBAMA's garimpo raids reduce garimpo where they happen, and does it
@@ -1767,7 +1767,7 @@ in `output/analysis/garimpo/raids/`. Monthly cases: `malaria_adm2_monthly.parque
 
 ### E15. Who responds to what: local and incoming workers
 
-*Code: `src/analysis/garimpo_groups.py`, `output/notebooks/garimpo/07_groups.ipynb`;
+*Code: `src/analysis/garimpo/groups.py`, `output/notebooks/garimpo/07_groups.ipynb`;
 tables in `output/analysis/garimpo/groups/`.*
 
 - **Question.** Lead 2's prediction 5: do outside crews respond to the returns to a site
@@ -1817,7 +1817,7 @@ tables in `output/analysis/garimpo/groups/`.*
 
 ### E16. Demarcation and garimpo inside Indigenous lands
 
-*Code: `src/analysis/garimpo_demarcation.py`, `output/notebooks/garimpo/08_demarcation.ipynb`;
+*Code: `src/analysis/garimpo/demarcation.py`, `output/notebooks/garimpo/08_demarcation.ipynb`;
 tables in `output/analysis/garimpo/demarcation/`. Overlaps:
 `protected_areas_trenches.parquet`.*
 
@@ -1860,7 +1860,7 @@ tables in `output/analysis/garimpo/demarcation/`. Overlaps:
 
 ### E17. Raid intensity
 
-*Code: `src/analysis/garimpo_intensity.py`, `output/notebooks/garimpo/09_raid_intensity.ipynb`;
+*Code: `src/analysis/garimpo/intensity.py`, `output/notebooks/garimpo/09_raid_intensity.ipynb`;
 tables in `output/analysis/garimpo/raid_intensity/`.*
 
 - **Question.** E14's episodes need 12 raid-free months, so the campaigns of 2023–25, which

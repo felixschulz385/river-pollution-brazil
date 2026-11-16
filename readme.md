@@ -28,7 +28,8 @@ The project has three linked arms:
   - `verification/`: checks of each source's outputs.
   - `shared/`: paths, Slurm submission, upstream aggregation, web drivers.
   - `output_file_formats.md`: the format of every processed table.
-- `src/analysis/`: estimators used by the notebooks, one module per topic.
+- `src/analysis/`: estimators used by the notebooks, in one package per arm
+  (`pollution/`, `health/`, `garimpo/`) and `core/` for what the arms share.
 - `output/notebooks/`: analysis notebooks in `pollution/`, `health/` and `garimpo/`.
 - `output/research/`: the garimpo research design and evidence, and the literature
   search.
@@ -472,9 +473,13 @@ Output: `data/nightlights/processed/nightlights_adm2.parquet`.
 ## Analysis
 
 The analysis runs in notebooks under `output/notebooks/` (index in
-`output/notebooks/README.md`). Each notebook imports its estimator from
-`src/analysis/<topic>.py`, which is covered by tests in `tests/analysis/`. Notebooks
-are executed in place on Slurm:
+`output/notebooks/README.md`). The three arms, `pollution`, `health` and `garimpo`,
+are named by their outcome, and the same names organise the code
+(`src/analysis/<arm>/`), the tests (`tests/analysis/<arm>/`), the notebooks
+(`output/notebooks/<arm>/`) and the tables (`output/analysis/<arm>/`). A design belongs
+to the arm of its outcome: the health effects of gold mining are in `health`.
+`src/analysis/core/` holds what the arms share. Notebooks are executed in place on
+Slurm:
 
 ```bash
 sbatch setup/slurm_scripts/execute_notebook.sh output/notebooks/garimpo/06_raids.ipynb
@@ -495,7 +500,7 @@ python -m pytest -q -p no:cacheprovider
 ```
 
 Tests mirror `src/`: `tests/data/sources/<source>/`, `tests/data/{assembly,shared,verification}/`
-and `tests/analysis/`.
+and `tests/analysis/<arm>/`.
 
 ## Data Availability
 

@@ -620,7 +620,7 @@ month (timestamp).
   give the yearly table's `plg_requests_<g>`.
 
 Not joined into `adm2_panel`; the quarterly timing analysis of lead 1 reads it
-directly (`src/analysis/garimpo_laundering.py`).
+directly (`src/analysis/garimpo/laundering.py`).
 
 ## Enforcement Outputs
 

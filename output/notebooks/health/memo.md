@@ -62,7 +62,7 @@ health.
     municipalities have no local climate.
 - **Distance kernel:** land cover and climate use the sensor side's inverse-square-root
   kernel (`DEFAULT_ADM2_DISTANCE_KERNEL`). The 200 km reach cap is applied in
-  `src/analysis/health.py`.
+  `src/analysis/health/model.py`.
 - **Clustering:** `adm2_panel` carries `otto_basin_l2` … `otto_basin_l5`, the
   municipality's dominant basin by summed drainage area of its intersecting trenches
   (`river_network_adm2_otto_basins.parquet`).
@@ -219,6 +219,6 @@ shows a credible downstream health effect. Details and code locations are in
 
 ## Files
 
-- Model setup: `src/analysis/health.py`
-- Inference: `src/analysis/inference.py` (`poisson_score_bootstrap`)
+- Model setup: `src/analysis/health/model.py`
+- Inference: `src/analysis/core/inference.py` (`poisson_score_bootstrap`)
 - Coefficients and bootstrap: `output/analysis/health/`
