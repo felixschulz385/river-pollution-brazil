@@ -25,13 +25,12 @@ from pathlib import Path
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-import pyfixest as pf
 
-from src.analysis.health import moreno_louzada as M
-from src.data.sources.biomes.preprocess import _load_adm2_boundaries
+from src.analysis.core.estimation import estimate, stacked_event_study
+from src.analysis.core.geography import legal_amazon, municipality_boundaries
+from src.analysis.core.panels import PROJECT_ROOT
 from src.data.sources.geology.constants import gpkg_path as geology_gpkg_path
 from src.data.sources.geology.preprocess import load_gold_occurrences
-from src.data.sources.land_cover.constants import derive_mun_id_from_adm2_id
 from src.data.sources.protected_areas.constants import DEFAULT_TRENCHES_OUTPUT_PATH, INDIGENOUS
 from src.data.sources.protected_areas.preprocess import load_protected_areas
 
@@ -88,7 +87,7 @@ def build_panel(land_years, lands, years=YEARS, municipalities=None):
     return panel.reset_index(drop=True)
 
 
-def load_panel(root_dir=M.PROJECT_ROOT, years=YEARS):
+def load_panel(root_dir=PROJECT_ROOT, years=YEARS):
     """The Legal Amazon land-year panel from the processed areas, trench overlaps, C11 trench table and geology."""
     root = Path(root_dir)
     areas = load_protected_areas(root)
@@ -96,10 +95,9 @@ def load_panel(root_dir=M.PROJECT_ROOT, years=YEARS):
     overlaps = overlaps[overlaps["area_id"].str.startswith("ti:")]
     mining = pd.read_parquet(root / MINING_PATH, columns=["trench_id", "year", "land_cover_total", *GARIMPO_CLASSES],
                              filters=[("trench_id", "in", sorted(set(overlaps["trench_id"])))])
-    boundaries = _load_adm2_boundaries(root)
-    boundaries["mun_id"] = boundaries["adm2_id"].map(derive_mun_id_from_adm2_id)
+    boundaries = municipality_boundaries(root)
     lands = land_table(areas, boundaries, load_gold_occurrences(geology_gpkg_path(root)))
-    return build_panel(land_garimpo(overlaps, mining), lands, years, set(M.legal_amazon()))
+    return build_panel(land_garimpo(overlaps, mining), lands, years, legal_amazon())
 
 
 def stack(panel, event, window=WINDOW, cohorts=COHORTS, sample=None):
@@ -126,25 +124,17 @@ def stack(panel, event, window=WINDOW, cohorts=COHORTS, sample=None):
     return stacked
 
 
+STACKED_FE = "unit + episode_year"
+STACKED_CLUSTER = "area_id"
+
+
 def _fit(data, terms, outcome):
-    return pf.feols(f"{outcome} ~ {' + '.join(terms)} | unit + episode_year", data=data,
-                    vcov={"CRV1": "area_id"})
+    return estimate(data, terms, fe=STACKED_FE, weighted=False, vcov={"CRV1": STACKED_CLUSTER}, outcome=outcome)
 
 
 def event_study(stacked, outcome, base=BASE):
     """Treated x year relative to the event (base year omitted)."""
-    data = stacked.copy()
-    terms = []
-    for rel in sorted(data["rel"].unique()):
-        if rel != base:
-            name = f"rel_{'m' if rel < 0 else 'p'}{abs(rel)}"
-            data[name] = data["treated"] * data["rel"].eq(rel)
-            terms.append((name, rel))
-    tidy = _fit(data, [name for name, _ in terms], outcome).tidy()
-    rows = [{"rel": base, "estimate": 0.0, "se": 0.0}]
-    rows += [{"rel": rel, "estimate": tidy.loc[name, "Estimate"], "se": tidy.loc[name, "Std. Error"]}
-             for name, rel in terms]
-    return pd.DataFrame(rows).sort_values("rel").assign(outcome=outcome).reset_index(drop=True)
+    return stacked_event_study(stacked, outcome, base, STACKED_FE, STACKED_CLUSTER)
 
 
 def pooled(stacked, outcome):

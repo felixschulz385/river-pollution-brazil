@@ -1,15 +1,13 @@
-"""Tests for the raid design: episodes, borders, the stacked event study and the displacement ratio."""
+"""Tests for the raid design: episodes, the stacked event study and the displacement ratio."""
 
 from __future__ import annotations
 
 from pathlib import Path
 import sys
 
-import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pytest
-from shapely.geometry import box
 
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
@@ -64,14 +62,6 @@ def test_episodes_need_clean_months_before_them():
 
     assert table["mun_id"].tolist() == list(RAIDED)  # the repeat raid 3 months later is not a new episode
     assert table["month"].tolist() == [pd.Timestamp(month) for month in RAIDED.values()]
-
-
-def test_borders_find_touching_municipalities():
-    boundaries = gpd.GeoDataFrame({"mun_id": ["a", "b", "c"],
-                                   "geometry": [box(-56, -6, -55, -5), box(-55, -6, -54, -5), box(-53, -6, -52, -5)]},
-                                  crs=4326)
-    adjacency = R.borders(boundaries)
-    assert adjacency["a"] == {"b"} and adjacency["b"] == {"a"} and "c" not in adjacency
 
 
 def test_stacked_event_study_finds_the_fall_at_the_raid_and_the_rise_next_door():

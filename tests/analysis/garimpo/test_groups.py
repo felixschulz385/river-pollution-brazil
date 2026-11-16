@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.analysis.garimpo import frame as F
 from src.analysis.garimpo import groups as P
 from src.analysis.garimpo import laundering as L
 from src.analysis.garimpo import shift as G
@@ -69,6 +70,6 @@ def test_the_difference_separates_residents_from_crews_and_drops_the_common_shoc
     assert estimate[("drought", "log1p_garimpo_incoming", "drought_lag")] == pytest.approx(0.0, abs=0.05)
     assert estimate[("drought", "local_minus_incoming", "drought")] == pytest.approx(0.0, abs=0.05)
     assert estimate[("drought", "local_minus_incoming", "drought_lag")] == pytest.approx(0.3, abs=0.05)
-    price = P.M.interaction(L.DEPOSITS, L.PRICE)
+    price = F.PRICE_CONTROL
     assert estimate[("gold price x deposits", "local_minus_incoming", price)] == pytest.approx(-0.5, abs=0.1)
     assert set(table["n_municipalities"]) == {54}

@@ -19,23 +19,15 @@ inference over simulated random-walk price paths.
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import geopandas as gpd
 import numpy as np
 import pandas as pd
-import pyfixest as pf
-from pyfixest.estimation import demean as _pyfixest_demean
 from scipy import stats
 
 from src.analysis.core import panels
-from src.analysis.core.inference import wild_cluster_bootstrap
-from src.data.sources.geology.upstream import municipality_otto_basins, pfafstetter_upstream
-
-PROJECT_ROOT = panels.PROJECT_ROOT
-GADM_PATH = PROJECT_ROOT / "data" / "gadm" / "raw" / "gadm41_BRA.gpkg"
-GADM_LAYER, GADM_ID_COLUMN = "ADM_ADM_2", "CC_2"
-RIVER_NETWORK_PATH = PROJECT_ROOT / "data" / "river_network" / "processed"
+from src.analysis.core.defaults import CLUSTER, FE, PRICE, PRICE_USD, STATE_YEAR_FE
+from src.analysis.core.estimation import estimate, interaction, run_table as _run_table, term_row
+from src.analysis.core.geography import legal_amazon, upstream_municipalities
+from src.analysis.core.inference import price_exposure_se, random_walk_p
 
 YEARS = (2007, 2021)
 EXTENDED_YEARS = (2004, 2023)
@@ -43,26 +35,14 @@ FIRST_STAGE_C11_YEARS = (2007, 2019)  # before the C11 2020 reclassification ste
 DROPPED_YEARS = (2015, 2016, 2017)
 PRETERM_FIRST_YEAR = 2012  # SINASC's gestation coding changes in 2011
 
-# The Legal Amazon: eight states in full and Maranhão west of 44°W (IBGE counts
-# a municipality any part of which lies west of the meridian: 181 of 217).
-LEGAL_AMAZON_STATES = ("11", "12", "13", "14", "15", "16", "17", "51")
-MARANHAO = "21"
-LEGAL_AMAZON_MERIDIAN = -44.0
 CAPITALS = {"130260": "Manaus", "150140": "Belém"}
 
 EXPOSURE = "gold_upstream_otto4"
 DOWNSTREAM_EXPOSURE = "gold_downstream_otto4"
 TIN_EXPOSURE = "tin_upstream_otto4"
 UNEXPLOITED_EXPOSURE = "gold_unexploited_upstream_otto4"
-PRICE, PRICE_USD = "log_gold_brl", "log_gold_usd"
 OWN_DEPOSITS = "gold_occurrences"
 
-FE = "mun_id + year"
-STATE_YEAR_FE = "mun_id + state_year"
-CLUSTER = "otto_basin_l3"
-BOOT_REPS = 9999
-RI_DRAWS = 1999
-SEED = 20261028
 MORENO_LOUZADA_ANOMALY = (2.28, 1.16)  # his estimate and SE, anomalies per 1,000 births
 
 # Outcome -> (numerator, denominator, scale, first year). Rates per 1,000
@@ -82,36 +62,6 @@ PLACEBO_OUTCOMES = ("injury_hospitalizations",)
 
 
 # --- Sample --------------------------------------------------------------------------
-
-def legal_amazon(path=GADM_PATH):
-    """`mun_id`s of the Legal Amazon: the eight full states and Maranhão west of 44°W."""
-    gadm = gpd.read_file(path, layer=GADM_LAYER, columns=[GADM_ID_COLUMN])
-    mun_id = gadm[GADM_ID_COLUMN].astype(str).str[:6]
-    state = mun_id.str[:2]
-    west = gadm.geometry.bounds["minx"] < LEGAL_AMAZON_MERIDIAN
-    return set(mun_id[state.isin(LEGAL_AMAZON_STATES) | (state.eq(MARANHAO) & west)])
-
-
-def upstream_municipalities(targets, river_network_path=RIVER_NETWORK_PATH):
-    """For each target `mun_id`, the other municipalities intersecting an Otto-4 sub-basin upstream of its own."""
-    basins = municipality_otto_basins(river_network_path)
-    by_basin = {}
-    for mun_id, codes in basins.items():
-        for code in codes:
-            by_basin.setdefault(code, set()).add(mun_id)
-    by_parent = {}
-    for code in by_basin:
-        by_parent.setdefault(code[:-1], []).append(code)
-    upstream = {}
-    for target in targets:
-        members = set()
-        for own in basins.get(target, ()):
-            for code in by_parent[own[:-1]]:
-                if pfafstetter_upstream(code, own):
-                    members |= by_basin[code]
-        upstream[target] = members - {target}
-    return upstream
-
 
 def add_upstream_cases(frame, upstream, column="inf_garimpo", name="upstream_garimpo_cases"):
     """Garimpo cases (by infection municipality) summed over each municipality's upstream municipalities."""
@@ -148,10 +98,6 @@ def build_frame(years=EXTENDED_YEARS, path=panels.ADM2_PANEL_PATH):
     return frame
 
 
-def interaction(exposure, price=PRICE):
-    return f"{exposure}__x__{price}"
-
-
 # --- Estimation ----------------------------------------------------------------------
 
 def spec_data(frame, outcome, exposures=(EXPOSURE,), price=PRICE, years=YEARS, drop_years=(), drop_mun_ids=()):
@@ -176,96 +122,9 @@ def spec_data(frame, outcome, exposures=(EXPOSURE,), price=PRICE, years=YEARS, d
     return data[data["weight"] > 0].reset_index(drop=True)
 
 
-def estimate(data, terms, fe=FE, weighted=True, vcov=None):
-    return pf.feols(
-        f"y ~ {' + '.join(terms)} | {fe}",
-        data=data,
-        weights="weight" if weighted else None,
-        vcov=vcov or {"CRV1": CLUSTER},
-    )
-
-
-def price_exposure_se(model, term, exposure, price, weighted=True):
-    """P-E standard error of `term` = `exposure` x `price` (Moreno-Louzada, Figueira and Picchetti).
-
-    V = sum_t p~_t^2 (sum_i A_i w_it u_it)^2 / (sum_it w_it z~_it^2)^2, with p~
-    the price demeaned over the sample years, A the exposure, u the residuals,
-    z~ the regressor net of the FE and the other regressors, and w the weights.
-    The randomness is in the price, assumed independent across years (their
-    Assumption 4), so the score is summed by year with the exposure in place of
-    the residualized regressor; p-values use the normal approximation of their
-    Theorem 1. Returns the SE and the number of years.
-    """
-    data = model._data
-    names = list(model._coefnames)
-    X = np.asarray(model._X)  # FE-demeaned and multiplied by sqrt(w)
-    j = names.index(term)
-    z = X[:, j]
-    others = np.delete(X, j, axis=1)
-    if others.shape[1]:
-        z = z - others @ np.linalg.lstsq(others, z, rcond=None)[0]
-    sqrt_w = np.sqrt(np.asarray(model._weights).ravel()) if weighted else np.ones(len(z))
-    weighted_residual = sqrt_w * np.ravel(model._u_hat)  # w_it * u_it
-    year = data["year"].to_numpy()
-    by_year = pd.DataFrame({"year": year, "score": data[exposure].to_numpy() * weighted_residual})
-    sums = by_year.groupby("year")["score"].sum()
-    prices = data.groupby("year")[price].first().loc[sums.index]
-    demeaned = prices - prices.mean()
-    variance = float((demeaned.to_numpy() ** 2 * sums.to_numpy() ** 2).sum()) / float((z ** 2).sum()) ** 2
-    return np.sqrt(variance), len(sums)
-
-
-def _demean(values, data, fe, weights):
-    codes = np.column_stack([pd.factorize(data[key])[0] for key in fe.split(" + ")]).astype(np.uint64)
-    residuals, converged = _pyfixest_demean(np.ascontiguousarray(values, dtype=np.float64), codes, weights)
-    if not converged:
-        raise RuntimeError(f"Demeaning on {fe} did not converge.")
-    return residuals
-
-
-def random_walk_p(data, exposure, price, fe=FE, weighted=True, draws=RI_DRAWS, seed=SEED, controls=()):
-    """Randomization p-value of the interaction over simulated random-walk price paths.
-
-    Each draw replaces the price path by a driftless Gaussian random walk with
-    the observed SD of yearly changes; its coefficient (by FWL, net of the FE
-    and of the `controls` columns of `data`) is compared with the observed
-    one. Returns the observed coefficient and the two-sided p-value.
-    """
-    weights = data["weight"].to_numpy(dtype=np.float64) if weighted else np.ones(len(data))
-    years = np.sort(data["year"].unique())
-    path = data.groupby("year")[price].first().loc[years].to_numpy()
-    rng = np.random.default_rng(seed)
-    steps = rng.normal(0.0, np.diff(path).std(ddof=1), size=(draws, len(years) - 1))
-    paths = np.concatenate([np.zeros((draws, 1)), np.cumsum(steps, axis=1)], axis=1)
-    position = np.searchsorted(years, data["year"].to_numpy())
-    exposure_values = data[exposure].to_numpy(dtype=np.float64)
-    columns = np.column_stack([
-        data["y"].to_numpy(dtype=np.float64),
-        exposure_values * path[position],
-        exposure_values[:, None] * paths[:, position].T,
-    ])
-    residuals = _demean(columns, data, fe, weights)
-    if controls:
-        control_values = _demean(data[list(controls)].to_numpy(dtype=np.float64), data, fe, weights)
-        sqrt_w = np.sqrt(weights)[:, None]
-        coefficients = np.linalg.lstsq(sqrt_w * control_values, sqrt_w * residuals, rcond=None)[0]
-        residuals = residuals - control_values @ coefficients
-    y, z = residuals[:, 0], residuals[:, 1:]
-    betas = (weights[:, None] * z * y[:, None]).sum(axis=0) / (weights[:, None] * z ** 2).sum(axis=0)
-    observed, simulated = betas[0], betas[1:]
-    return float(observed), float((1 + (np.abs(simulated) >= abs(observed)).sum()) / (1 + draws))
-
-
 def infer(model, data, term, exposure, price, fe=FE, weighted=True, randomization=False):
     """Estimate and the four inferences for one term of a fitted spec."""
-    tidy = model.tidy().loc[term]
-    row = {
-        "term": term,
-        "estimate": tidy["Estimate"],
-        "se_basin": tidy["Std. Error"],
-        "p_basin": tidy["Pr(>|t|)"],
-        "p_wcb": wild_cluster_bootstrap(model, term, CLUSTER, reps=BOOT_REPS, seed=SEED)["p_wcb"],
-    }
+    row = {"term": term, **term_row(model, term)}
     two_way = estimate(data, list(model._coefnames), fe=fe, weighted=weighted,
                        vcov={"CRV1": f"{CLUSTER}+year"}).tidy().loc[term]
     row["se_two_way"], row["p_two_way"] = two_way["Std. Error"], two_way["Pr(>|t|)"]
@@ -321,15 +180,8 @@ def run_spec(frame, outcome, exposures=(EXPOSURE,), price=PRICE, fe=FE, weighted
 
 def run_table(frame, outcomes, specs, randomization_specs=("baseline",)):
     """Every spec for every outcome; an outcome that fails is reported and skipped."""
-    rows = []
-    for spec, kwargs in specs.items():
-        for outcome in outcomes:
-            try:
-                for row in run_spec(frame, outcome, randomization=spec in randomization_specs, **kwargs):
-                    rows.append({"spec": spec, **row})
-            except Exception as error:
-                print(f"[{spec} / {outcome}] failed: {error}")
-    return pd.DataFrame(rows)
+    specs = {name: {**kwargs, "randomization": name in randomization_specs} for name, kwargs in specs.items()}
+    return _run_table(run_spec, frame, outcomes, specs, skip_failures=True)
 
 
 def first_stage(frame):
@@ -343,9 +195,9 @@ def first_stage(frame):
     rows = []
     for label, (column, years) in outcomes.items():
         data = spec_data(frame, column, years=years)
-        model = estimate(data, [interaction(EXPOSURE)])
+        model = estimate(data, [interaction(EXPOSURE, PRICE)])
         rows.append({"outcome": label, "years": f"{years[0]}-{years[1]}",
-                     **infer(model, data, interaction(EXPOSURE), EXPOSURE, PRICE)})
+                     **infer(model, data, interaction(EXPOSURE, PRICE), EXPOSURE, PRICE)})
     return pd.DataFrame(rows)
 
 

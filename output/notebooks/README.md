@@ -82,22 +82,35 @@ Other notebooks:
 
 ## Shared code
 
-- `src/analysis/core/panels.py`: panel loaders (restricted to the 1985–2024 exposure window)
-  and variable groups derived from `setup/assembly_datasets.yaml`, including the
-  health column groups; `ring_land_cover()` recomputes land cover from a subset of the
-  25 km rings (sensor or ADM2).
+`src/analysis/core/` holds what the arms share:
+- `panels.py`: panel loaders (restricted to the 1985–2024 exposure window) and variable
+  groups derived from `setup/assembly_datasets.yaml`, including the health column
+  groups; `ring_land_cover()` recomputes land cover from a subset of the 25 km rings
+  (sensor or ADM2).
+- `defaults.py`: Otto-3 clustering, the municipality-year FE, bootstrap draws and seed,
+  and the gold-price columns.
+- `estimation.py`: the fixed-effects fit, result rows with the wild-cluster bootstrap,
+  event studies on a panel and on stacked episodes, and tables of specs x outcomes.
+- `inference.py`: wild-cluster bootstrap for high-dimensional FE models (OLS) and a
+  wild-cluster score bootstrap for PPML fits; randomization over random-walk price
+  paths, permutation of the exposure across municipalities, and the price-exposure
+  variance of Moreno-Louzada, Figueira and Picchetti.
+- `geography.py`: the Legal Amazon, municipality boundaries, borders, rings and
+  municipalities upstream on the Otto-4 network.
+- `descriptives.py`: FE demeaning (pyfixest), variation tables, distribution tables,
+  binned scatters, effective cluster counts.
+
+Each arm builds its estimation frame in one place:
 - `src/analysis/pollution/model.py`: the pollution model setup (sample rules, outcome cleaning,
   combined fecal indicator, CONAMA 357 exceedances, land cover recomputed within 200 km
   and per distance band). `build_pollution_panel()` returns the estimation frame.
 - `src/analysis/health/model.py`: the health model setup (window, outcome counts and exposure
   offsets, upstream land cover within 200 km and per band next to the local block,
   controls, FE keys). `build_health_panel()` returns the estimation frame.
-- `src/analysis/core/inference.py`: wild-cluster bootstrap for high-dimensional FE models
-  (OLS), and a wild-cluster score bootstrap for PPML fits.
-- `src/analysis/health/moreno_louzada.py`: the estimator of `health/04`, with the
-  price-exposure variance of Moreno-Louzada, Figueira and Picchetti and randomization
-  inference over random-walk price paths. The garimpo modules reuse its estimation
-  helpers, the Legal Amazon sample and its FE and clustering defaults.
-- `src/analysis/core/descriptives.py`: FE demeaning (pyfixest), variation tables, distribution
-  tables, binned scatters, effective cluster counts.
-- Each other notebook's estimator is named in its entry above.
+- `src/analysis/garimpo/frame.py`: the yearly Legal Amazon panel of the garimpo designs,
+  in three layers: own geology and the garimpo outcomes (`02`), the IGD exposures and
+  permits (`03`), and IBAMA presence, the frontier, the Priority List and the years to
+  2025 (`04`, `05`, `07`). The monthly and stacked designs (`06`, `08`, `09`) load their
+  own inputs.
+
+Each notebook's estimator is named in its entry above.

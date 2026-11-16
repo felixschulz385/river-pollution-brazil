@@ -28,6 +28,7 @@ import pyfixest as pf
 
 from src.analysis.core import descriptives as desc
 from src.analysis.core import panels
+from src.analysis.core.defaults import BOOT_REPS, CLUSTER
 from src.analysis.core.inference import poisson_score_bootstrap
 from src.analysis.health import model as H
 
@@ -43,10 +44,8 @@ AMAZON = "Amazônia"
 CENTRO_DO_GUILHERME = "210315"
 
 FE = "mun_id + state_year"
-CLUSTER = "otto_basin_l3"
 VCOV = {"CRV1": CLUSTER}
-BOOT_REPS = 9_999
-SEED = 20261022
+SEED = 20261022  # this design's bootstrap seed
 BASELINE_RHS = " + ".join(H.UPSTREAM_REGRESSORS + H.LOCAL_REGRESSORS + H.CLIMATE_CONTROLS)
 GATE_OUTCOMES = H.MINING_OUTCOMES + H.MINING_PLACEBO_OUTCOMES
 LEAVE_ONE_OUT_OUTCOMES = ["infant_deaths", "congenital", "blood", "toxic_poisoning", "injury_poisoning", "injuries"]

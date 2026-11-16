@@ -13,6 +13,8 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.analysis.core.estimation import interaction
+from src.analysis.garimpo import frame as F
 from src.analysis.garimpo import laundering as L
 from src.analysis.garimpo import shift as G
 
@@ -30,11 +32,11 @@ def _frame(n_municipalities=80, years=range(2010, 2025), seed=5):
         for year in years:
             rows.append({
                 "mun_id": f"{state}{i:04d}", "year": year, "state": state, G.CLUSTER: f"b{i % 16}", L.IGD: igd,
-                L.DEPOSITS: float(i % 3 == 0), L.S.ALL_GOLD_EXPOSURE: 1.0, L.PRICE: price[year],
+                L.DEPOSITS: float(i % 3 == 0), F.ALL_GOLD_EXPOSURE: 1.0, L.PRICE: price[year],
                 "ibama_fines_all": rng.poisson(fines[i]),
             })
     frame = pd.DataFrame(rows)
-    frame[G.PRESENCE] = G.standardised_presence(frame, "ibama_fines_all", G.PRESENCE_YEARS)
+    frame[G.PRESENCE] = F.standardised_presence(frame, "ibama_fines_all", F.PRESENCE_YEARS)
     for measure in G.FRONTIER:
         frame[measure] = frame["mun_id"].map(dict(zip(frame["mun_id"].unique(), rng.normal(size=n_municipalities))))
     frame["forest_loss"] = rng.normal(0.4, 0.2, len(frame))
@@ -66,7 +68,7 @@ def test_run_spec_recovers_the_shift_and_the_recovery_on_2015_2024():
     data, terms, _ = G.spec_data(_frame(), "log1p_garimpo_cases")
 
     assert data["year"].min() == 2015  # after the presence window
-    assert terms == [G.term(G.PRESENCE, "post2019"), G.term(G.PRESENCE, "post2023")]
+    assert terms == [interaction(G.PRESENCE, "post2019"), interaction(G.PRESENCE, "post2023")]
     assert rows["post2019"]["estimate"] == pytest.approx(0.3, abs=0.05)
     assert rows["post2023"]["estimate"] == pytest.approx(-0.2, abs=0.05)
 
@@ -115,7 +117,7 @@ def test_extension_rows_carry_municipality_columns_and_fill_missing_records_with
                             "inf_garimpo_local": [1.0, 0.0], "inf_garimpo_incoming": [3.0, 0.0]})
     fines = pd.DataFrame({"mun_id": ids[:1], "year": 2025, "ibama_fines_all": [5.0], "ibama_fines_mining": [1.0]})
     requests = pd.DataFrame({"mun_id": ids[1:2], "year": 2025, "plg_requests_gold": [2.0]})
-    rows = G.extension_rows(frame, [malaria, fines, requests], pd.Series({2025: 9.0})).set_index("mun_id")
+    rows = F.extension_rows(frame, [malaria, fines, requests], pd.Series({2025: 9.0})).set_index("mun_id")
 
     assert len(rows) == len(ids) and (rows["year"] == 2025).all()
     last = frame[frame["year"] == 2024].set_index("mun_id")

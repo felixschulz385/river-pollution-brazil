@@ -581,7 +581,7 @@ X_mt = β_13·(IGD_m × post-2013_t) + β_23·(IGD_m × post-2023_t)
   - CFEM royalties cannot measure declared sales by permit ([E7](#e7-cfem-royalties-by-permit)).
 - **Inference.** Otto-3 clusters with the wild-cluster bootstrap. For the price term,
   add the price-exposure SEs of Moreno-Louzada, Figueira & Picchetti (2025) and
-  randomization over random-walk price paths (`src/analysis/health/moreno_louzada.py`).
+  randomization over random-walk price paths (`src/analysis/core/inference.py`).
   - The price-exposure SE treats yearly prices as independent and comes out close to
     clustering by year.
   - With a persistent price, that understates the uncertainty, and the random-walk

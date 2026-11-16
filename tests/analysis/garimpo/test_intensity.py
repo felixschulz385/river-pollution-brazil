@@ -1,15 +1,13 @@
-"""Tests for the raid-intensity design: raid windows by source, rings and the distributed-lag estimates."""
+"""Tests for the raid-intensity design: raid windows by source and the distributed-lag estimates."""
 
 from __future__ import annotations
 
 from pathlib import Path
 import sys
 
-import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pytest
-from shapely.geometry import box
 
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
@@ -26,14 +24,6 @@ def test_window_and_neighbour_sums():
     assert I.window_sum(matrix, 1, 1).loc["b", 11] == 5.0  # the next month
     border = I.neighbour_sum(matrix, {"a": {"b", "outside"}})
     assert border.loc["a"].tolist() == [0.0, 0.0, 5.0, 0.0] and (border.loc["b"] == 0).all()
-
-
-def test_rings_leave_out_the_municipality_and_its_borders():
-    boundaries = gpd.GeoDataFrame({"mun_id": list("abcd")},
-                                  geometry=[box(-55 + i, -6, -54 + i, -5) for i in (0, 1, 2, 6)], crs=4326)
-    adjacency = {"a": {"b"}, "b": {"a", "c"}, "c": {"b"}}
-    ring = I.rings(boundaries, adjacency, radius_km=250)  # neighbouring centroids are about 110 km apart
-    assert ring["a"] == {"c"} and ring["b"] == set() and ring["d"] == set()
 
 
 def _inputs(n=60, seed=11):

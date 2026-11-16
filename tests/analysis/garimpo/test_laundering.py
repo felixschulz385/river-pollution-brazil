@@ -13,8 +13,10 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.analysis.core.estimation import interaction
+from src.analysis.core.inference import permutation_p
+from src.analysis.garimpo import frame as F
 from src.analysis.garimpo import laundering as L
-from src.analysis.health import moreno_louzada as M
 
 
 def _frame(n_municipalities=60, years=range(2004, 2025), effect=1.0, seed=2):
@@ -42,9 +44,9 @@ def test_spec_data_drops_the_2023_term_outside_the_window_and_adds_requested_ter
     _, case_terms, _, _ = L.spec_data(frame, "log1p_garimpo_cases", collapse=True, trend=True, placebo=True,
                                       enforcement=True)
 
-    assert c11_terms == [L.term(L.IGD, "post2013")]  # C11 stops in 2019
-    assert case_terms == [L.term(L.IGD, period) for period in ("post2013", "post2023", "post2016", "trend")]
-    assert controls == [M.interaction(L.DEPOSITS, L.PRICE)]
+    assert c11_terms == [interaction(L.IGD, "post2013")]  # C11 stops in 2019
+    assert case_terms == [interaction(L.IGD, period) for period in ("post2013", "post2023", "post2016", "trend")]
+    assert controls == [F.PRICE_CONTROL]
 
 
 def test_run_spec_recovers_the_effect_and_the_permutation_matches_the_regression():
@@ -52,7 +54,7 @@ def test_run_spec_recovers_the_effect_and_the_permutation_matches_the_regression
 
     rows = {row["term"]: row for row in L.run_spec(frame, "log1p_garimpo_cases", randomization=True)}
     data, terms, controls, periods = L.spec_data(frame, "log1p_garimpo_cases")
-    observed, p_values = L.permutation_p(data, L.IGD, terms, controls, periods, draws=99)
+    observed, p_values = permutation_p(data, L.IGD, terms, controls, periods, draws=99)
 
     assert rows["post2013"]["estimate"] == pytest.approx(1.0, abs=0.15)
     assert observed[0] == pytest.approx(rows["post2013"]["estimate"], rel=1e-6)
@@ -65,7 +67,7 @@ def test_permutation_p_is_not_small_without_an_effect():
     frame = _frame(effect=0.0, seed=3)
     data, terms, controls, periods = L.spec_data(frame, "log1p_garimpo_cases")
 
-    _, p_values = L.permutation_p(data, L.IGD, terms, controls, periods, draws=199)
+    _, p_values = permutation_p(data, L.IGD, terms, controls, periods, draws=199)
 
     assert (p_values > 0.05).all()
 

@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.analysis.garimpo import frame as F
 from src.analysis.garimpo import laundering as L
 from src.analysis.garimpo import nightlights as N
 from src.analysis.garimpo import shift as G
@@ -33,7 +34,7 @@ def _frame(n_municipalities=100, years=range(2012, 2025), seed=7):
             radiance = np.expm1(log_light)
             row = {
                 "mun_id": f"15{i:04d}", "year": year, G.CLUSTER: f"b{i % 20}", "i": i,
-                G.PRESENCE: rng.normal(), L.DEPOSITS: float(i % 3 == 0), L.S.ALL_GOLD_EXPOSURE: 1.0,
+                G.PRESENCE: rng.normal(), L.DEPOSITS: float(i % 3 == 0), F.ALL_GOLD_EXPOSURE: 1.0,
                 L.PRICE: price[year], "log1p_garimpo_cases": cases,
             }
             for zone in N.ZONES:

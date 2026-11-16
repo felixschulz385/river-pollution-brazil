@@ -13,8 +13,10 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.analysis.core.estimation import estimate, interaction
+from src.analysis.core.inference import random_walk_p
+from src.analysis.garimpo import frame as F
 from src.analysis.garimpo import supply as S
-from src.analysis.health import moreno_louzada as M
 
 
 def _frame(n_municipalities=40, years=range(2004, 2025), seed=1):
@@ -28,7 +30,7 @@ def _frame(n_municipalities=40, years=range(2004, 2025), seed=1):
             rows.append({
                 "mun_id": f"15{i:04d}", "year": year, S.CLUSTER: f"b{i % 9}", "state_year": f"15_{year}",
                 S.EXPOSURE: exposed, S.TIN_EXPOSURE: float(i % 5 == 0), S.PRICE: price[year],
-                "trend": float(year - S.TREND_BASE_YEAR),
+                "trend": float(year - F.TREND_BASE_YEAR),
                 "log1p_garimpo_cases": 1.5 * exposed * price[year] + 0.05 * exposed * (year - 2004)
                 + rng.normal(0, 0.5) + i % 3,
             })
@@ -39,7 +41,7 @@ def test_spec_data_keeps_the_outcome_years_and_adds_trend_terms():
     data = S.spec_data(_frame(), "log1p_garimpo_cases", years=(2006, 2010), trend=True)
 
     assert data["year"].between(2006, 2010).all()
-    term = M.interaction(S.EXPOSURE)
+    term = interaction(S.EXPOSURE, S.PRICE)
     assert data[term].equals(data[S.EXPOSURE] * data[S.PRICE])
     assert data[S.trend_term(S.EXPOSURE)].equals(data[S.EXPOSURE] * data["trend"])
     assert (data["weight"] == 1.0).all()
@@ -47,10 +49,10 @@ def test_spec_data_keeps_the_outcome_years_and_adds_trend_terms():
 
 def test_random_walk_with_controls_reproduces_the_trend_spec_coefficient():
     data = S.spec_data(_frame(), "log1p_garimpo_cases", trend=True)
-    term, trend = M.interaction(S.EXPOSURE), S.trend_term(S.EXPOSURE)
-    model = M.estimate(data, [term, trend], weighted=False)
+    term, trend = interaction(S.EXPOSURE, S.PRICE), S.trend_term(S.EXPOSURE)
+    model = estimate(data, [term, trend], weighted=False)
 
-    observed, p = M.random_walk_p(data, S.EXPOSURE, S.PRICE, weighted=False, draws=199, controls=[trend])
+    observed, p = random_walk_p(data, S.EXPOSURE, S.PRICE, weighted=False, draws=199, controls=[trend])
 
     assert observed == pytest.approx(model.coef()[term], rel=1e-6)
     assert 1 / 200 <= p <= 1

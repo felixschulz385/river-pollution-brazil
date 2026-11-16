@@ -29,21 +29,18 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pyfixest as pf
 from scipy import stats
 
-from src.analysis.garimpo import raids as R
-from src.analysis.health import moreno_louzada as M
 from src.analysis.core import panels
+from src.analysis.core.defaults import BOOT_REPS, CLUSTER, SEED
+from src.analysis.core.estimation import estimate
+from src.analysis.core.geography import legal_amazon, municipality_boundaries, rings
 from src.analysis.core.inference import wild_cluster_bootstrap
-from src.data.sources.biomes.constants import BRAZIL_PROJECTED_CRS
-from src.data.sources.biomes.preprocess import _load_adm2_boundaries
-from src.data.sources.land_cover.constants import derive_mun_id_from_adm2_id
+from src.analysis.garimpo import raids as R
 
 FIRST_MONTH = "2019-01"
 LEAD_MONTHS = 3
 RING_KM = 150
-CLUSTER = M.CLUSTER
 FE = "mun_calendar + state_month"
 SOURCES = {"own": "the municipality", "border": "bordering municipalities", "ring": f"others within {RING_KM} km"}
 # Window name -> (first, last) month of the raids relative to t (positive = after t).
@@ -73,15 +70,6 @@ def window_sum(matrix, first, last):
     for offset in range(first, last + 1):
         total = total + matrix.shift(-offset, axis=1)
     return total
-
-
-def rings(boundaries, adjacency, radius_km=RING_KM):
-    """Municipality -> the municipalities whose centroid is within `radius_km`, other than itself and its borders."""
-    centroids = boundaries.to_crs(BRAZIL_PROJECTED_CRS).set_index("mun_id").centroid
-    xy = np.column_stack([centroids.x, centroids.y])
-    distance = np.hypot(xy[:, None, 0] - xy[None, :, 0], xy[:, None, 1] - xy[None, :, 1]) / 1000
-    ids = centroids.index.to_numpy()
-    return {mun: set(ids[distance[i] <= radius_km]) - {mun} - adjacency.get(mun, set()) for i, mun in enumerate(ids)}
 
 
 def build_panel(panel, raids, adjacency, ring, basins, windows=None, first_month=FIRST_MONTH):
@@ -115,7 +103,7 @@ def terms(windows=WINDOWS, sources=tuple(SOURCES)):
 
 
 def fit(data, outcome, columns, fe=FE):
-    return pf.feols(f"{outcome} ~ {' + '.join(columns)} | {fe}", data=data, vcov={"CRV1": CLUSTER})
+    return estimate(data, columns, fe=fe, weighted=False, outcome=outcome)
 
 
 def linear_sum(model, columns):
@@ -154,17 +142,16 @@ def pooled(data, outcome, fe=FE, bootstrap=True):
         row = {"outcome": outcome, "source": source, "window": window, "estimate": tidy.loc[name, "Estimate"],
                "se": tidy.loc[name, "Std. Error"], "p": tidy.loc[name, "Pr(>|t|)"]}
         if bootstrap:
-            row["p_wcb"] = wild_cluster_bootstrap(model, name, CLUSTER, reps=M.BOOT_REPS, seed=M.SEED)["p_wcb"]
+            row["p_wcb"] = wild_cluster_bootstrap(model, name, CLUSTER, reps=BOOT_REPS, seed=SEED)["p_wcb"]
         rows.append(row)
     return rows
 
 
-def load_inputs(root_dir=M.PROJECT_ROOT):
+def load_inputs(root_dir=panels.PROJECT_ROOT):
     """E14's monthly panel, raid months and border map, the rings, and each municipality's Otto-3 basin."""
     panel, raids, adjacency = R.load_inputs(root_dir)
-    boundaries = _load_adm2_boundaries(root_dir)
-    boundaries["mun_id"] = boundaries["adm2_id"].map(derive_mun_id_from_adm2_id)
-    boundaries = boundaries[boundaries["mun_id"].isin(set(M.legal_amazon()))]
-    ring = rings(boundaries[["mun_id", "geometry"]], adjacency)
+    boundaries = municipality_boundaries(root_dir)
+    boundaries = boundaries[boundaries["mun_id"].isin(legal_amazon())]
+    ring = rings(boundaries[["mun_id", "geometry"]], adjacency, RING_KM)
     basins = pd.read_parquet(panels.ADM2_PANEL_PATH, columns=["mun_id", CLUSTER]).drop_duplicates("mun_id")
     return panel, raids, adjacency, ring, basins.set_index("mun_id")[CLUSTER]

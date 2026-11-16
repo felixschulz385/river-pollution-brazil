@@ -24,15 +24,15 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from src.analysis.garimpo import laundering as L
+from src.analysis.core.defaults import CLUSTER, FE
+from src.analysis.core.estimation import estimate
 from src.analysis.garimpo import shift as G
-from src.analysis.health import moreno_louzada as M
+from src.analysis.garimpo.frame import GROUPS, IGD, PRESENCE, enforcement_frame
 
 YEARS = (2012, 2024)
 C11_YEARS = (2012, 2019)
 BRIGHTNESS_YEARS = (2012, 2014)
 BRIGHTNESS_CLASSES = 5
-FE, CLUSTER = M.FE, M.CLUSTER
 BRIGHTNESS_FE = "mun_id + brightness_year"
 FIXED_EFFECTS = {"year FE": FE, "brightness x year FE": BRIGHTNESS_FE}
 
@@ -53,7 +53,7 @@ MEASURES = {
     "c11_garimpo_pp": ("C11 garimpo, own trenches (pp)", C11_YEARS),
     "log1p_other_malaria": ("log(1 + other malaria cases), placebo", YEARS),
 }
-DESIGNS = {"IGD": {"exposure": L.IGD, "years": YEARS}, "presence": {"exposure": G.PRESENCE, "years": G.YEARS}}
+DESIGNS = {"IGD": {"exposure": IGD, "years": YEARS}, "presence": {"exposure": PRESENCE, "years": G.YEARS}}
 
 
 def has_pixels(zone):
@@ -66,8 +66,9 @@ def zone_of(outcome):
 
 
 def build_frame(path=None):
-    """E12's Legal Amazon panel (IGD, presence, groups) with the light outcomes and brightness classes."""
-    return add_lights(G.build_frame(path))
+    """E12's Legal Amazon panel (`frame.enforcement_frame`: IGD, presence, groups) with the light outcomes and
+    brightness classes."""
+    return add_lights(enforcement_frame(path))
 
 
 def add_lights(frame):
@@ -93,7 +94,7 @@ def tracking(frame, light, measure, fe=FE, years=None, sample=has_pixels("_gold5
     data["y"] = data[light]
     data["weight"] = 1.0
     data = data.dropna(subset=["y", measure, CLUSTER, "brightness"]).reset_index(drop=True)
-    tidy = M.estimate(data, [measure], fe=fe, weighted=False).tidy().loc[measure]
+    tidy = estimate(data, [measure], fe=fe, weighted=False).tidy().loc[measure]
     return {"light": light, "measure": measure, "estimate": tidy["Estimate"], "se_basin": tidy["Std. Error"],
             "p_basin": tidy["Pr(>|t|)"], "n_obs": len(data), "n_municipalities": data["mun_id"].nunique()}
 
@@ -110,7 +111,7 @@ def group_means(frame, column, years=YEARS, sample=has_pixels("_gold5km")):
     """Year x group means of `column` (IGD in Roraima and elsewhere, the rest of Roraima, the rest)."""
     data = frame[frame["year"].between(*years) & frame[sample].gt(0)]
     table = data.pivot_table(index="year", columns="group", values=column, aggfunc="mean")
-    return table.reindex(columns=list(G.GROUPS))
+    return table.reindex(columns=list(GROUPS))
 
 
 def brightness_changes(frame, column="log1p_radiance", years=YEARS):

@@ -35,16 +35,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import geopandas as gpd
 import numpy as np
 import pandas as pd
-import pyfixest as pf
 
-from src.analysis.health import moreno_louzada as M
-from src.data.sources.biomes.constants import BRAZIL_PROJECTED_CRS
-from src.data.sources.biomes.preprocess import _load_adm2_boundaries
+from src.analysis.core.estimation import estimate, stacked_event_study
+from src.analysis.core.geography import borders, legal_amazon, municipality_boundaries
+from src.analysis.core.panels import PROJECT_ROOT
 from src.data.sources.enforcement.constants import DEFAULT_RECORDS_OUTPUT_PATH
-from src.data.sources.land_cover.constants import derive_mun_id_from_adm2_id
 from src.data.sources.malaria.constants import DEFAULT_MONTHLY_OUTPUT_PATH
 
 MONTHS = ("2018-01", "2024-12")  # defaults; `load_inputs` runs to SIVEP's last month
@@ -59,7 +56,6 @@ LARGE_TERMS = 3
 # at least this many garimpo cases in the 12 months before the raid.
 MIN_PRE_CASES = 12
 RAID_ACTIONS = ("destructions", "seizures")
-BORDER_BUFFER_M = 1_000  # simplified boundaries: municipalities within 1 km of each other border
 DESIGNS = ("own", "neighbours")
 # Municipalities split by garimpo cases in the 12 months before the raid.
 GROUPS = ("all", "with garimpo", "without garimpo")
@@ -139,15 +135,6 @@ def episode_window(panel, after=WINDOW[1]):
     return EPISODE_MONTHS[0], last.strftime("%Y-%m")
 
 
-def borders(boundaries, buffer_m=BORDER_BUFFER_M):
-    """Municipality -> the set of municipalities bordering it (within `buffer_m`)."""
-    projected = boundaries[["mun_id", "geometry"]].to_crs(BRAZIL_PROJECTED_CRS)
-    buffered = projected.assign(geometry=projected.buffer(buffer_m))
-    pairs = gpd.sjoin(buffered, projected, predicate="intersects")
-    pairs = pairs[pairs["mun_id_left"] != pairs["mun_id_right"]]
-    return pairs.groupby("mun_id_left")["mun_id_right"].agg(set).to_dict()
-
-
 def stack(panel, episode_table, raids, adjacency, design="own", window=WINDOW, group="all"):
     """The stacked panel of one design: treated and control municipalities over each episode's window.
 
@@ -183,25 +170,17 @@ def stack(panel, episode_table, raids, adjacency, design="own", window=WINDOW, g
     return stacked
 
 
+STACKED_FE = "unit + episode_month"
+STACKED_CLUSTER = "mun_id"  # a municipality appears in many stacks
+
+
 def _fit(data, terms, outcome):
-    formula = f"{outcome} ~ {' + '.join(terms)} | unit + episode_month"
-    return pf.feols(formula, data=data, vcov={"CRV1": "mun_id"})
+    return estimate(data, terms, fe=STACKED_FE, weighted=False, vcov={"CRV1": STACKED_CLUSTER}, outcome=outcome)
 
 
 def event_study(stacked, outcome, base=BASE):
     """Treated x month relative to the raid (base month omitted)."""
-    data = stacked.copy()
-    terms = []
-    for rel in sorted(data["rel"].unique()):
-        if rel != base:
-            name = f"rel_{'m' if rel < 0 else 'p'}{abs(rel)}"
-            data[name] = data["treated"] * data["rel"].eq(rel)
-            terms.append((name, rel))
-    tidy = _fit(data, [name for name, _ in terms], outcome).tidy()
-    rows = [{"rel": base, "estimate": 0.0, "se": 0.0}]
-    rows += [{"rel": rel, "estimate": tidy.loc[name, "Estimate"], "se": tidy.loc[name, "Std. Error"]}
-             for name, rel in terms]
-    return pd.DataFrame(rows).sort_values("rel").assign(outcome=outcome).reset_index(drop=True)
+    return stacked_event_study(stacked, outcome, base, STACKED_FE, STACKED_CLUSTER)
 
 
 def pooled(stacked, outcome, base_window=(-12, -1), post_window=(0, 12)):
@@ -226,7 +205,7 @@ def displacement_ratio(own, neighbours):
     return -neighbours["estimate"] * per_episode / own["estimate"]
 
 
-def load_inputs(root_dir=M.PROJECT_ROOT, sample_years=SAMPLE_YEARS):
+def load_inputs(root_dir=PROJECT_ROOT, sample_years=SAMPLE_YEARS):
     """The monthly case panel of the sample municipalities (from `MONTHS[0]` to SIVEP's last month), the raid
     months and the border map."""
     root = Path(root_dir)
@@ -235,12 +214,11 @@ def load_inputs(root_dir=M.PROJECT_ROOT, sample_years=SAMPLE_YEARS):
     records = pd.read_parquet(root / DEFAULT_RECORDS_OUTPUT_PATH,
                               columns=["action", "date", "mun_id", "garimpo", "operation_code"])
     raids = raid_months(records, months=months)
-    amazon = set(M.legal_amazon())
+    amazon = legal_amazon()
     in_years = cases["month"].dt.year.between(*sample_years)
     garimpo = set(cases.loc[in_years & cases["inf_garimpo"].gt(0), "mun_id"])
     sample = (garimpo | set(raids["mun_id"])) & amazon
-    boundaries = _load_adm2_boundaries(root)
-    boundaries["mun_id"] = boundaries["adm2_id"].map(derive_mun_id_from_adm2_id)
+    boundaries = municipality_boundaries(root)
     adjacency = borders(boundaries[boundaries["mun_id"].isin(amazon)])
     return monthly_panel(cases[cases["mun_id"].isin(sample)], sample, months), raids[raids["mun_id"].isin(amazon)], \
         adjacency

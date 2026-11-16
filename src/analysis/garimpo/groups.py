@@ -29,19 +29,14 @@ clusters and the wild-cluster bootstrap.
 
 from __future__ import annotations
 
-import numpy as np
-import pandas as pd
-
-from src.analysis.garimpo import laundering as L
+from src.analysis.core.defaults import CLUSTER, FE, STATE_YEAR_FE
+from src.analysis.core.estimation import estimate, interaction, run_table as _run_table, term_row
+from src.analysis.core.geography import RORAIMA
 from src.analysis.garimpo import shift as G
-from src.analysis.health import moreno_louzada as M
-from src.analysis.core.inference import wild_cluster_bootstrap
+from src.analysis.garimpo.frame import C11_YEARS, PRICE_CONTROL, PRESENCE, YEARS, add_price_control, enforcement_frame
+from src.analysis.garimpo.frame import estimation_rows
 
-YEARS = (2004, 2024)
-C11_YEARS = (2004, 2019)
 CLIMATE_YEARS = (2000, 2024)
-FE, CLUSTER = M.FE, M.CLUSTER
-STATE_YEAR_FE = "mun_id + state_year"
 SAMPLE = "garimpo_municipality"
 
 OUTCOMES = {
@@ -76,8 +71,8 @@ def add_shocks(frame):
 
 
 def build_frame(path=None):
-    """E12's Legal Amazon panel with the group outcomes and the shocks."""
-    return add_shocks(G.build_frame(path))
+    """E12's Legal Amazon panel (`frame.enforcement_frame`) with the group outcomes and the shocks."""
+    return add_shocks(enforcement_frame(path))
 
 
 def spec(terms, controls=(), years=YEARS, fe=FE, drop_states=()):
@@ -86,18 +81,18 @@ def spec(terms, controls=(), years=YEARS, fe=FE, drop_states=()):
 
 def specs():
     """Spec name -> `spec_data`/`run_spec` arguments. Terms are built by `spec_data`."""
-    price = M.interaction(L.DEPOSITS, L.PRICE)
-    presence = [G.term(G.PRESENCE, period) for period in G.PERIODS]
+    price = PRICE_CONTROL
+    presence = [interaction(PRESENCE, period) for period in G.PERIODS]
     drought = ["drought", "drought_lag"]
     return {
         "drought": spec(drought, [price]),
         "drought, state x year FE": spec(drought, [price], fe=STATE_YEAR_FE),
-        "drought, without Roraima": spec(drought, [price], drop_states=(G.RORAIMA,)),
+        "drought, without Roraima": spec(drought, [price], drop_states=(RORAIMA,)),
         "drought upstream": spec(["drought_upstream", "drought_upstream_lag"], [price]),
         "upstream garimpo 200 km": spec(["upstream_garimpo_200"], ["c11_garimpo_pp", price], C11_YEARS),
         "upstream garimpo 50 km": spec(["upstream_garimpo_50"], ["c11_garimpo_pp", price], C11_YEARS),
         "gold price x deposits": spec([price]),
-        "gold price x deposits, without Roraima": spec([price], drop_states=(G.RORAIMA,)),
+        "gold price x deposits, without Roraima": spec([price], drop_states=(RORAIMA,)),
         "gold price x deposits, 2004-2018": spec([price], years=(2004, 2018)),
         "enforcement presence": spec(presence, [price], G.YEARS),
     }
@@ -105,27 +100,19 @@ def specs():
 
 def spec_data(frame, outcome, terms, controls, years, drop_states=()):
     """Estimation rows of one spec: the garimpo sample in `years`, with the interaction terms built."""
-    data = frame[frame["year"].between(*years) & frame[SAMPLE].gt(0)
-                 & ~frame["mun_id"].str[:2].isin(drop_states)].copy()
-    data[M.interaction(L.DEPOSITS, L.PRICE)] = data[L.DEPOSITS] * data[L.PRICE]
+    data = add_price_control(estimation_rows(frame, outcome, years, drop_states, keep=SAMPLE))
     for period, active in G.PERIODS.items():
-        data[G.term(G.PRESENCE, period)] = data[G.PRESENCE] * active(data["year"])
-    data["y"] = data[outcome]
-    data["weight"] = 1.0
-    return data.dropna(subset=["y", CLUSTER, *terms, *controls]).reset_index(drop=True)
+        data[interaction(PRESENCE, period)] = data[PRESENCE] * active(data["year"])
+    return data.dropna(subset=[*terms, *controls]).reset_index(drop=True)
 
 
 def run_spec(frame, outcome, terms, controls, years, fe=FE, drop_states=(), bootstrap=True):
     """One row per term: estimate, Otto-3 SE and p, and the wild-cluster bootstrap p."""
     data = spec_data(frame, outcome, terms, controls, years, drop_states)
-    model = M.estimate(data, terms + controls, fe=fe, weighted=False)
-    tidy = model.tidy()
+    model = estimate(data, terms + controls, fe=fe, weighted=False)
     rows = []
     for name in terms:
-        row = {"outcome": outcome, "term": name, "estimate": tidy.loc[name, "Estimate"],
-               "se_basin": tidy.loc[name, "Std. Error"], "p_basin": tidy.loc[name, "Pr(>|t|)"]}
-        if bootstrap:
-            row["p_wcb"] = wild_cluster_bootstrap(model, name, CLUSTER, reps=M.BOOT_REPS, seed=M.SEED)["p_wcb"]
+        row = {"outcome": outcome, "term": name, **term_row(model, name, bootstrap)}
         row.update(n_obs=int(model._N), n_municipalities=int(data["mun_id"].nunique()),
                    n_basins=int(data[CLUSTER].nunique()))
         rows.append(row)
@@ -134,11 +121,8 @@ def run_spec(frame, outcome, terms, controls, years, fe=FE, drop_states=(), boot
 
 def run_table(frame, outcomes=tuple(OUTCOMES), spec_table=None, bootstrap=True):
     """Every spec for every outcome."""
-    rows = []
-    for name, arguments in (spec_table or specs()).items():
-        for outcome in outcomes:
-            rows += [{"spec": name, **row} for row in run_spec(frame, outcome, bootstrap=bootstrap, **arguments)]
-    return pd.DataFrame(rows)
+    specs_ = {name: {**arguments, "bootstrap": bootstrap} for name, arguments in (spec_table or specs()).items()}
+    return _run_table(run_spec, frame, outcomes, specs_)
 
 
 def drought_years(frame, years=YEARS, threshold=1.0):
