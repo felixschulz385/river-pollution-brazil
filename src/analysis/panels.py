@@ -18,10 +18,8 @@ from src.data.sources.land_cover.composition import compute_kernel_weighted_comp
 from src.data.sources.land_cover.constants import LAND_COVER_COMPOSITION_BUCKET_MAP
 from src.data.sources.land_cover.mining import MINING_ADM2_UPSTREAM_PATH, compute_mining_composition
 
-from .sensor_data.catalog import _classify_pollutant_type
-from .settings import PROJECT_ROOT
 
-
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ASSEMBLY_CONFIG_PATH = PROJECT_ROOT / "setup" / "assembly_datasets.yaml"
 SENSOR_PANEL_PATH = PROJECT_ROOT / "data" / "assembly" / "sensor_panel.parquet"
 ADM2_PANEL_PATH = PROJECT_ROOT / "data" / "assembly" / "adm2_panel.parquet"
@@ -107,8 +105,144 @@ def sensor_analyte_columns():
     return [variable for variable in variables if variable not in SENSOR_NON_ANALYTE_COLUMNS]
 
 
+# Keywords that assign water-quality analytes to pollutant type groups.
+_METAL_KEYWORDS = (
+    "aluminum",
+    "arsenic",
+    "barium",
+    "beryllium",
+    "boron",
+    "cadmium",
+    "chromium",
+    "cobalt",
+    "copper",
+    "iron",
+    "lead",
+    "lithium",
+    "manganese",
+    "mercury",
+    "nickel",
+    "selenium",
+    "silver",
+    "tin",
+    "uranium",
+    "vanadium",
+    "zinc",
+    "bismuth",
+)
+
+_ORGANIC_KEYWORDS = (
+    "benz",
+    "chlor",
+    "phenol",
+    "dichloro",
+    "trichloro",
+    "tetrachloro",
+    "carbon_tetrachloride",
+    "aldrin",
+    "chlordane",
+    "ddt",
+    "dieldrin",
+    "endrin",
+    "endosulfan",
+    "heptachlor",
+    "lindane",
+    "methoxychlor",
+    "toxaphene",
+    "demeton",
+    "guthion",
+    "malathion",
+    "parathion",
+    "carbaryl",
+    "methyl_parathion",
+    "ethion",
+    "disulfoton",
+    "phosdrin",
+    "diazinon",
+    "azinphos",
+    "bhc",
+    "2_4_",
+    "pentachlorophenol",
+    "polychlorinated_biphenyls",
+    "organochlorine",
+    "organophosphorus",
+)
+
+_MICROBIOLOGICAL_KEYWORDS = (
+    "coliform",
+    "bacteria",
+    "streptococci",
+    "salmonella",
+    "coliphages",
+    "protozoa",
+    "fungi",
+    "algae",
+    "phytoplankton",
+    "zooplankton",
+    "cyanobacteria",
+    "escherichia",
+)
+
+_NUTRIENT_KEYWORDS = (
+    "nitrogen",
+    "ammonia",
+    "ammoniacal",
+    "nitrate",
+    "nitrite",
+    "phosph",
+    "phosphate",
+    "kjeldahl",
+    "albuminoid",
+)
+
+_OXYGEN_ORGANIC_KEYWORDS = (
+    "oxygen_demand",
+    "organic_carbon",
+    "hydrocarbons",
+    "detergents",
+    "oils_and_grease",
+)
+
+_PHYSICOCHEMICAL_KEYWORDS = (
+    "ph",
+    "turbidity",
+    "conductivity",
+    "hardness",
+    "solids",
+    "alkalinity",
+    "chlorides",
+    "sulfates",
+    "sulfides",
+    "fluorides",
+    "acidity",
+    "transparency",
+    "oxygen_saturation",
+    "color",
+)
+
+
+def _classify_pollutant_type(name: str) -> str:
+    """Pollutant type group of an analyte, from keywords in its name."""
+    lowered = name.lower()
+    if lowered == "water_quality_index":
+        return "composite_indices"
+    if any(keyword in lowered for keyword in _NUTRIENT_KEYWORDS):
+        return "nutrients"
+    if any(keyword in lowered for keyword in _OXYGEN_ORGANIC_KEYWORDS):
+        return "oxygen_demand_organic_load"
+    if any(keyword in lowered for keyword in _MICROBIOLOGICAL_KEYWORDS):
+        return "microbiological"
+    if any(keyword in lowered for keyword in _METAL_KEYWORDS):
+        return "metals"
+    if any(keyword in lowered for keyword in _ORGANIC_KEYWORDS):
+        return "organics_pesticides"
+    if any(keyword in lowered for keyword in _PHYSICOCHEMICAL_KEYWORDS):
+        return "core_physicochemical"
+    return "other"
+
+
 def analyte_type_groups(analytes):
-    """Map each analyte to the pollutant type group used by the sensor_data pipeline."""
+    """Map each analyte to its pollutant type group."""
     return {analyte: _classify_pollutant_type(analyte) for analyte in analytes}
 
 

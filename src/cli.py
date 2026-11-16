@@ -68,18 +68,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="module", required=True)
 
-    analysis_parser = subparsers.add_parser("analysis", help="Run analysis workflows")
-    analysis_parser.add_argument(
-        "analysis_module",
-        choices=["sensor-data"],
-        help="Analysis workflow to run.",
-    )
-    analysis_parser.add_argument(
-        "analysis_args",
-        nargs=argparse.REMAINDER,
-        help="Arguments forwarded to the selected analysis module.",
-    )
-
     data_parser = subparsers.add_parser("data", help="Run data workflows")
     data_subparsers = data_parser.add_subparsers(dest="data_verb", required=True)
 
@@ -397,13 +385,6 @@ def main(argv: list[str] | None = None) -> int:
     elif extra:
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
     configure_logging(args.log_level)
-
-    if args.module == "analysis":
-        if args.analysis_module != "sensor-data":
-            parser.error(f"Unsupported analysis module: {args.analysis_module}")
-        from src.analysis.cli import main as analysis_main
-
-        return analysis_main(["--log-level", args.log_level, *args.analysis_args])
 
     if args.module == "data":
         return _run_data_cli(args)

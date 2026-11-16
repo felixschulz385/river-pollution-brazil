@@ -1,7 +1,6 @@
 """Cheap metadata-only fingerprinting for the verification cache.
 
-Generalizes `input_fingerprint()` from `src/analysis/sensor_data/checkpoints.py`:
-hashes `(path, size, mtime_ns)` triples rather than file contents so it stays
+Hashes `(path, size, mtime_ns)` triples rather than file contents so it stays
 fast against large intermediates (climate's zarr store, hundreds of GRIB
 files) while still changing whenever the underlying data actually changes.
 """

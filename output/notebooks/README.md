@@ -101,6 +101,3 @@ Other notebooks:
 - `src/analysis/descriptives.py`: FE demeaning (pyfixest), variation tables, distribution
   tables, binned scatters, effective cluster counts.
 - Each other notebook's estimator is named in its entry above.
-
-The CLI regression pipeline (`python -m src.cli analysis sensor-data`) lives in
-`src/analysis/sensor_data/` and is separate from these notebooks.

@@ -38,8 +38,6 @@ dependencies = [
     "google-cloud-bigquery>=3.41",
     "pandas-gbq>=0.28",
     "matplotlib>=3.10",
-    "plotly",
-    "dash",
     "pyyaml>=6.0",
     "rich>=13.0",
 ]

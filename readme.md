@@ -28,8 +28,7 @@ The project has three linked arms:
   - `verification/`: checks of each source's outputs.
   - `shared/`: paths, Slurm submission, upstream aggregation, web drivers.
   - `output_file_formats.md`: the format of every processed table.
-- `src/analysis/`: estimators used by the notebooks, one module per topic, and the
-  sensor-data regression pipeline (`sensor_data/`).
+- `src/analysis/`: estimators used by the notebooks, one module per topic.
 - `output/notebooks/`: analysis notebooks in `pollution/`, `health/` and `garimpo/`.
 - `output/research/`: the garimpo research design and evidence, and the literature
   search.
@@ -228,7 +227,7 @@ The water-quality fetch pipeline supports additional options for browser executi
 - `--preprocess-backend`
 
 Outputs: `data/sensor_data/processed/aggregate/sensor_data.parquet`, and the
-transformation metadata used by the sensor-data regression pipeline,
+transformation metadata of the cleaning step,
 `data/sensor_data/processed/extract/water_quality_cleaning/sensor_data_water_quality_transformations.json`.
 
 ### Land Cover
@@ -483,11 +482,9 @@ sbatch setup/slurm_scripts/execute_notebook.sh output/notebooks/garimpo/06_raids
 
 Tables go to `output/analysis/<arm>/` (not tracked); the executed notebooks carry them.
 
-`src/analysis/sensor_data/` is a separate regression pipeline for the sensor panel,
-run through the CLI (`python -m src.cli analysis sensor-data list-groups`,
-`... analysis sensor-data run`), with pollutant-group selection, land-cover subclass
-filters and distance-step truncation. It writes one directory per model to
-`output/analysis/sensor_data/`. The pollution notebooks do not use it.
+An earlier regression pipeline for the sensor panel (`src/analysis/sensor_data/`, run
+as `python -m src.cli analysis sensor-data`) is preserved at the
+`sensor-analysis-archive` tag.
 
 ![Project workflow](/output/figures/data_workflow.png)
 
