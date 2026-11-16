@@ -42,7 +42,7 @@ CRS_PERIODS = ((date(2011, 1, 1), SAD69), (date(2015, 8, 1), SAD69_PRE96_BR), (d
 AREA_CRS = "EPSG:5880"
 
 # The Legal Amazon: the eight full states and Maranhão's municipalities
-# reaching west of 44°W (the rule of `moreno_louzada.legal_amazon`).
+# reaching west of 44°W (the rule of `src.analysis.core.geography.legal_amazon`).
 LEGAL_AMAZON_STATES = ("11", "12", "13", "14", "15", "16", "17", "51")
 MARANHAO = "21"
 LEGAL_AMAZON_MERIDIAN = -44.0

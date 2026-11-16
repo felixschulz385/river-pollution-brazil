@@ -2,7 +2,7 @@
 
 Estimates behind Evidence E2 and E4 of `output/research/mining_economics_leads.md`,
 run by `output/notebooks/health/03_garimpo_gold.ipynb`. Everything sits on the
-health estimation frame (`health.build_health_panel`) with the MapBiomas
+health estimation frame (`health.model.build_health_panel`) with the MapBiomas
 Collection 11 mining shares from `adm2_panel` in percentage points:
 
 - the gold-share arm: upstream garimpo-gold share within 50 and 200 km on the
